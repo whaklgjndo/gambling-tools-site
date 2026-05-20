@@ -1,0 +1,457 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Gambling Tools — Setup Guide for Stake, Nuts &amp; Shuffle</title>
+  <meta name="description" content="Step-by-step setup for the Gambling Tools userscript bundle. One script, all the tools — for Desktop, iPhone/iPad, and Android." />
+  <link rel="stylesheet" href="assets/style.css" />
+</head>
+<body>
+  <header class="site">
+    <div class="container">
+      <a href="#top" class="brand"><span class="dot"></span> Gambling Tools</a>
+      <nav>
+        <a href="#install">Setup</a>
+        <a href="#tools">What's inside</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="container" id="top">
+
+    <!-- ===================== HERO ===================== -->
+    <section class="hero">
+      <span class="eyebrow">One script · every tool</span>
+      <h1>Get the tools running in a few minutes</h1>
+      <p class="lead">
+        Everything is bundled into a single userscript per device. Pick your platform
+        below and follow the steps — no coding, just install and refresh.
+      </p>
+      <div class="sites" style="justify-content:center;">
+        <span class="chip stake">Stake</span>
+        <span class="chip nuts">Nuts</span>
+        <span class="chip shuffle">Shuffle</span>
+      </div>
+    </section>
+
+    <!-- ===================== PLATFORM PICKER ===================== -->
+    <section class="picker" aria-label="Choose your platform">
+      <button class="pick" data-go="desktop">
+        <span class="pi">
+          <svg viewBox="0 0 24 24"><path d="M3 4h18a1 1 0 0 1 1 1v11a1 1 0 0 1-1 1h-7v2h3v2H7v-2h3v-2H3a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1Zm1 2v9h16V6H4Z"/></svg>
+        </span>
+        <h3>Desktop</h3>
+        <p class="sub">Chrome · Edge · Brave · Opera</p>
+        <span class="go">Start setup <span class="arrow">→</span></span>
+      </button>
+
+      <button class="pick" data-go="ios">
+        <span class="pi">
+          <svg viewBox="0 0 24 24"><path d="M16.4 12.9c0-2.3 1.9-3.4 2-3.5-1.1-1.6-2.8-1.8-3.4-1.8-1.4-.1-2.8.8-3.5.8-.7 0-1.8-.8-3-.8-1.5 0-2.9.9-3.7 2.3-1.6 2.7-.4 6.8 1.1 9 .8 1.1 1.6 2.3 2.8 2.3 1.1 0 1.6-.7 2.9-.7 1.3 0 1.7.7 2.9.7 1.2 0 2-1.1 2.7-2.2.9-1.2 1.2-2.5 1.2-2.5s-2.3-.9-2.3-3.6ZM14.3 6c.6-.8 1.1-1.9.9-3-1 .1-2.1.7-2.8 1.5-.6.7-1.1 1.8-1 2.9 1.1.1 2.2-.6 2.9-1.4Z"/></svg>
+        </span>
+        <h3>iPhone &amp; iPad</h3>
+        <p class="sub">Safari · Userscripts app</p>
+        <span class="go">Start setup <span class="arrow">→</span></span>
+      </button>
+
+      <button class="pick" data-go="android">
+        <span class="pi">
+          <svg viewBox="0 0 24 24"><path d="M6 9h12v8a1 1 0 0 1-1 1h-1v3h-2v-3h-4v3H8v-3H7a1 1 0 0 1-1-1V9Zm-3 .5A1.5 1.5 0 0 1 4.5 11v4a1.5 1.5 0 0 1-3 0v-4A1.5 1.5 0 0 1 3 9.5Zm18 0a1.5 1.5 0 0 1 1.5 1.5v4a1.5 1.5 0 0 1-3 0v-4A1.5 1.5 0 0 1 21 9.5ZM7.2 8a5 5 0 0 1 9.6 0H7.2Zm1.8-3.2.8 1.4-.7.4-.8-1.4.7-.4Zm6 0 .7.4-.8 1.4-.7-.4.8-1.4Z"/></svg>
+        </span>
+        <h3>Android</h3>
+        <p class="sub">Firefox · Tampermonkey</p>
+        <span class="go">Start setup <span class="arrow">→</span></span>
+      </button>
+    </section>
+
+    <!-- ===================== INSTALL GUIDE ===================== -->
+    <section class="section" id="install">
+      <h2>Setup guide</h2>
+      <p class="section-sub">Three platforms, same idea: install a userscript manager once, add our script, then open the casino and refresh. Pick your tab.</p>
+
+      <div class="tabs" role="tablist">
+        <button class="tab-btn active" data-tab="desktop" role="tab">Desktop</button>
+        <button class="tab-btn" data-tab="ios" role="tab">iPhone / iPad</button>
+        <button class="tab-btn" data-tab="android" role="tab">Android</button>
+      </div>
+
+      <!-- ---------------- DESKTOP ---------------- -->
+      <div class="tab-panel active" id="tab-desktop" role="tabpanel">
+        <div class="panel-intro">
+          <span>🖥️</span>
+          <div>Works on any Chromium browser — <b>Chrome, Edge, Brave, Opera</b>. You'll install the Tampermonkey extension, flip one required switch, then add the script.</div>
+        </div>
+
+        <ol class="steps">
+          <li>
+            <span class="st">Install the Tampermonkey extension</span>
+            <p>Open the Chrome Web Store and click <em>Add to Chrome</em> (the same button works in Edge, Brave and Opera). Pin the icon so you can find it.</p>
+            <div style="margin-top:12px;">
+              <a class="btn" href="https://chromewebstore.google.com/detail/tampermonkey/dhdgffkkebhmkfjojejmpbldmpobfkfo" target="_blank" rel="noopener">Open Chrome Web Store ↗</a>
+            </div>
+          </li>
+
+          <li>
+            <span class="st">Open the extension's settings</span>
+            <p>Right-click the Tampermonkey icon near the address bar and choose <em>Manage extension</em>.</p>
+            <img class="shot shot--phone" src="Guide%20Screenshots/Desktop/d5.png" alt="Right-click the Tampermonkey icon, with Manage extension highlighted" loading="lazy" />
+          </li>
+
+          <li>
+            <span class="st">Turn on “Allow User Scripts”</span>
+            <p>On the extension page, scroll down and switch <em>Allow User Scripts</em> on. Chrome requires this — without it, no script can run.</p>
+            <img class="shot shot--wide" src="Guide%20Screenshots/Desktop/d4.png" alt="Chrome extension details page with the Allow User Scripts toggle turned on" loading="lazy" />
+          </li>
+
+          <li>
+            <span class="st">Install the Desktop script</span>
+            <p>Click the button below. Tampermonkey opens its install page — review it and click <em>Install</em>.</p>
+            <div class="dl">
+              <div class="dl-label">⬇ Desktop script</div>
+              <a class="btn primary" href="Desktop/desktop.user.js" id="dl-desktop">
+                <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 3v10.6l3.3-3.3 1.4 1.4L12 17.4l-4.7-4.7 1.4-1.4 3.3 3.3V3h2ZM5 19h14v2H5z"/></svg>
+                Install Desktop bundle <span class="ver">.user.js</span>
+              </a>
+              <img class="shot shot--wide" src="Guide%20Screenshots/Desktop/d1.png" alt="Tampermonkey install page with the Install button highlighted" loading="lazy" style="margin-top:14px;" />
+              <details class="alt" style="margin-top:12px;">
+                <summary style="cursor:pointer; color:var(--accent); font-weight:650; font-size:0.9rem;">Install page didn't open? Add it manually →</summary>
+                <p style="margin-top:10px;">Right-click the button above → <em>Save link as…</em> to download the <code>.user.js</code> file. Then click the Tampermonkey icon → <em>Create a new script…</em></p>
+                <img class="shot shot--phone" src="Guide%20Screenshots/Desktop/d3.png" alt="Tampermonkey menu with Create a new script highlighted" loading="lazy" />
+                <p style="margin-top:10px;">Delete the template, then drag your downloaded file into the editor and save with <em>File → Save</em> (Ctrl+S).</p>
+                <img class="shot shot--wide" src="Guide%20Screenshots/Desktop/d2.png" alt="Dragging a .user.js file from the file explorer into the Tampermonkey editor" loading="lazy" />
+              </details>
+            </div>
+          </li>
+
+          <li>
+            <span class="st">Open the casino and refresh</span>
+            <p>Go to <em>Stake</em>, <em>Nuts</em> or <em>Shuffle</em> and reload the page once. The tool panel appears automatically on supported game pages.</p>
+            <div class="sites">
+              <span class="chip stake">stake.com / .us</span>
+              <span class="chip nuts">nuts.gg</span>
+              <span class="chip shuffle">shuffle.com</span>
+            </div>
+
+            <div class="note">
+              <span class="ico">⚙️</span>
+              <div><b>Turn tools on or off from the gear icon.</b> Once the script is running, a gear icon sits in the <b>bottom-left corner</b> of the page. Click it to open the tools panel, where every tool has its own on/off switch — plus <em>Enable matched</em> and <em>Disable all</em> shortcuts at the bottom.
+                <div class="ref">
+                  <figure><span class="thumb gear"><img src="assets/gear-ref.webp" alt="The Gambling Tools gear icon" loading="lazy" /></span><figcaption>Gear icon</figcaption></figure>
+                </div>
+              </div>
+            </div>
+
+            <div class="note">
+              <span class="ico">⚡</span>
+              <div><b>Or use the per-tool quick toggles.</b> On each game page, small chips appear just above the gear icon — one per tool for that game. Click a chip to <b>instantly load or unload</b> that tool with no menus (green = on, grey = off).
+                <div class="ref">
+                  <figure><span class="thumb chip"><img src="assets/chip-on.webp" alt="Quick-toggle chip in the enabled (green) state" loading="lazy" /></span><figcaption>Enabled</figcaption></figure>
+                  <figure><span class="thumb chip"><img src="assets/chip-off.webp" alt="Quick-toggle chip in the disabled (grey) state" loading="lazy" /></span><figcaption>Disabled</figcaption></figure>
+                </div>
+              </div>
+            </div>
+
+            <div class="note warn">
+              <span class="ico">🛑</span>
+              <div><b>Only if you really want to switch the whole thing off:</b> click the Tampermonkey icon → <em>Dashboard</em>, then flip the on/off switch next to the script. (The gear and chips above are the easy day-to-day way — this disables everything at once.)</div>
+            </div>
+          </li>
+        </ol>
+      </div>
+
+      <!-- ---------------- iOS ---------------- -->
+      <div class="tab-panel" id="tab-ios" role="tabpanel">
+        <div class="panel-intro">
+          <span>📱</span>
+          <div>On iPhone &amp; iPad the userscript manager is the free <b>Userscripts</b> app, which plugs into <b>Safari</b>. Install it, enable it, then save our script into its folder.</div>
+        </div>
+
+        <ol class="steps">
+          <li>
+            <span class="st">Install the “Userscripts” app</span>
+            <p>In the App Store, search <em>Userscripts</em> and look for the <code>&lt;/&gt;</code> icon by <em>Justin Wasack</em>. Tap <em>GET</em> to install it.</p>
+            <img class="shot shot--phone" src="Guide%20Screenshots/iOS/i10.png" alt="App Store showing the Userscripts app by Justin Wasack" loading="lazy" />
+          </li>
+
+          <li>
+            <span class="st">Open Safari's extension settings</span>
+            <p>Open <em>Settings</em>, search <em>Safari</em> and tap it, then tap <em>Extensions</em>.</p>
+            <div class="shots">
+              <img class="shot shot--phone" src="Guide%20Screenshots/iOS/i9.png" alt="iOS Settings searching for Safari" loading="lazy" />
+              <img class="shot shot--phone" src="Guide%20Screenshots/iOS/i8.png" alt="Safari settings with the Extensions row highlighted" loading="lazy" />
+            </div>
+          </li>
+
+          <li>
+            <span class="st">Allow the Userscripts extension</span>
+            <p>Tap <em>Userscripts</em>, turn on <em>Allow Extension</em>, then under <em>Other Websites</em> choose <em>Allow</em> so it works on every casino.</p>
+            <div class="shots">
+              <img class="shot shot--phone" src="Guide%20Screenshots/iOS/i7.png" alt="Safari extensions list with Userscripts turned On" loading="lazy" />
+              <img class="shot shot--phone" src="Guide%20Screenshots/iOS/i6.png" alt="Userscripts settings with Allow Extension on and Other Websites set to Allow" loading="lazy" />
+            </div>
+          </li>
+
+          <li>
+            <span class="st">Download the Mobile script</span>
+            <p>Tap the button below. Safari opens the script file — tap the <em>Share</em> icon at the bottom.</p>
+            <div class="dl">
+              <div class="dl-label">⬇ Mobile script</div>
+              <a class="btn primary" href="Mobile/mobile.user.js" id="dl-ios">
+                <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 3v10.6l3.3-3.3 1.4 1.4L12 17.4l-4.7-4.7 1.4-1.4 3.3 3.3V3h2ZM5 19h14v2H5z"/></svg>
+                Download Mobile bundle <span class="ver">.user.js</span>
+              </a>
+              <img class="shot shot--phone" src="Guide%20Screenshots/iOS/i5.png" alt="Safari showing the downloaded .user.js file with the Share button circled" loading="lazy" style="margin-top:14px;" />
+            </div>
+          </li>
+
+          <li>
+            <span class="st">Save it into the Userscripts folder</span>
+            <p>Choose <em>Save to Files</em>. From the folder dropdown pick the <em>Userscripts</em> folder, then tap <em>Save</em>.</p>
+            <div class="shots">
+              <img class="shot shot--phone" src="Guide%20Screenshots/iOS/i4.png" alt="Save to Files dialog with the Userscripts folder selected" loading="lazy" />
+              <img class="shot shot--phone" src="Guide%20Screenshots/iOS/i3.png" alt="Save to Files dialog with the Save button highlighted" loading="lazy" />
+            </div>
+          </li>
+
+          <li>
+            <span class="st">Open the casino and refresh</span>
+            <p>Open <em>Stake</em>, <em>Nuts</em> or <em>Shuffle</em> in Safari and reload once. The tool appears on supported game pages.</p>
+
+            <div class="note">
+              <span class="ico">⚙️</span>
+              <div><b>Turn tools on or off from the gear icon.</b> Once the script is running, a gear icon sits in the <b>bottom-left corner</b> of the page. Tap it to open the tools panel, where every tool has its own on/off switch — plus <em>Enable matched</em> and <em>Disable all</em> shortcuts at the bottom.
+                <div class="ref">
+                  <figure><span class="thumb gear"><img src="assets/gear-ref.webp" alt="The Gambling Tools gear icon" loading="lazy" /></span><figcaption>Gear icon</figcaption></figure>
+                </div>
+              </div>
+            </div>
+
+            <div class="note">
+              <span class="ico">⚡</span>
+              <div><b>Or use the per-tool quick toggles.</b> On each game page, small chips appear just above the gear icon — one per tool for that game. Tap a chip to <b>instantly load or unload</b> that tool with no menus (green = on, grey = off).
+                <div class="ref">
+                  <figure><span class="thumb chip"><img src="assets/chip-on.webp" alt="Quick-toggle chip in the enabled (green) state" loading="lazy" /></span><figcaption>Enabled</figcaption></figure>
+                  <figure><span class="thumb chip"><img src="assets/chip-off.webp" alt="Quick-toggle chip in the disabled (grey) state" loading="lazy" /></span><figcaption>Disabled</figcaption></figure>
+                </div>
+              </div>
+            </div>
+
+            <div class="note warn">
+              <span class="ico">🛑</span>
+              <div><b>Only if you really want to switch the whole thing off:</b> tap the puzzle-piece / <code>AA</code> icon in Safari's address bar → <em>Userscripts</em>, then toggle the entire script off. (The gear and chips above are the easy day-to-day way — this disables everything at once.)</div>
+            </div>
+            <div class="shots">
+              <img class="shot shot--phone" src="Guide%20Screenshots/iOS/i2.png" alt="Safari on stake.us with the Userscripts option in the extensions popover" loading="lazy" />
+              <img class="shot shot--phone" src="Guide%20Screenshots/iOS/i1.png" alt="Userscripts popover showing the installed scripts with toggles" loading="lazy" />
+            </div>
+          </li>
+        </ol>
+      </div>
+
+      <!-- ---------------- ANDROID ---------------- -->
+      <div class="tab-panel" id="tab-android" role="tabpanel">
+        <div class="panel-intro">
+          <span>🤖</span>
+          <div>Android needs <b>Firefox</b> — Chrome on Android can't run extensions. You'll add Tampermonkey inside Firefox, then install our script.</div>
+        </div>
+
+        <ol class="steps">
+          <li>
+            <span class="st">Install Firefox from the Play Store</span>
+            <p>Get <em>Firefox Browser by Mozilla</em> — the regular one. Not Firefox Focus, not Firefox Beta; only the standard Firefox supports extensions.</p>
+          </li>
+
+          <li>
+            <span class="st">Open Firefox's Extensions menu</span>
+            <p>Tap the <em>⋮</em> menu (top-right) and choose <em>Extensions</em>.</p>
+            <img class="shot shot--wide" src="Guide%20Screenshots/Android/android2.png" alt="Firefox three-dot menu with Extensions highlighted" loading="lazy" />
+          </li>
+
+          <li>
+            <span class="st">Tap “Find more extensions”</span>
+            <p>Scroll to the bottom of the Extensions page and tap <em>Find more extensions</em>.</p>
+            <img class="shot shot--wide" src="Guide%20Screenshots/Android/18b39368e1aa2f5053a150588c85ee63.png" alt="Find more extensions button at the bottom of the Firefox extensions page" loading="lazy" />
+          </li>
+
+          <li>
+            <span class="st">Search for Tampermonkey and add it</span>
+            <p>Type <em>Tampermonkey</em>, tap the first result, then on the add-ons page tap <em>Add to Firefox</em> and confirm.</p>
+            <div class="shots">
+              <img class="shot shot--wide" src="Guide%20Screenshots/Android/Android.png" alt="Tampermonkey shown in the Firefox add-ons search results" loading="lazy" />
+              <img class="shot shot--phone" src="Guide%20Screenshots/Android/a2ffaffb819945bef65d5c60f2041c5e.png" alt="Tampermonkey page on addons.mozilla.org with the install button" loading="lazy" />
+            </div>
+          </li>
+
+          <li>
+            <span class="st">Confirm Tampermonkey is ready</span>
+            <p>Open <em>⋮ → Extensions</em> again and tap <em>Tampermonkey</em>. Its dashboard opens — that's where every script lives.</p>
+            <div class="shots">
+              <img class="shot shot--wide" src="Guide%20Screenshots/Android/710513bdf9fc3af3884b546353430c14.png" alt="Firefox extensions menu listing Tampermonkey" loading="lazy" />
+              <img class="shot shot--phone" src="Guide%20Screenshots/Android/76f804d5f94a360649e3e8062d50da68.png" alt="Tampermonkey dashboard with Installed Userscripts, Settings and Utilities tabs" loading="lazy" />
+            </div>
+          </li>
+
+          <li>
+            <span class="st">Install the Mobile script</span>
+            <p>Tap the button below. Tampermonkey opens its install page — tap <em>Install</em>.</p>
+            <div class="dl">
+              <div class="dl-label">⬇ Mobile script</div>
+              <a class="btn primary" href="Mobile/mobile.user.js" id="dl-android">
+                <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 3v10.6l3.3-3.3 1.4 1.4L12 17.4l-4.7-4.7 1.4-1.4 3.3 3.3V3h2ZM5 19h14v2H5z"/></svg>
+                Install Mobile bundle <span class="ver">.user.js</span>
+              </a>
+              <img class="shot shot--phone" src="Guide%20Screenshots/Android/f0f82505bf62bb4b1714b4d1ba280c22.png" alt="Tampermonkey install page in Firefox with the Install button highlighted" loading="lazy" style="margin-top:14px;" />
+              <p class="hint">Nothing happened on tap? <b>Long-press</b> the button → <em>Copy link</em>, then paste it into Firefox's address bar and go — Tampermonkey will catch it.</p>
+            </div>
+          </li>
+
+          <li>
+            <span class="st">Open the casino and refresh</span>
+            <p>Open <em>Stake</em>, <em>Nuts</em> or <em>Shuffle</em> in Firefox and reload once. The tool appears on supported game pages.</p>
+
+            <div class="note">
+              <span class="ico">⚙️</span>
+              <div><b>Turn tools on or off from the gear icon.</b> Once the script is running, a gear icon sits in the <b>bottom-left corner</b> of the page. Tap it to open the tools panel, where every tool has its own on/off switch — plus <em>Enable matched</em> and <em>Disable all</em> shortcuts at the bottom.
+                <div class="ref">
+                  <figure><span class="thumb gear"><img src="assets/gear-ref.webp" alt="The Gambling Tools gear icon" loading="lazy" /></span><figcaption>Gear icon</figcaption></figure>
+                </div>
+              </div>
+            </div>
+
+            <div class="note">
+              <span class="ico">⚡</span>
+              <div><b>Or use the per-tool quick toggles.</b> On each game page, small chips appear just above the gear icon — one per tool for that game. Tap a chip to <b>instantly load or unload</b> that tool with no menus (green = on, grey = off).
+                <div class="ref">
+                  <figure><span class="thumb chip"><img src="assets/chip-on.webp" alt="Quick-toggle chip in the enabled (green) state" loading="lazy" /></span><figcaption>Enabled</figcaption></figure>
+                  <figure><span class="thumb chip"><img src="assets/chip-off.webp" alt="Quick-toggle chip in the disabled (grey) state" loading="lazy" /></span><figcaption>Disabled</figcaption></figure>
+                </div>
+              </div>
+            </div>
+
+            <div class="note warn">
+              <span class="ico">🛑</span>
+              <div><b>Only if you really want to switch the whole thing off:</b> open <em>⋮ → Extensions → Tampermonkey</em> to reach its dashboard, then toggle the script off. (The gear and chips above are the easy day-to-day way — this disables everything at once.)</div>
+            </div>
+          </li>
+        </ol>
+      </div>
+
+      <div class="note" style="margin-top:24px;">
+        <span class="ico">🔄</span>
+        <div><b>Updating later:</b> when a new version drops, install it the same way — your userscript manager replaces the old one and keeps your saved settings.</div>
+      </div>
+    </section>
+
+    <!-- ===================== WHAT'S INSIDE ===================== -->
+    <section class="section" id="tools">
+      <h2>What's inside the bundle</h2>
+      <p class="section-sub">One install gives you every tool below. They switch on automatically on the games they support, and each has a small draggable panel you control.</p>
+
+      <div class="tools">
+        <article class="tool">
+          <div class="tool-shot">
+            <img src="Desktop/Tool%20Preview/Stake/stake-desktop-AutoVault.png" alt="Auto-Vault panel on Stake" loading="lazy" />
+          </div>
+          <div class="tool-head">
+            <div class="tool-icon">🔒</div>
+            <h3>Auto-Vault</h3>
+          </div>
+          <div class="tool-body">
+            <p class="credit">Credit to Ruby (of StakeStats) for the Stake autovaulter. The Nuts version is basically a direct port over.</p>
+            <p>Set your Save % (the cut of profit to send to the vault) and hit Start — the tool quietly moves that percentage to the vault at every Check Interval, so you literally can't lose those gains back to the site. Runs headless in a small draggable panel with a live Activity log so you can see exactly what it's doing, when.</p>
+            <p>Got a spike? The Big-win Threshold (x) defines when a win counts as a big win (anything at or above that multiplier), and the Big-win Multiplier boosts the vault % on those hits — so when you actually stack a big multi, you lock in proportionally more of it instead of letting the base % do the same job for a 100x as a 2x.</p>
+          </div>
+        </article>
+
+        <article class="tool">
+          <div class="tool-shot">
+            <img src="Desktop/Tool%20Preview/Stake/stake-desktop-Dice.png" alt="Dice tool panel on Stake" loading="lazy" />
+          </div>
+          <div class="tool-head">
+            <div class="tool-icon">🎲</div>
+            <h3>Dice</h3>
+          </div>
+          <div class="tool-body">
+            <div class="mode-h">Manual</div>
+            <p>Self-explanatory, only it allows you to run Dice on auto using the tool-injected Start button. This gives you the flexibility of adjusting your bet size on the fly, or switching the over/under without interrupting the tool's injected version of autoplay.</p>
+            <div class="mode-h">IOW</div>
+            <p>Allows you to set an increase percentage to your bet after a win, and a number of losses in a row before resetting back to base bet. You can also set the number of wins needed (before the loss reset occurs) to reset back to base bet. If you hit the win-reset value, the HUD will flash, letting you know you hit the win reset each time. You may also adjust your bet on the fly without interrupting the tool's injected version of autoplay.</p>
+            <div class="mode-h">Smart</div>
+            <p>Smart primarily calculates bet size from three user-facing factors: the user-selected multiplier, the current balance, and the user-selected Aggression value. The Aggression State statistic and Momentum Window statistic also play a role in the calculation. Those state rules are hardcoded, but they are heavily influenced by the selected Aggression value and selected multiplier. The Aggression State can be locked to any of the five aggression states; locking the state also locks the Momentum Window for that specific multiplier, Aggression value, and Aggression State combination. Just set these three values to your liking, and send it. Recommended aggression values sit between 1 and 2. But you can do what you want. Anything above a 2 on the aggression slider is typically set in tandem with a "Take Profit %" value, or an "Autostop On Balance" value.</p>
+            <div class="mode-h">Advanced IOW</div>
+            <p>Inspired by SWALD BANKMAN-FRIED's (of StakeStats) 8.47 dice strategy. This mode gives you the ability to easily create your own 8.47 style of strategy on Stake or Shuffle.</p>
+            <p>Equipped with 2 separate simulators. The main simulator is for testing your own input values. The optimizer simulator allows you to enter value ranges for each parameter — a simulation with each value combination within your set ranges will be run a number of times depending on how many "Trials per combo" you have set.</p>
+            <p>The results of these trial runs will be on the Results tab. From there you can examine the stats of each combination. You can sort the results by any category, or you can see which combination was best overall by sorting by Score (the default sorting method). When you find a combination you like, you can apply that selected strategy to the Calculator (first tab) for further testing of that individual strategy using your own balance with Simulation Controls.</p>
+            <p>If you want to use that strategy for real, you can import it into the game by selecting Import New Strategy at the bottom of the Calculator page. This will create the strategy in your game. Be sure to always click the Update Strategy button located on the Stats tab's control deck before a run, and after each profit stop.</p>
+          </div>
+        </article>
+
+        <article class="tool">
+          <div class="tool-shot">
+            <img src="Desktop/Tool%20Preview/Stake/stake-desktop-Limbo.png" alt="Limbo tool panel on Stake" loading="lazy" />
+          </div>
+          <div class="tool-head">
+            <div class="tool-icon">🚀</div>
+            <h3>Limbo</h3>
+          </div>
+          <div class="tool-body">
+            <div class="mode-h">Manual</div>
+            <p>Self-explanatory, only it allows you to run Limbo on auto using the tool-injected Start button. This gives you the flexibility of adjusting your bet size on the fly.</p>
+            <div class="mode-h">IOW</div>
+            <p>Allows you to set an increase percentage to your bet after a win, and a number of losses in a row before resetting back to base bet. You can also set the number of wins needed (before the loss reset occurs) to reset back to base bet. If you hit the win-reset value, the HUD will flash, letting you know you hit the win reset each time. You may also adjust your bet on the fly without interrupting the tool's injected version of autoplay.</p>
+            <div class="mode-h">Smart</div>
+            <p>Smart primarily calculates bet size from three user-facing factors: the user-selected multiplier, the current balance, and the user-selected Aggression value. The Aggression State statistic and Momentum Window statistic also play a role in the calculation. Those state rules are hardcoded, but they are heavily influenced by the selected Aggression value and selected multiplier. The Aggression State can be locked to any of the five aggression states; locking the state also locks the Momentum Window for that specific multiplier, Aggression value, and Aggression State combination. Just set these three values to your liking, and send it. Recommended aggression values sit between 1 and 2. But you can do what you want. Anything above a 2 on the aggression slider is typically set in tandem with a "Take Profit %" value, or an "Autostop On Balance" value.</p>
+          </div>
+        </article>
+
+        <article class="tool">
+          <div class="tool-shot">
+            <img src="Desktop/Tool%20Preview/Stake/stake-desktop-Mines.png" alt="Mines tool panel on Stake" loading="lazy" />
+          </div>
+          <div class="tool-head">
+            <div class="tool-icon">💎</div>
+            <h3>Mines</h3>
+          </div>
+          <div class="tool-body">
+            <div class="mode-h">For auto players</div>
+            <p>Set your preferred amount of mines in the native game. Set your preferred min and max range of tiles to click, and the tool will randomly pick somewhere in that range every round, auto-cash out, and run it back until you stop. Projected Ranges show you the min and max multipliers you can hit based on your selected mines amount, and your min and max range of tiles to click. Additionally, a min and max payout projection will also be displayed in reference to your bet size.</p>
+            <div class="mode-h">For manual players</div>
+            <p>Live stats are displayed right on the panel. Current Multiplier, Payout, and Next Gem Chance — the exact probability of the next tile being a gem, computed from how many mines and how many tiles are left on the board.</p>
+          </div>
+        </article>
+
+        <article class="tool">
+          <div class="tool-shot">
+            <img src="Desktop/Tool%20Preview/Stake/stake-desktop-Keno.png" alt="Keno preset manager on Stake" loading="lazy" />
+          </div>
+          <div class="tool-head">
+            <div class="tool-icon">🎱</div>
+            <h3>Keno</h3>
+          </div>
+          <div class="tool-body">
+            <p>Saves and reloads number presets so you can return to common boards quickly without rebuilding the same picks every session.</p>
+            <p>Presets can include the selected risk or difficulty.</p>
+          </div>
+        </article>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- ===================== LIGHTBOX ===================== -->
+  <div class="lightbox" id="lightbox">
+    <span class="lb-close" id="lb-close">&times;</span>
+    <img src="" alt="" id="lb-img" />
+  </div>
+
+  <footer class="site">
+    <div class="container">
+      <p class="rg">These userscripts run entirely in your own browser. Use them at your own risk, and please gamble responsibly — only play with what you can afford to lose.</p>
+      <p>Gambling Tools · Desktop &amp; Mobile bundles</p>
+    </div>
+  </footer>
+
+  <script src="assets/app.js"></script>
+</body>
+</html>
