@@ -131,6 +131,22 @@ header.site nav a:hover { color: var(--text); }
   margin: 0 auto;
 }
 
+/* Quick download (hero) */
+.quickdl {
+  display: flex;
+  gap: 14px;
+  justify-content: center;
+  flex-wrap: wrap;
+  margin: 30px 0 12px;
+}
+.btn.big { padding: 14px 22px; align-items: center; gap: 12px; }
+.btn.big svg { width: 22px; height: 22px; flex-shrink: 0; }
+.btn.big .bt { display: flex; flex-direction: column; line-height: 1.18; text-align: left; }
+.btn.big .bt b { font-size: 1.02rem; font-weight: 750; }
+.btn.big .bt small { font-weight: 600; font-size: 0.72rem; opacity: 0.8; letter-spacing: 0.02em; }
+.qd-hint { color: var(--text-faint); font-size: 0.9rem; margin: 0 auto 16px; max-width: 560px; }
+.qd-hint a { font-weight: 650; }
+
 /* ---------------- Platform picker ---------------- */
 .picker {
   display: grid;
