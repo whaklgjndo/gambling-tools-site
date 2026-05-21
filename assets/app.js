@@ -23,15 +23,35 @@
     });
   });
 
+  /* ---------- Device detection ---------- */
+  function deviceIsIOS() {
+    const ua = navigator.userAgent || "";
+    return /iPad|iPhone|iPod/.test(ua) ||
+      (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+  }
+  function deviceIsAndroid() {
+    return /Android/.test(navigator.userAgent || "");
+  }
+  const deviceIsMobile = deviceIsIOS() || deviceIsAndroid();
+
   /* ---------- Default tab from the visitor's device ---------- */
   (function pickDefault() {
-    const ua = navigator.userAgent || "";
-    const isIOS = /iPad|iPhone|iPod/.test(ua) ||
-      (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
-    const isAndroid = /Android/.test(ua);
-    if (isIOS) activateTab("ios");
-    else if (isAndroid) activateTab("android");
+    if (deviceIsIOS()) activateTab("ios");
+    else if (deviceIsAndroid()) activateTab("android");
     // otherwise leave Desktop (the default active tab)
+  })();
+
+  /* ---------- Device-aware tool screenshots ----------
+     Each .tool-shot img ships with a desktop src plus a data-shot-mobile
+     attribute. On phones/tablets we swap to the mobile capture so the preview
+     matches what the visitor actually sees on their own device. Runs before the
+     (lazy, below-the-fold) images load, so mobile users don't fetch both. */
+  (function swapToolShots() {
+    if (!deviceIsMobile) return; // desktop keeps the default desktop src
+    document.querySelectorAll(".tool-shot img[data-shot-mobile]").forEach((img) => {
+      const mobileSrc = img.getAttribute("data-shot-mobile");
+      if (mobileSrc) img.setAttribute("src", mobileSrc);
+    });
   })();
 
   /* ---------- Lightbox ---------- */
