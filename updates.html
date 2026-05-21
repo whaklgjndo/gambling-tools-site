@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Updates &amp; Patch Notes — Gambling Tools</title>
+  <meta name="description" content="Release notes and version history for the Gambling Tools userscript bundles (Desktop &amp; Mobile) for Stake, Nuts, and Shuffle." />
+  <link rel="stylesheet" href="assets/style.css" />
+  <style>
+    /* ---- Changelog (scoped to this page; reuses global tokens) ---- */
+    .changelog { display: flex; flex-direction: column; gap: 18px; padding-bottom: 8px; }
+    .release {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow-sm);
+      padding: 20px 22px;
+    }
+    .release.latest { border-color: var(--accent-strong); box-shadow: 0 0 0 1px var(--accent-soft), var(--shadow-sm); }
+    .release-head { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
+    .ver-badge {
+      font-weight: 800; font-size: 0.92rem; letter-spacing: 0.01em;
+      color: #04140c; background: linear-gradient(180deg, var(--accent), var(--accent-strong));
+      border-radius: 999px; padding: 4px 13px;
+    }
+    .rel-date { color: var(--text-faint); font-size: 0.85rem; font-weight: 600; margin-left: auto; }
+    .rel-title { margin: 14px 0 4px; font-size: 1.16rem; font-weight: 760; }
+    .changes { list-style: none; margin: 12px 0 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+    .changes li { display: flex; gap: 11px; align-items: flex-start; font-size: 0.95rem; color: var(--text); }
+    .tag {
+      flex: 0 0 auto; margin-top: 2px;
+      font-size: 0.68rem; font-weight: 800; letter-spacing: 0.06em; text-transform: uppercase;
+      padding: 3px 9px; border-radius: 6px; border: 1px solid var(--border-strong);
+      min-width: 64px; text-align: center;
+    }
+    .tag.fixed   { color: var(--accent); border-color: rgba(52, 211, 153, 0.4);  background: var(--accent-soft); }
+    .tag.added   { color: var(--shuffle); border-color: rgba(167, 139, 250, 0.4); background: rgba(167, 139, 250, 0.1); }
+    .tag.changed { color: var(--nuts);   border-color: rgba(255, 176, 32, 0.4);  background: rgba(255, 176, 32, 0.1); }
+    .changes li .ctxt b { color: var(--text); }
+    .changelog-empty { color: var(--text-dim); font-size: 0.95rem; }
+    header.site nav a.active { color: var(--text); }
+    @media (max-width: 480px) {
+      .rel-date { margin-left: 0; width: 100%; }
+      .tag { min-width: 56px; }
+    }
+  </style>
+</head>
+<body>
+  <header class="site">
+    <div class="container">
+      <a href="index.html#top" class="brand"><span class="dot"></span> Gambling Tools</a>
+      <nav>
+        <a href="index.html#download">Download</a>
+        <a href="index.html#install">Setup</a>
+        <a href="index.html#tools">What's inside</a>
+        <a href="updates.html" class="active">Updates</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="container" id="top">
+
+    <section class="hero">
+      <span class="eyebrow">Changelog</span>
+      <h1>Updates &amp; Patch Notes</h1>
+      <p class="lead">
+        Every release of the Desktop and Mobile bundles, newest first. Your script updates
+        automatically through Tampermonkey / Userscripts when a newer version is published.
+      </p>
+      <div class="sites" style="justify-content:center;">
+        <span class="chip stake">Stake</span>
+        <span class="chip nuts">Nuts</span>
+        <span class="chip shuffle">Shuffle</span>
+      </div>
+    </section>
+
+    <section class="changelog" aria-label="Release notes">
+
+      <!-- ============ Add new releases above this line (newest first) ============ -->
+      <article class="release latest">
+        <div class="release-head">
+          <span class="ver-badge">v4.7</span>
+          <span class="chip">Mobile</span>
+          <span class="rel-date">May 21, 2026</span>
+        </div>
+        <h2 class="rel-title">Dice &amp; Limbo controls fixed for Stake's new layout</h2>
+        <ul class="changes">
+          <li>
+            <span class="tag fixed">Fixed</span>
+            <span class="ctxt">On Stake's updated Dice and Limbo pages, the <b>Multiplier</b>, <b>Win Chance</b>, and <b>Over/Under switch</b> were hidden behind the tool overlay. They now appear directly inside the HUD and stay fully interactive.</span>
+          </li>
+          <li>
+            <span class="tag fixed">Fixed</span>
+            <span class="ctxt">Dice and Limbo can now be <b>enabled and disabled independently</b> from the control panel — toggling one no longer affects the other.</span>
+          </li>
+          <li>
+            <span class="tag changed">Changed</span>
+            <span class="ctxt">Tightened the HUD layout — compacted the relocated controls and shortened the Manual / IOW / Smart / Advanced IOW buttons to free up screen space.</span>
+          </li>
+        </ul>
+      </article>
+
+    </section>
+
+  </main>
+
+  <footer class="site">
+    <div class="container">
+      <p class="rg">These userscripts run entirely in your own browser. Use them at your own risk, and please gamble responsibly — only play with what you can afford to lose.</p>
+      <p>Gambling Tools · Desktop &amp; Mobile bundles</p>
+    </div>
+  </footer>
+
+  <script src="assets/app.js"></script>
+</body>
+</html>
