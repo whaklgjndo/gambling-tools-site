@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mobile 
 // @namespace    https://whaklgjndo.github.io/gambling-tools/
-// @version      4.3
+// @version      4.7
 // @description  .
 // @author       .
 // @match        https://stake.com/*
@@ -25,6 +25,8 @@
 
 (function () {
     'use strict';
+
+    try { console.log('[unified-mobile] boot v4.7 — dice/limbo gating + fields-footer relocation (no slider)'); } catch (e) {}
 
     /* ============================================================
        iOS USERSCRIPTS COMPATIBILITY
@@ -836,10 +838,10 @@
         }
         #ratchet-master-container .mode-wrap {
             display: flex; flex: 0 0 auto; gap: 4px;
-            background: #13232d; padding: 4px; border-radius: 10px;
+            background: #13232d; padding: 3px; border-radius: 10px;
         }
         #ratchet-master-container .mode-btn {
-            flex: 1 1 0; min-width: 0; padding: 9px 4px;
+            flex: 1 1 0; min-width: 0; padding: 5px 4px;
             border: none; border-radius: 999px;
             font-size: 11px; font-weight: 900; cursor: pointer;
             text-transform: uppercase; letter-spacing: 0.3px;
@@ -1070,6 +1072,26 @@
             width: 100% !important;
             min-width: 0 !important;
         }
+        /* Compact the relocated native control footer (Multiplier / Roll Over /
+           Win Chance) so it doesn't eat the rest of the HUD's workspace. Stake
+           ships it with 16px padding + tall stacked labels (~94px tall); trim
+           the padding and shrink labels + inputs to ~50px total. Selectors are
+           class-substring based so they survive Stake's per-deploy svelte hashes. */
+        #ratchet-master-container.stake-theme .hud-stake-native-controls-slot [class*="footer"] {
+            padding: 4px !important;
+            gap: 6px !important;
+        }
+        #ratchet-master-container.stake-theme .hud-stake-native-controls-slot [class*="label-content"] {
+            padding: 0 0 1px !important;
+            font-size: 9px !important;
+            line-height: 1.1 !important;
+        }
+        #ratchet-master-container.stake-theme .hud-stake-native-controls-slot input {
+            min-height: 0 !important;
+            height: 30px !important;
+            padding: 4px 6px !important;
+            font-size: 12px !important;
+        }
         #ratchet-master-container.stake-theme .hud-stake-native-controls-stack {
             display: flex !important;
             flex-direction: column !important;
@@ -1138,7 +1160,35 @@
     /* ============================================================
        DOM HELPERS
        ============================================================ */
-    function isCurrentGameEnabled() { return true; }
+    /** Map the current URL to one of the registered split tool ids
+     *  (stake/shuffle/nuts × dice/limbo). Returns null when no dice/limbo
+     *  pattern matches — callers treat null as "not a gated game page". */
+    function currentGameToolId() {
+        const path = location.pathname || '';
+        if (isNuts()) {
+            if (/\/dice(?:\/|$|\?|#)/i.test(path)) return 'nuts-dice';
+            return null;
+        }
+        if (isShuffle()) {
+            if (/\/games\/originals\/dice(?:\/|$|\?|#)/i.test(path)) return 'shuffle-dice';
+            if (/\/games\/originals\/limbo(?:\/|$|\?|#)/i.test(path)) return 'shuffle-limbo';
+            return null;
+        }
+        if (/\/casino\/games\/(?:dice|primedice)(?:\/|$|\?|#)/i.test(path)) return 'stake-dice';
+        if (/\/casino\/games\/limbo(?:\/|$|\?|#)/i.test(path)) return 'stake-limbo';
+        return null;
+    }
+
+    /** True when the IOW/Smart HUD's tool for the current dice/limbo page is
+     *  enabled. Mobile registers dice and limbo as separate tools, so the
+     *  panel/quick-toggle can disable one without the other. buildHUD/tryStitch
+     *  call this to tear the HUD down when the user disabled the current game. */
+    function isCurrentGameEnabled() {
+        const toolId = currentGameToolId();
+        if (!toolId) return true; // unknown URL — isOnSupportedGamePage handles it
+        try { return isToolIdEnabled(toolId); }
+        catch (e) { return true; }
+    }
 
     function getStakeWagerField() {
         if (isShuffle() || isNuts()) return null;
@@ -1334,30 +1384,50 @@
 
     function findStakeMultiplierBlock() {
         const activeHud = document.getElementById('ratchet-master-container');
-        const input = document.querySelector(
-            'input[data-testid="payout"], input[min="1.0102"], input[data-testid="target-multiplier"], ' +
-            'input[placeholder*="Multiplier"], input[data-testid="chance"], input[placeholder*="Chance"], ' +
-            'input[data-testid="reverse-roll"], [data-testid="reverse-roll"]'
+        const outside = (el) => el && !el.closest('#ratchet-master-container');
+
+        // Walk up from a native control input to the enclosing `.footer`-classed
+        // row — the labeled "Multiplier / Roll Over / Win Chance" (dice) or
+        // "Target Multiplier / Win Chance" (limbo) block that lives in the game
+        // stage the HUD overlays. If there is no footer (e.g. the dice roll
+        // slider sits in a plain wrap), fall back to the nearest short, wide
+        // container holding the control so we still relocate something usable.
+        const footerOf = (control) => {
+            if (!outside(control)) return null;
+            let p = control.parentElement;
+            for (let i = 0; i < 9 && p && p !== document.body; i++, p = p.parentElement) {
+                if (activeHud && p.contains(activeHud)) continue;
+                if (Array.from(p.classList).some(c => /^footer/i.test(c))) return p;
+            }
+            p = control.parentElement;
+            let best = control.parentElement;
+            for (let i = 0; i < 5 && p && p !== document.body; i++, p = p.parentElement) {
+                if (activeHud && p.contains(activeHud)) continue;
+                const r = p.getBoundingClientRect();
+                if (r.width >= 200 && r.height >= 40 && r.height <= 220) { best = p; break; }
+            }
+            return best;
+        };
+
+        // Game-gated so dice and limbo never grab each other's leftover controls
+        // after in-app (SPA) navigation between the two. Dice uses `chance` /
+        // `dice-slider`; limbo uses `win-chance`. Older skins use payout/etc.
+        if (isOnDicePage()) {
+            // Target the labeled fields footer — Multiplier (payout), Roll Over
+            // (reverse-roll, a type=button that toggles over/under when clicked),
+            // and Win Chance (chance). Deliberately NOT the roll slider: the user
+            // wants the fields + switch, not the slider, and the slider stays
+            // behind the (opaque) HUD overlay so it isn't visible.
+            return footerOf(
+                document.querySelector('input[data-testid="payout"]')
+                || document.querySelector('input[data-testid="chance"]')
+                || document.querySelector('input[data-testid="reverse-roll"], [data-testid="reverse-roll"]')
+            );
+        }
+        return footerOf(
+            document.querySelector('input[data-testid="win-chance"]')
+            || document.querySelector('input[data-testid="target-multiplier"], input[data-testid="payout"], input[placeholder*="Multiplier"]')
         );
-        if (input && !input.closest('#ratchet-master-container')) {
-            let p = input.parentElement;
-            for (let i = 0; i < 8 && p && p !== document.body; i++, p = p.parentElement) {
-                if (activeHud && p.contains(activeHud)) continue;
-                const r = p.getBoundingClientRect();
-                if (r.width >= 220 && r.height >= 38 && r.height <= 220 && stakeBlockHasMultiplierControls(p)) return p;
-            }
-        }
-        const label = Array.from(document.querySelectorAll('label, p, span, div'))
-            .find(el => !el.closest('#ratchet-master-container') && /^(multiplier|roll over|roll under|chance)$/i.test((el.textContent || '').trim()));
-        if (label) {
-            let p = label.parentElement;
-            for (let i = 0; i < 8 && p && p !== document.body; i++, p = p.parentElement) {
-                if (activeHud && p.contains(activeHud)) continue;
-                const r = p.getBoundingClientRect();
-                if (r.width >= 220 && r.height >= 38 && r.height <= 220 && stakeBlockHasMultiplierControls(p)) return p;
-            }
-        }
-        return null;
     }
 
     function makeStakeNativeControlsStack(multiplierBlock, playWagerBlock) {
@@ -1458,8 +1528,17 @@
             return;
         }
         mountSingleElement(document.getElementById('hud-native-past-bets-slot'), findNativeElement('.past-bets'));
+        // Relocate the native Multiplier / Roll Over / Win Chance controls into
+        // the HUD's controls slot. On mobile these sit in the game-stage area
+        // that the HUD overlays with an opaque panel, so without moving them the
+        // user can't see or edit the multiplier. findStakeMultiplierBlock only
+        // returns blocks outside the HUD, so once moved it returns null and
+        // mountSingleElement no-ops — this is idempotent across ticks.
         const stakeControlsSlot = document.getElementById('hud-stake-native-controls-slot');
-        if (stakeControlsSlot && stakeControlsSlot.childElementCount) stakeControlsSlot.replaceChildren();
+        if (stakeControlsSlot) {
+            const block = findStakeMultiplierBlock();
+            if (block) mountSingleElement(stakeControlsSlot, block);
+        }
         const footerSlot = document.getElementById('hud-footer-slot');
         if (footerSlot && footerSlot.childElementCount) footerSlot.replaceChildren();
         const gameFooterSlot = document.getElementById('hud-native-game-footer-slot');
@@ -1753,7 +1832,7 @@
        HUD CONSTRUCTION
        ============================================================ */
     function buildHUD() {
-        if (!isOnSupportedGamePage() || !isCurrentGameEnabled() || !isToolIdEnabled(toolIdForCurrentSite('iow-smart'))) {
+        if (!isOnSupportedGamePage() || !isCurrentGameEnabled()) {
             const existing = document.getElementById('ratchet-master-container');
             if (existing) existing.remove();
             return;
@@ -1786,6 +1865,7 @@
                         <div id="hud-content"></div>
                     </div>
                     <div id="hud-footer-slot" class="hud-footer-slot"></div>
+                    <div id="hud-stake-native-controls-slot" class="hud-stake-native-controls-slot"></div>
                 </div>
                 <div id="hud-native-game-footer-slot" class="hud-native-game-footer-slot"></div>
             `;
@@ -1804,7 +1884,7 @@
         setTimeout(() => {
             syncNativeHudElements();
         }, 350);
-        try { markToolRan(toolIdForCurrentSite('iow-smart')); } catch (e) {}
+        try { const tid = currentGameToolId(); if (tid) markToolRan(tid); } catch (e) {}
     }
 
     function buildHUDContent() {
@@ -4798,7 +4878,7 @@ self.onmessage = async (e) => {
         }
 
         function tryStitch() {
-            if (!isOnDiceUrl() || !isToolIdEnabled(toolIdForCurrentSite('iow-smart'))) {
+            if (!isOnDiceUrl() || !isCurrentGameEnabled()) {
                 if (toolsActive) {
                     try { deactivateTools(); } catch (e) {}
                 }
@@ -6286,7 +6366,7 @@ self.onmessage = async (e) => {
         if (toolId.endsWith('-keno'))      return ['#keno-preset-gui'];
         if (toolId.endsWith('-mines'))     return ['#mines-auto-gui'];
         if (toolId.endsWith('-autovault')) return ['#autovault-floaty'];
-        if (toolId.endsWith('-iow-smart')) return []; // hijacksPage — handled by gating
+        if (toolId.endsWith('-dice') || toolId.endsWith('-limbo')) return []; // hijacksPage — handled by gating
         return [];
     }
 
