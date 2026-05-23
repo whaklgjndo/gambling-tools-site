@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mobile 
 // @namespace    https://whaklgjndo.github.io/gambling-tools/
-// @version      4.7
+// @version      5.0
 // @description  .
 // @author       .
 // @match        https://stake.com/*
@@ -26,7 +26,7 @@
 (function () {
     'use strict';
 
-    try { console.log('[unified-mobile] boot v4.7 — dice/limbo gating + fields-footer relocation (no slider)'); } catch (e) {}
+    try { console.log('[unified-mobile] boot v5.0 — taller game-stage so limbo/dice HUD has room; Shuffle vault same-origin + currency-from-icon'); } catch (e) {}
 
     /* ============================================================
        iOS USERSCRIPTS COMPATIBILITY
@@ -768,6 +768,7 @@
             --hud-panel: linear-gradient(180deg, rgba(26, 44, 56, 0.98), rgba(15, 33, 46, 0.96));
             --hud-border: rgba(82, 109, 130, 0.55);
             --hud-border-soft: rgba(255, 255, 255, 0.06);
+            --hud-line: rgba(255, 255, 255, 0.07);
             --hud-green: #00ff9d;
             --hud-green-dark: #00cc7a;
             --hud-red: #e11d48;
@@ -778,7 +779,7 @@
             background: var(--hud-bg) !important;
             border: 1px solid var(--hud-border) !important;
             border-radius: 0 !important;
-            padding: 6px !important;
+            padding: 5px !important;
             box-shadow: 0 8px 24px rgba(0, 0, 0, 0.7) !important;
             z-index: auto !important;
             display: flex !important;
@@ -800,7 +801,7 @@
         }
         #ratchet-master-container .hud-frame {
             display: flex; flex-direction: column;
-            flex: 1 1 0; min-height: 0; gap: 6px; overflow: hidden;
+            flex: 1 1 0; min-height: 0; gap: 4px; overflow: hidden;
         }
         #ratchet-master-container .hud-workspace {
             display: flex; flex-direction: column;
@@ -815,7 +816,7 @@
         }
         #ratchet-master-container .hud-native-sidebar-slot { display: none !important; }
         #ratchet-master-container .hud-native-past-bets-slot {
-            display: flex; flex: 0 0 auto; min-height: 36px;
+            display: flex; flex: 0 0 auto; min-height: 30px;
             overflow: hidden;
         }
         #ratchet-master-container .hud-native-past-bets-slot > .past-bets,
@@ -937,6 +938,154 @@
             color: #b1bad3; font-size: 11px;
             font-weight: 800; font-style: italic;
         }
+        /* ============================================================
+           DICE / LIMBO — DECLUTTERED STATS CONSOLE
+           Collapses the old stack (filled pills inside bordered cards
+           inside a grid, plus floating Best/Worst chips) into ONE calm
+           panel: a single focal Profit/Loss readout, then hairline-
+           separated secondary rows. Scoped to .hud-stats so the advanced
+           dice-tools panel (#dt-panel-stats, which reuses .hud-row /
+           .stats-col-inner) keeps its own layout untouched.
+           ============================================================ */
+        #ratchet-master-container .hud-stats {
+            display: flex; flex-direction: column;
+            padding: 6px 9px; gap: 0;
+            flex: 0 0 auto;
+        }
+        #ratchet-master-container .hud-stats .hud-statusline {
+            font-size: 10px; font-weight: 700; color: #cfd9e4;
+            line-height: 1.2;
+        }
+        #ratchet-master-container .hud-stats .hud-statusline:not(:empty) {
+            padding-bottom: 4px; margin-bottom: 4px;
+            border-bottom: 1px solid var(--hud-line);
+        }
+        #ratchet-master-container .hud-stats .hud-hero {
+            display: flex; align-items: baseline; flex-wrap: wrap;
+            column-gap: 8px; row-gap: 0;
+            padding-bottom: 4px; margin-bottom: 4px;
+            border-bottom: 1px solid var(--hud-line);
+        }
+        #ratchet-master-container .hud-hero-label {
+            flex: 0 0 auto;
+            color: #8c9bb0; font-size: 9px; font-weight: 800;
+            text-transform: uppercase; letter-spacing: 0.6px;
+        }
+        #ratchet-master-container .hud-hero-val {
+            color: #fff;
+            font-family: "Roboto Mono", monospace;
+            font-size: 16px; font-weight: 700; line-height: 1;
+            letter-spacing: -0.4px;
+            font-variant-numeric: tabular-nums;
+        }
+        #ratchet-master-container .hud-hero-start {
+            margin-left: auto;
+            color: #7e8ea3; font-size: 10px; font-weight: 600;
+            font-family: "Roboto Mono", monospace;
+        }
+        #ratchet-master-container .hud-hero-start b { color: #c6d2df; font-weight: 700; }
+        #ratchet-master-container .hud-stats .hud-stats-grid {
+            grid-template-columns: 1fr 1fr;
+            gap: 0 16px; flex: 0 0 auto;
+        }
+        #ratchet-master-container .hud-stats .hud-stats-grid + .hud-stats-grid {
+            margin-top: 4px; padding-top: 0;
+            border-top: 1px solid var(--hud-line);
+        }
+        #ratchet-master-container .hud-stats .stats-col-inner {
+            background: none; border: none; box-shadow: none;
+            padding: 0; border-radius: 0; gap: 0;
+        }
+        #ratchet-master-container .hud-stats .hud-row {
+            background: none; border-radius: 0;
+            padding: 1px 0; gap: 8px;
+            border-bottom: 1px solid var(--hud-line);
+            font-size: 11px; line-height: 1.25; min-width: 0;
+        }
+        #ratchet-master-container .hud-stats .stats-col-inner > .hud-row:last-child { border-bottom: none; }
+        #ratchet-master-container .hud-stats .hud-label {
+            color: #8c9bb0; font-size: 10px; font-weight: 600;
+            text-transform: none; letter-spacing: 0.1px;
+            white-space: nowrap;
+        }
+        #ratchet-master-container .hud-stats .hud-val {
+            color: #f4f7fb; font-size: 11px; font-weight: 700;
+            font-variant-numeric: tabular-nums;
+            overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+            min-width: 0; padding-left: 6px;
+        }
+        #ratchet-master-container .hud-stats .hud-meta-row {
+            flex-direction: row; gap: 14px;
+            margin-top: 4px; padding-top: 3px;
+            border-top: 1px solid var(--hud-line);
+        }
+        #ratchet-master-container .hud-stats .hud-meta-chip {
+            flex: 1 1 0; min-width: 0;
+            background: none; border: none; border-radius: 0;
+            padding: 1px 0; gap: 8px;
+        }
+        /* Compact controls deck (inputs only — action buttons live in the
+           pinned bar below). Scoped to the direct-child shell so
+           #dt-panel-stats is unaffected. */
+        #ratchet-master-container #hud-content > .hud-shell .hud-controls-deck { padding: 6px; gap: 4px 8px; flex: 0 0 auto; }
+        #ratchet-master-container #hud-content > .hud-shell .hud-control-group { gap: 1px; }
+        #ratchet-master-container #hud-content > .hud-shell .hud-control-group label {
+            color: #8c9bb0; font-size: 9px; font-weight: 600;
+            text-transform: none; letter-spacing: 0.1px;
+        }
+        /* Simple (non-full) fields go label-beside-input to save a stacked
+           line each; full-width groups (Base/Bet, Aggression) stay stacked. */
+        #ratchet-master-container #hud-content > .hud-shell .hud-control-group:not(.full) {
+            flex-direction: row; align-items: center; gap: 6px;
+        }
+        #ratchet-master-container #hud-content > .hud-shell .hud-control-group:not(.full) > label { flex: 0 0 auto; }
+        #ratchet-master-container #hud-content > .hud-shell .hud-control-group:not(.full) > input[type="number"],
+        #ratchet-master-container #hud-content > .hud-shell .hud-control-group:not(.full) > select {
+            flex: 1 1 0; min-width: 0; width: auto;
+        }
+        #ratchet-master-container #hud-content > .hud-shell input[type="number"],
+        #ratchet-master-container #hud-content > .hud-shell select {
+            background: #0c1620;
+            border: 1px solid rgba(255, 255, 255, 0.09);
+            border-radius: 8px;
+            min-height: 26px; padding: 3px 6px;
+        }
+        #ratchet-master-container #hud-content > .hud-shell input[type="number"]:focus { border-color: var(--hud-green); }
+        #ratchet-master-container #hud-content > .hud-shell .quick-btn {
+            background: rgba(255, 255, 255, 0.04);
+            border: 1px solid rgba(255, 255, 255, 0.09);
+            border-radius: 8px; height: 26px; width: 30px;
+        }
+        #ratchet-master-container #hud-content > .hud-shell .quick-btn:active { background: rgba(255, 255, 255, 0.12); }
+
+        /* --- No-scroll flex chain: the workspace fills the frame and the graph
+           is the flex-absorber that soaks up leftover height, so stats +
+           controls + graph fit one screen. Gated to the normal HUD (not the
+           dt-aio tools panel, which keeps its own layout). --- */
+        #ratchet-master-container #hud-content {
+            flex: 1 1 0 !important; min-height: 0 !important;
+            display: flex; flex-direction: column;
+        }
+        #ratchet-master-container:not([data-tools-active="1"]) #hud-content > .hud-shell {
+            flex: 1 1 0; min-height: 0;
+            display: flex; flex-direction: column; gap: 6px;
+        }
+        #ratchet-master-container #hud-content > .hud-shell > .hud-graph-box {
+            flex: 1 1 0; min-height: 32px; height: auto;
+            border-color: var(--hud-border-soft);
+        }
+
+        /* --- Pinned action bar: START/STOP · RESET · Switch always visible
+           and thumb-reachable, never scrolled away. Hidden while the dt-aio
+           tools panel owns the screen. --- */
+        #ratchet-master-container .hud-action-bar {
+            display: flex; gap: 6px; flex: 0 0 auto; align-items: stretch;
+        }
+        #ratchet-master-container .hud-action-bar:empty { display: none !important; }
+        #ratchet-master-container[data-tools-active="1"] .hud-action-bar { display: none !important; }
+        #ratchet-master-container .hud-action-bar .hud-reset-btn,
+        #ratchet-master-container .hud-action-bar .hud-switch-ou-btn { flex: 1 1 0; margin: 0; }
+        #ratchet-master-container .hud-action-bar .hud-rapid-btn { flex: 2 1 0; margin: 0; }
         #ratchet-master-container .hud-header {
             display: flex; padding: 0 2px;
             justify-content: space-between; align-items: center;
@@ -1845,6 +1994,12 @@
         }
         let hud = document.getElementById('ratchet-master-container');
         if (window.getComputedStyle(gameDisplay).position === 'static') gameDisplay.style.position = 'relative';
+        // Limbo's game stage is much shorter than dice's, so the HUD (which is
+        // height:100% of this host) crams its controls into a tiny strip. Grow the
+        // host's min-height so the HUD gets clean vertical room. The native bet
+        // panel is a sibling BELOW the stage, so it just flows further down —
+        // nothing is covered. (One knob to tune: the clamp() below.)
+        gameDisplay.style.minHeight = 'clamp(420px, 54dvh, 640px)';
         if (hud && hud.parentElement !== gameDisplay) gameDisplay.appendChild(hud);
         if (!hud) {
             hud = document.createElement('div');
@@ -1864,6 +2019,7 @@
                     <div class="hud-workspace">
                         <div id="hud-content"></div>
                     </div>
+                    <div id="hud-action-bar" class="hud-action-bar"></div>
                     <div id="hud-footer-slot" class="hud-footer-slot"></div>
                     <div id="hud-stake-native-controls-slot" class="hud-stake-native-controls-slot"></div>
                 </div>
@@ -1889,6 +2045,7 @@
 
     function buildHUDContent() {
         const content = document.getElementById('hud-content');
+        const actionBar = document.getElementById('hud-action-bar');
         const hud = document.getElementById('ratchet-master-container');
         if (!content) return;
         if (hud) hud.dataset.mode = ACTIVE_MODE;
@@ -1900,19 +2057,27 @@
         const manualInputValue = formatCurrencyInput(manualBet);
         const autostopInputValue = autoStopBalance !== null ? formatCurrencyInput(autoStopBalance) : '';
         const switchBtn = isOnDicePage() ? '<button id="h-switch-ou" class="hud-switch-ou-btn">Switch O/U</button>' : '';
+        const actionHtml = `
+            <button id="h-reset" class="hud-reset-btn">RESET</button>
+            ${switchBtn}
+            <button id="h-rapid-toggle" class="hud-rapid-btn start">START</button>
+        `;
         const commonStatsHtml = `
+            <div class="hud-hero">
+                <span class="hud-hero-label">Profit / Loss</span>
+                <span id="h-profit" class="hud-hero-val">0.00</span>
+                <span class="hud-hero-start">from <b id="h-start-bal">0.00</b></span>
+            </div>
             <div class="hud-stats-grid">
                 <div class="stats-col-inner">
-                    <div class="hud-row"><span class="hud-label">Start Bal</span><span id="h-start-bal" class="hud-val">0.00</span></div>
-                    <div class="hud-row"><span class="hud-label">Profit/Loss</span><span id="h-profit" class="hud-val">0.00</span></div>
                     <div class="hud-row"><span class="hud-label">Peak Bal</span><span id="h-peak-bal" class="hud-val" style="color:#00ff9d;">0.00</span></div>
                     <div class="hud-row"><span class="hud-label">Peak Profit</span><span id="h-high-profit" class="hud-val" style="color:#00ff9d;">0.00</span></div>
+                    <div class="hud-row"><span class="hud-label">RTP</span><span id="h-rtp" class="hud-val">100.00%</span></div>
                 </div>
                 <div class="stats-col-inner">
                     <div class="hud-row"><span class="hud-label">Bets</span><span id="h-total-bets" class="hud-val">0</span></div>
                     <div class="hud-row"><span class="hud-label">Wagered</span><span id="h-wagered" class="hud-val">0.00</span></div>
                     <div class="hud-row"><span class="hud-label">W / L</span><span id="h-wl" class="hud-val">0 / 0</span></div>
-                    <div class="hud-row"><span class="hud-label">RTP</span><span id="h-rtp" class="hud-val">100.00%</span></div>
                 </div>
             </div>
         `;
@@ -1925,6 +2090,12 @@
         if (ACTIVE_MODE === 'iow') {
             html = `
                 <div class="hud-shell">
+                    <div class="hud-stats hud-panel">
+                        <div class="hud-statusline" id="h-target">base: 0.01 | W:0 | LS:0</div>
+                        ${commonStatsHtml}
+                        ${metaRowHtml}
+                    </div>
+                    <div class="hud-graph-box"><canvas id="h-custom-graph"></canvas></div>
                     <div class="hud-controls-deck hud-panel">
                         <div class="hud-control-group full">
                             <label>Base bet</label>
@@ -1950,24 +2121,28 @@
                             <label>Autostop bal</label>
                             <input id="h-autostop" type="number" step="${moneyStep}" value="${autostopInputValue}" placeholder="OFF">
                         </div>
-                        <div class="btn-group">
-                            <button id="h-reset" class="hud-reset-btn">RESET</button>
-                            ${switchBtn || '<span></span>'}
-                            <button id="h-rapid-toggle" class="hud-rapid-btn start">START</button>
-                        </div>
                     </div>
-                    <div class="status-bar" id="h-target">base: 0.01 | W:0 | LS:0</div>
-                    <div class="hud-graph-box"><canvas id="h-custom-graph"></canvas></div>
-                    ${commonStatsHtml}
-                    ${metaRowHtml}
                 </div>
             `;
         } else if (ACTIVE_MODE === 'smart') {
             html = `
                 <div class="hud-shell">
-                    <div class="hud-header">
-                        <span id="h-target" class="hud-target-text">Initializing...</span>
+                    <div class="hud-stats hud-panel">
+                        <div class="hud-statusline" id="h-target">Initializing...</div>
+                        ${commonStatsHtml}
+                        <div class="hud-stats-grid">
+                            <div class="stats-col-inner">
+                                <div class="hud-row"><span class="hud-label">Agg State</span><span id="h-state" class="hud-val gear-text gear-1-text">GEAR 1</span></div>
+                                <div class="hud-row"><span class="hud-label">Momentum</span><span id="h-hot" class="hud-val">0/0</span></div>
+                            </div>
+                            <div class="stats-col-inner">
+                                <div class="hud-row"><span class="hud-label">Streak W|L</span><span id="h-streaks" class="hud-val">0/0|0/0</span></div>
+                                <div class="hud-row"><span class="hud-label">Mult Perf</span><span id="h-mult-perf" class="hud-val">1 in 0.00</span></div>
+                            </div>
+                        </div>
+                        ${metaRowHtml}
                     </div>
+                    <div class="hud-graph-box"><canvas id="h-custom-graph"></canvas></div>
                     <div class="hud-controls-deck hud-panel">
                         <div class="hud-control-group full">
                             <label>Aggression <span id="h-agg-val" style="color:#fff;">${aggressionLevel.toFixed(1)}x</span></label>
@@ -1997,33 +2172,27 @@
                             <label>Take Profit %</label>
                             <input id="h-tp" type="number" min="0" max="100" value="0" step="0.5">
                         </div>
-                        <div class="btn-group">
-                            <button id="h-reset" class="hud-reset-btn">RESET</button>
-                            ${switchBtn || '<span></span>'}
-                            <button id="h-rapid-toggle" class="hud-rapid-btn start">START</button>
-                        </div>
                     </div>
-                    <div class="hud-graph-box"><canvas id="h-custom-graph"></canvas></div>
-                    ${commonStatsHtml}
-                    <div class="hud-stats-grid">
-                        <div class="stats-col-inner">
-                            <div class="hud-row"><span class="hud-label">Agg State</span><span id="h-state" class="hud-val gear-text gear-1-text">GEAR 1</span></div>
-                            <div class="hud-row"><span class="hud-label">Momentum</span><span id="h-hot" class="hud-val">0/0</span></div>
-                        </div>
-                        <div class="stats-col-inner">
-                            <div class="hud-row"><span class="hud-label">Streak W|L</span><span id="h-streaks" class="hud-val">0/0|0/0</span></div>
-                            <div class="hud-row"><span class="hud-label">Mult Perf</span><span id="h-mult-perf" class="hud-val">1 in 0.00</span></div>
-                        </div>
-                    </div>
-                    ${metaRowHtml}
                 </div>
             `;
         } else {
             html = `
                 <div class="hud-shell">
-                    <div class="hud-header">
-                        <span id="h-target" class="hud-target-text">Manual • Tap START</span>
+                    <div class="hud-stats hud-panel">
+                        <div class="hud-statusline" id="h-target">Manual • Tap START</div>
+                        ${commonStatsHtml}
+                        <div class="hud-stats-grid">
+                            <div class="stats-col-inner">
+                                <div class="hud-row"><span class="hud-label">Streak W|L</span><span id="h-streaks" class="hud-val">0/0|0/0</span></div>
+                                <div class="hud-row"><span class="hud-label">Momentum</span><span id="h-hot" class="hud-val">0/0</span></div>
+                            </div>
+                            <div class="stats-col-inner">
+                                <div class="hud-row"><span class="hud-label">Mult Perf</span><span id="h-mult-perf" class="hud-val">1 in 0.00</span></div>
+                            </div>
+                        </div>
+                        ${metaRowHtml}
                     </div>
+                    <div class="hud-graph-box"><canvas id="h-custom-graph"></canvas></div>
                     <div class="hud-controls-deck hud-panel">
                         <div class="hud-control-group full">
                             <label>Bet</label>
@@ -2045,28 +2214,12 @@
                             <label>Take Profit %</label>
                             <input id="h-tp" type="number" min="0" max="100" value="0" step="0.5">
                         </div>
-                        <div class="btn-group">
-                            <button id="h-reset" class="hud-reset-btn">RESET</button>
-                            ${switchBtn || '<span></span>'}
-                            <button id="h-rapid-toggle" class="hud-rapid-btn start">START</button>
-                        </div>
                     </div>
-                    <div class="hud-graph-box"><canvas id="h-custom-graph"></canvas></div>
-                    ${commonStatsHtml}
-                    <div class="hud-stats-grid">
-                        <div class="stats-col-inner">
-                            <div class="hud-row"><span class="hud-label">Streak W|L</span><span id="h-streaks" class="hud-val">0/0|0/0</span></div>
-                            <div class="hud-row"><span class="hud-label">Momentum</span><span id="h-hot" class="hud-val">0/0</span></div>
-                        </div>
-                        <div class="stats-col-inner">
-                            <div class="hud-row"><span class="hud-label">Mult Perf</span><span id="h-mult-perf" class="hud-val">1 in 0.00</span></div>
-                        </div>
-                    </div>
-                    ${metaRowHtml}
                 </div>
             `;
         }
         content.innerHTML = html;
+        if (actionBar) actionBar.innerHTML = actionHtml;
         attachListeners();
     }
 
@@ -2487,6 +2640,7 @@
         if (!isShuffle()) syncLastSeenBet();
         if (ACTIVE_MODE === 'iow') setBet(baseBet);
         if (ACTIVE_MODE === 'manual') setBet(manualBet);
+        if (ACTIVE_MODE === 'smart') updateBetAmount();
         updateUI();
         // Mobile has no spacebar. Poll the play button for both Stake and
         // Shuffle — the button disables itself while a bet is in flight, so
@@ -2721,6 +2875,11 @@
        ============================================================ */
     function updateBetAmount() {
         if (ACTIVE_MODE !== 'smart') return;
+        // Only size the native bet input while the auto-bet loop is actually
+        // running. Without this guard the 600ms HUD ticker rewrites the wager
+        // during manual play, fighting the value the user typed (reported: bet
+        // "adjusts itself ever so slightly" with the dice tool not running).
+        if (!isRapidFiring) return;
         // Don't write the wager while Advanced IOW owns the bet field via the
         // dice tool's strategy editor. ACTIVE_MODE stays 'smart' because the
         // Advanced IOW button is injected and doesn't go through switchMode().
@@ -3745,24 +3904,6 @@ self.onmessage = async (e) => {
         return `
           <section class="dt-panel" id="dt-panel-settings">
             <div class="dt-card">
-              <div class="dt-card-title">Interface</div>
-              <div class="dt-setting-row">
-                <div class="dt-setting-label">Color Theme</div>
-                <select class="dt-theme-select" id="dt-theme_select">
-                  <option value="original">Original</option>
-                  <option value="stake">Stake</option>
-                  <option value="shuffle">Shuffle</option>
-                </select>
-              </div>
-              <div class="dt-setting-row">
-                <div>
-                  <div class="dt-setting-label">Large Fonts (+20%)</div>
-                  <div class="dt-setting-desc">Increases text size across the app.</div>
-                </div>
-                <label class="dt-switch"><input type="checkbox" id="dt-large_fonts"><span class="dt-slider"></span></label>
-              </div>
-            </div>
-            <div class="dt-card">
               <div class="dt-card-title">Optimizer</div>
               <div class="dt-setting-row">
                 <div>
@@ -4656,14 +4797,14 @@ self.onmessage = async (e) => {
     }
 
     function dt_applyTheme() {
-        const t = $dt('theme_select').value;
+        const t = dt_state.theme || 'original';
         const val = t === 'original' ? '' : t;
         document.getElementById(DT_PANEL_ID).setAttribute('data-theme', val);
         const tt = document.getElementById('dt-tooltip');
         if (tt) tt.setAttribute('data-theme', val);
     }
     function dt_applyFontScale() {
-        document.getElementById(DT_PANEL_ID).setAttribute('data-large-fonts', $dt('large_fonts').checked ? 'true' : 'false');
+        document.getElementById(DT_PANEL_ID).setAttribute('data-large-fonts', dt_state.large_fonts ? 'true' : 'false');
     }
 
     function dt_applyStateToUI() {
@@ -4736,8 +4877,6 @@ self.onmessage = async (e) => {
         $dt('res_csv').addEventListener('click', dt_exportResultsCSV);
         document.getElementById('dt-res_table').addEventListener('click', dt_onResTableClick);
 
-        $dt('theme_select').addEventListener('change', () => { dt_applyTheme(); dt_saveState(); });
-        $dt('large_fonts').addEventListener('change', () => { dt_applyFontScale(); dt_saveState(); });
         $dt('keep_prev').addEventListener('change', dt_saveState);
         $dt('worker_count').addEventListener('change', dt_saveState);
         $dt('reset_state').addEventListener('click', () => {
@@ -5418,12 +5557,24 @@ self.onmessage = async (e) => {
                 '#dt-panel-stats { padding: 8px !important; flex-direction: column !important; gap: 8px !important; }',
                 '#dt-panel-stats.active { display: flex !important; flex: 1 1 auto !important; min-height: 0 !important; }',
                 '#dt-panel-stats * { box-sizing: border-box; }',
-                '#dt-panel-stats > .hud-shell { flex: 1 1 auto !important; min-height: 0 !important; height: auto !important; gap: 6px; }',
-                /* Mobile: 1-column deck */
-                '#dt-panel-stats .hud-controls-deck { grid-template-columns: 1fr !important; padding: 8px !important; gap: 6px !important; }',
+                '#dt-panel-stats > .hud-shell { display: flex !important; flex-direction: column !important; flex: 1 1 auto !important; min-height: 0 !important; height: auto !important; gap: 6px; }',
+                /* Mobile: 1-column deck, compact to match the main HUD */
+                '#dt-panel-stats .hud-controls-deck { grid-template-columns: 1fr !important; padding: 6px !important; gap: 4px !important; flex: 0 0 auto !important; }',
                 '#dt-panel-stats .hud-control-group input[type="number"] { width: 100% !important; }',
-                /* W/L counter chip — thumb-readable */
-                '#dt-panel-stats .hud-counter-chip { flex-direction: column !important; gap: 2px !important; align-items: center !important; padding: 6px 10px !important; }',
+                '#dt-panel-stats .hud-control-group { gap: 1px !important; }',
+                '#dt-panel-stats .hud-control-group label { font-size: 9px !important; font-weight: 600 !important; text-transform: none !important; letter-spacing: 0.1px !important; color: #8c9bb0 !important; }',
+                '#dt-panel-stats .hud-controls-deck input[type="number"], #dt-panel-stats .hud-controls-deck select { min-height: 26px !important; padding: 3px 6px !important; }',
+                /* Simple fields go label-beside-input; volume keeps slider full width below its label */
+                '#dt-panel-stats .hud-control-group:not(.hud-volume-group) { flex-direction: row !important; align-items: center !important; gap: 8px !important; }',
+                '#dt-panel-stats .hud-control-group:not(.hud-volume-group) > label { flex: 0 0 auto !important; }',
+                '#dt-panel-stats .hud-control-group:not(.hud-volume-group) > input[type="number"], #dt-panel-stats .hud-control-group:not(.hud-volume-group) > select { flex: 1 1 0 !important; width: auto !important; min-width: 0 !important; }',
+                '#dt-panel-stats .hud-control-group:not(.hud-volume-group) > .hud-autostop-row { flex: 1 1 0 !important; justify-content: flex-end !important; }',
+                /* W/L streak counter — compact header atop the stats panel.
+                   flex:0 0 auto + overflow:visible override the .hud-stats
+                   .hud-meta-chip rule (flex:1 1 0, overflow:hidden) which is
+                   meant for the side-by-side Best/Worst chips and would
+                   otherwise collapse this column-child to ~6px and clip it. */
+                '#dt-panel-stats .hud-counter-chip { flex: 0 0 auto !important; overflow: visible !important; flex-direction: column !important; gap: 1px !important; align-items: center !important; padding: 0 0 5px !important; margin-bottom: 5px !important; background: none !important; border: none !important; border-bottom: 1px solid var(--hud-line) !important; border-radius: 0 !important; }',
                 '#dt-panel-stats .hud-counter-row { display: flex !important; gap: 18px !important; justify-content: center !important; }',
                 '#dt-panel-stats .hud-counter-row span { font-size: 9px !important; color: #94a3b8 !important; text-transform: uppercase !important; font-weight: 700 !important; min-width: 22px !important; text-align: center !important; }',
                 '#dt-panel-stats .hud-counter-vals { display: flex !important; gap: 18px !important; align-items: center !important; justify-content: center !important; }',
@@ -5431,7 +5582,7 @@ self.onmessage = async (e) => {
                 '#dt-panel-stats .hud-counter-slot > #dt-ctr_w,',
                 '#dt-panel-stats .hud-counter-slot > #dt-ctr_l {',
                 '  display: inline !important;',
-                '  font-size: 22px !important; font-weight: 800 !important;',
+                '  font-size: 18px !important; font-weight: 800 !important;',
                 '  font-family: "Roboto Mono", monospace !important;',
                 '  min-width: 26px !important; text-align: center !important;',
                 '  background: transparent !important; padding: 0 !important;',
@@ -5459,8 +5610,9 @@ self.onmessage = async (e) => {
                 '#dt-panel-stats .hud-volume-group label { display: flex !important; justify-content: space-between !important; align-items: center !important; gap: 6px !important; }',
                 '#dt-panel-stats .hud-volume-group label > span:last-child { color: ' + HUD_GREEN + '; font-family: "Roboto Mono", monospace; font-weight: 800; }',
                 '#dt-panel-stats .hud-volume-group input[type="range"] { width: 100% !important; accent-color: ' + HUD_GREEN + '; cursor: pointer; }',
-                /* Stats grid — single column on narrow viewports to keep rows readable */
-                '#dt-panel-stats .hud-stats-grid { grid-template-columns: 1fr 1fr !important; gap: 6px !important; }',
+                /* Stats grid — two columns, airy column gap (dense hairline rows come from .hud-stats) */
+                '#dt-panel-stats .hud-stats-grid { grid-template-columns: 1fr 1fr !important; gap: 0 14px !important; }',
+                '#dt-panel-stats .hud-stats { flex: 0 0 auto !important; }',
                 /* Action buttons — grid-template-columns 1fr 1fr like the existing mobile .btn-group */
                 '#dt-panel-stats .btn-group { display: grid !important; grid-template-columns: 1fr 1fr !important; gap: 6px !important; grid-column: 1 / -1 !important; }',
                 '#dt-panel-stats .hud-update-btn,',
@@ -5485,18 +5637,22 @@ self.onmessage = async (e) => {
                 '#dt-panel-stats .hud-rapid-btn.start:active { background: ' + HUD_GREEN_DK + '; }',
                 '#dt-panel-stats .hud-rapid-btn.stop { background: ' + HUD_RED + '; }',
                 '#dt-panel-stats .hud-rapid-btn.stop:active { background: #be123c; }',
-                /* Graph box — fixed 130px like the rest of the mobile HUD */
-                '#dt-panel-stats .hud-graph-box { min-height: 130px !important; height: 130px !important; }',
-                '#dt-panel-stats .hud-body { display: flex; flex-direction: column; gap: 6px; }',
-                '#dt-panel-stats .graph-col, #dt-panel-stats .stats-col { width: 100%; }',
+                /* Graph box — flex-absorber that fills leftover height (matches main HUD) */
+                '#dt-panel-stats > .hud-shell > .hud-graph-box { flex: 1 1 0 !important; min-height: 40px !important; height: auto !important; }',
+                /* Pinned action bar — buttons stay reachable while the body scrolls */
+                '#dt-panel-stats .dt-action-bar { position: sticky; bottom: 0; z-index: 3; display: flex; gap: 6px; flex: 0 0 auto; align-items: stretch; padding-top: 6px; margin-top: 1px; background: var(--hud-bg); }',
+                '#dt-panel-stats .dt-action-bar .hud-update-btn { flex: 1.4 1 0; }',
+                '#dt-panel-stats .dt-action-bar .hud-switch-btn, #dt-panel-stats .dt-action-bar .hud-reset-btn { flex: 1 1 0; }',
+                '#dt-panel-stats .dt-action-bar .hud-rapid-btn { flex: 1.4 1 0; }',
+                '#dt-panel-stats .dt-action-bar button { min-height: 36px !important; }',
                 /* Terms tab */
                 '#dt-panel-terms.active { display: flex !important; flex-direction: column; flex: 1 1 auto; min-height: 0; padding: 8px !important; }',
                 '#dt-panel-terms .dt-terms-scroll { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 12px 14px; background: ' + HUD_PANEL_GRADIENT + '; border: 1px solid ' + HUD_BORDER_X + '; border-radius: 10px; color: ' + HUD_FG + '; font-family: "Segoe UI", -apple-system, BlinkMacSystemFont, sans-serif; line-height: 1.5; font-size: 11px; -webkit-overflow-scrolling: touch; }',
-                '#dt-panel-terms .dt-terms-heading { color: #249f87; font-size: 14px; font-weight: 800; letter-spacing: 0.4px; margin: 12px 0 5px; padding-bottom: 4px; border-bottom: 1px solid rgba(36, 159, 135, 0.25); }',
+                '#dt-panel-terms .dt-terms-heading { color: var(--hud-green); font-size: 13px; font-weight: 800; letter-spacing: 0.4px; margin: 10px 0 4px; padding-bottom: 4px; border-bottom: 1px solid var(--hud-line); }',
                 '#dt-panel-terms .dt-terms-heading:first-child { margin-top: 0; }',
-                '#dt-panel-terms .dt-terms-subheading { color: #249f87; font-size: 12px; font-weight: 700; margin: 8px 0 3px; }',
+                '#dt-panel-terms .dt-terms-subheading { color: var(--hud-green); font-size: 11px; font-weight: 700; margin: 7px 0 3px; }',
                 '#dt-panel-terms .dt-terms-row { margin: 3px 0; padding: 0; }',
-                '#dt-panel-terms .dt-terms-label { color: #249f87; font-weight: 700; }',
+                '#dt-panel-terms .dt-terms-label { color: var(--hud-green); font-weight: 700; }',
                 '#dt-panel-terms .dt-terms-dash { color: ' + HUD_LABEL + '; }',
                 '#dt-panel-terms .dt-terms-def { color: ' + HUD_FG + '; }',
                 '#dt-panel-terms .dt-terms-text { margin: 3px 0; color: ' + HUD_FG + '; }',
@@ -5584,15 +5740,7 @@ self.onmessage = async (e) => {
             statsPanel.id = 'dt-panel-stats';
             statsPanel.innerHTML =
                 '<div class="hud-shell">' +
-                  '<div class="hud-controls-deck hud-panel">' +
-                    '<div class="hud-control-group">' +
-                      '<label>Balance Divisor</label>' +
-                      '<input id="dt-stats-bet-div" type="number" inputmode="decimal" step="any">' +
-                    '</div>' +
-                    '<div class="hud-control-group">' +
-                      '<label>Profit Multiplier</label>' +
-                      '<input id="dt-stats-profit-mult" type="number" inputmode="decimal" step="any">' +
-                    '</div>' +
+                  '<div class="hud-stats hud-panel">' +
                     '<div class="hud-meta-chip hud-counter-chip">' +
                       '<div class="hud-counter-row"><span>Wins</span><span>Losses</span></div>' +
                       '<div class="hud-counter-vals">' +
@@ -5600,69 +5748,42 @@ self.onmessage = async (e) => {
                         '<span class="hud-counter-slot" data-counter-slot="l"></span>' +
                       '</div>' +
                     '</div>' +
-                    '<div class="hud-control-group">' +
-                      '<label>Autostop @ Win Streak</label>' +
-                      '<div class="hud-autostop-row">' +
-                        '<input type="checkbox" id="dt-stats-autostop">' +
-                        '<input type="number" min="0" id="dt-stats-target" value="10">' +
+                    '<div class="hud-stats-grid">' +
+                      '<div class="stats-col-inner">' +
+                        '<div class="hud-row" data-stat="startingBalance"><span class="hud-label">Start Bal</span><span class="hud-val">0.00</span></div>' +
+                        '<div class="hud-row" data-stat="profit"><span class="hud-label">Profit/Loss</span><span class="hud-val">0.00</span></div>' +
+                        '<div class="hud-row" data-stat="sessionPeak"><span class="hud-label">Peak Bal</span><span class="hud-val" style="color:#00ff9d;">0.00</span></div>' +
+                        '<div class="hud-row" data-stat="peakProfit"><span class="hud-label">Peak Profit</span><span class="hud-val" style="color:#00ff9d;">0.00</span></div>' +
+                        '<div class="hud-row" data-stat="totalBets"><span class="hud-label">Total Bets</span><span class="hud-val">0</span></div>' +
+                        '<div class="hud-row" data-stat="totalWagered"><span class="hud-label">Wagered</span><span class="hud-val">0.00</span></div>' +
+                      '</div>' +
+                      '<div class="stats-col-inner">' +
+                        '<div class="hud-row" data-stat="winsLosses"><span class="hud-label">Wins / Losses</span><span class="hud-val">0 / 0</span></div>' +
+                        '<div class="hud-row" data-stat="rtp"><span class="hud-label">Session RTP</span><span class="hud-val">100.00%</span></div>' +
+                        '<div class="hud-row" data-stat="streaks"><span class="hud-label">Streak (W|L)</span><span class="hud-val">0/0 | 0/0</span></div>' +
+                        '<div class="hud-row" data-stat="multPerf"><span class="hud-label">Mult Perf</span><span class="hud-val">1 in 0.00</span></div>' +
+                        '<div class="hud-row"><span class="hud-label">Balance Target</span><span class="hud-val" id="dt-stats-bal-target">0.00</span></div>' +
+                        '<div class="hud-row"><span class="hud-label">Profit Stop</span><span class="hud-val" id="dt-stats-profit-stop">0.00</span></div>' +
                       '</div>' +
                     '</div>' +
-                    '<div class="hud-control-group">' +
-                      '<label>Stats Track Per</label>' +
-                      '<select id="dt-stats-track-per">' +
-                        '<option value="session" selected>Session</option>' +
-                        '<option value="cycle">Cycle</option>' +
-                      '</select>' +
-                    '</div>' +
-                    '<div class="hud-control-group hud-volume-group">' +
-                      '<label><span>🔊 Volume</span><span id="dt-stats-volume-val">100</span></label>' +
-                      '<input type="range" id="dt-stats-volume" min="0" max="100" value="100">' +
-                    '</div>' +
-                    '<div class="btn-group">' +
-                      '<button class="hud-update-btn" id="dt-stats-update">Update Strategy</button>' +
-                      '<button id="dt-stats-switch-ou" class="hud-switch-btn">Switch O/U</button>' +
-                      '<button id="dt-stats-reset" class="hud-reset-btn">RESET</button>' +
-                      '<button id="dt-stats-start" class="hud-rapid-btn start" data-running="false">START</button>' +
+                    '<div class="hud-meta-row">' +
+                      '<div class="hud-meta-chip"><span class="hud-label">Best</span><span class="hud-val" data-stat="bestStreaks" style="color:#00ff9d;">-</span></div>' +
+                      '<div class="hud-meta-chip"><span class="hud-label">Worst</span><span class="hud-val" data-stat="worstStreaks" style="color:#f87171;">-</span></div>' +
                     '</div>' +
                   '</div>' +
-                  '<div class="hud-body">' +
-                    '<div class="graph-col">' +
-                      '<div class="hud-graph-box">' +
-                        '<canvas id="dt-stats-graph"></canvas>' +
-                      '</div>' +
-                    '</div>' +
-                    '<div class="stats-col">' +
-                      '<div class="hud-stats-grid">' +
-                        '<div class="stats-col-inner">' +
-                          '<div class="hud-row" data-stat="startingBalance"><span class="hud-label">Starting Balance</span><span class="hud-val">0.00</span></div>' +
-                          '<div class="hud-row" data-stat="totalBets"><span class="hud-label">Total Bets</span><span class="hud-val">0</span></div>' +
-                          '<div class="hud-row" data-stat="profit"><span class="hud-label">Profit/Loss</span><span class="hud-val">0.00</span></div>' +
-                          '<div class="hud-row" data-stat="totalWagered"><span class="hud-label">Total Wagered</span><span class="hud-val">0.00</span></div>' +
-                        '</div>' +
-                        '<div class="stats-col-inner">' +
-                          '<div class="hud-row" data-stat="sessionPeak"><span class="hud-label">Peak Balance</span><span class="hud-val" style="color:#00ff9d;">0.00</span></div>' +
-                          '<div class="hud-row" data-stat="peakProfit"><span class="hud-label">Peak Profit</span><span class="hud-val" style="color:#00ff9d;">0.00</span></div>' +
-                          '<div class="hud-row" data-stat="winsLosses"><span class="hud-label">Wins / Losses</span><span class="hud-val">0 / 0</span></div>' +
-                          '<div class="hud-row" data-stat="rtp"><span class="hud-label">Session RTP</span><span class="hud-val">100.00%</span></div>' +
-                        '</div>' +
-                        '<div class="stats-col-inner">' +
-                          '<div class="hud-row"><span class="hud-label">Balance Target</span><span class="hud-val" id="dt-stats-bal-target">0.00</span></div>' +
-                          '<div class="hud-row"><span class="hud-label">Profit Stop</span><span class="hud-val" id="dt-stats-profit-stop">0.00</span></div>' +
-                          '<div class="hud-row" data-stat="streaks"><span class="hud-label">Streak (W|L)</span><span class="hud-val">0/0 | 0/0</span></div>' +
-                          '<div class="hud-row" data-stat="multPerf"><span class="hud-label">Mult Perf</span><span class="hud-val">1 in 0.00</span></div>' +
-                        '</div>' +
-                      '</div>' +
-                      '<div class="hud-meta-row">' +
-                        '<div class="hud-meta-chip">' +
-                          '<span class="hud-label">Best Streaks</span>' +
-                          '<span class="hud-val" data-stat="bestStreaks" style="color:#00ff9d;">-</span>' +
-                        '</div>' +
-                        '<div class="hud-meta-chip">' +
-                          '<span class="hud-label">Worst Streaks</span>' +
-                          '<span class="hud-val" data-stat="worstStreaks" style="color:#f87171;">-</span>' +
-                        '</div>' +
-                      '</div>' +
-                    '</div>' +
+                  '<div class="hud-graph-box"><canvas id="dt-stats-graph"></canvas></div>' +
+                  '<div class="hud-controls-deck hud-panel">' +
+                    '<div class="hud-control-group"><label>Balance Divisor</label><input id="dt-stats-bet-div" type="number" inputmode="decimal" step="any"></div>' +
+                    '<div class="hud-control-group"><label>Profit Multiplier</label><input id="dt-stats-profit-mult" type="number" inputmode="decimal" step="any"></div>' +
+                    '<div class="hud-control-group"><label>Autostop @ Win Streak</label><div class="hud-autostop-row"><input type="checkbox" id="dt-stats-autostop"><input type="number" min="0" id="dt-stats-target" value="10"></div></div>' +
+                    '<div class="hud-control-group"><label>Stats Track Per</label><select id="dt-stats-track-per"><option value="session" selected>Session</option><option value="cycle">Cycle</option></select></div>' +
+                    '<div class="hud-control-group hud-volume-group"><label><span>🔊 Volume</span><span id="dt-stats-volume-val">100</span></label><input type="range" id="dt-stats-volume" min="0" max="100" value="100"></div>' +
+                  '</div>' +
+                  '<div class="dt-action-bar">' +
+                    '<button class="hud-update-btn" id="dt-stats-update">Update Strategy</button>' +
+                    '<button id="dt-stats-switch-ou" class="hud-switch-btn">Switch O/U</button>' +
+                    '<button id="dt-stats-reset" class="hud-reset-btn">RESET</button>' +
+                    '<button id="dt-stats-start" class="hud-rapid-btn start" data-running="false">START</button>' +
                   '</div>' +
                 '</div>';
             body.appendChild(statsPanel);
@@ -7020,17 +7141,37 @@ self.onmessage = async (e) => {
 
         function isTilePicked(btn) {
             if (isShuffle()) {
-                const bg = window.getComputedStyle(btn).backgroundColor || '';
-                const m = bg.match(/^rgba?\((\d+),\s*(\d+),\s*(\d+)/);
-                if (!m) return false;
-                const r = +m[1], g = +m[2], b = +m[3];
-                return (r + b) > 200 && g < 100; // purple = picked
+                // Shuffle marks tiles with hashed CSS-module classes:
+                //   selectedButton = a pick that wasn't drawn (miss)
+                //   buttonSuccess  = a pick that WAS drawn (a hit)
+                //   buttonFailed   = a drawn number you did NOT pick (result — exclude)
+                // Picks = selectedButton + buttonSuccess. (The old purple-bg
+                // heuristic missed hits, which turn green rather than purple.)
+                return /selectedButton|buttonSuccess/.test(btn.className || '');
             }
             if (isNuts()) {
-                // Nuts uses class-based — frequency heuristic determines selected class
-                return false; // userPicks is source of truth on Nuts
+                // Nuts uses styled-components hashes (no semantic attrs), but the
+                // tile's cover (children[1]) carries the accent color: a picked
+                // tile's cover is purple (~rgb(150,46,255)); unpicked is gray and
+                // drawn results are green. A hit flashes green during the reveal
+                // then reverts to purple, so this is accurate between rounds.
+                const cover = btn.children[1];
+                if (!cover) return false;
+                const m = (getComputedStyle(cover).backgroundColor || '').match(/(\d+),\s*(\d+),\s*(\d+)/);
+                if (!m) return false;
+                const r = +m[1], g = +m[2], b = +m[3];
+                return (r + b) > 200 && g < 100; // purple cover = picked; green/gray excluded
             }
-            return btn.dataset.selected === 'true';
+            // Stake: data-game-tile-status is authoritative.
+            //   'selected' = a pick that wasn't drawn
+            //   'match'    = a pick that WAS drawn (a hit). NB: data-selected
+            //                flips to "false" here, so the old data-selected
+            //                check missed hits — and during the result reveal
+            //                that let drawn tiles bleed into the tracked picks.
+            //   'revealed' = a drawn number you did NOT pick — exclude it
+            //   'hidden'   = untouched — exclude it
+            const st = btn.getAttribute('data-game-tile-status');
+            return st === 'selected' || st === 'match';
         }
 
         // userPicks is authoritative — DOM-based detection gets confused once
@@ -7041,21 +7182,17 @@ self.onmessage = async (e) => {
             const tiles = getTiles();
             if (!tiles.length) return [];
             if (isNuts()) {
-                // Frequency heuristic — minority cover-class = selected
-                const freq = {};
+                // Picked = purple cover (see isTilePicked). Number comes from the
+                // tile's own label span — Nuts tiles are content-based with no
+                // data-index, so getTileNumber can't be used here.
+                const picks = [];
                 for (const t of tiles) {
-                    const cover = t.children[1];
-                    if (!cover) continue;
-                    const key = cover.className || '';
-                    freq[key] = (freq[key] || 0) + 1;
+                    if (!isTilePicked(t)) continue;
+                    const sp = t.querySelector('span');
+                    const n = sp ? parseInt((sp.textContent || '').trim(), 10) : NaN;
+                    if (n >= 1 && n <= 40) picks.push(n);
                 }
-                const entries = Object.entries(freq);
-                if (entries.length < 2) return [];
-                entries.sort((a, b) => a[1] - b[1]);
-                const selectedClass = entries[0][0];
-                return tiles
-                    .map((t, i) => ({ n: i + 1, sel: (t.children[1]?.className || '') === selectedClass }))
-                    .filter(x => x.sel).map(x => x.n);
+                return picks;
             }
             return tiles.filter(isTilePicked).map(getTileNumber).filter(n => n != null);
         }
@@ -7064,6 +7201,17 @@ self.onmessage = async (e) => {
             for (const n of readPicksFromDOM()) userPicks.add(n);
         }
         function getSelectedNumbers() {
+            // All platforms: read picks LIVE from the board. Each platform's
+            // isTilePicked reads the authoritative pick marker (Stake tile status
+            // selected/match; Shuffle classes selectedButton/buttonSuccess; Nuts
+            // purple cover colour) and excludes drawn results, so the panel can't
+            // drift out of sync with the board and never counts results. This
+            // replaces the click-tracked Set, which drifted badly (Stake board=2
+            // vs panel=16; Shuffle board=1 vs panel=2). userPicks is now only a
+            // fallback for when the board hasn't mounted yet.
+            if (getTiles().length) {
+                return readPicksFromDOM().sort((a, b) => a - b);
+            }
             return Array.from(userPicks).sort((a, b) => a - b);
         }
 
@@ -7160,6 +7308,16 @@ self.onmessage = async (e) => {
             if (preset.risk && RISK_VALUES.includes(preset.risk)) {
                 await setRisk(preset.risk);
                 await sleep(120);
+            }
+            if (isNuts()) {
+                // After a round, the Nuts board is locked (tiles disabled) until
+                // the table is cleared back to the betting phase — so loading a
+                // different preset would silently do nothing. Click "Clear Table"
+                // first to unlock it (this resets to 0 picks, all tiles enabled);
+                // the diff below then selects the preset fresh.
+                const clear = Array.from(document.querySelectorAll('button'))
+                    .find(b => /clear\s*table/i.test(b.textContent || ''));
+                if (clear && !clear.disabled) { clear.click(); await sleep(250); }
             }
             const current = new Set(getSelectedNumbers());
             const target = new Set(preset.numbers);
@@ -7445,22 +7603,36 @@ self.onmessage = async (e) => {
         header.addEventListener('pointerup', endDrag);
         header.addEventListener('pointercancel', endDrag);
 
-        /* ---- Re-bind observers on SPA navigation ---- */
+        /* ---- Grid-remount watcher ----
+           Seed userPicks from the board only ONCE — the first time the grid
+           appears — to capture any selection the user made before the panel
+           opened. After that, the click-capture listener above is the sole
+           source of truth. Re-reading the DOM on every re-mount was the bug:
+           once a round resolves, the drawn RESULT tiles look "picked" to
+           readPicksFromDOM, so they got folded into userPicks alongside the
+           user's real picks (wrong count + wrong saved presets). Picks persist
+           across rounds in userPicks, which matches how Keno betting works. */
         let _observedGrid = null;
+        let _seeded = false;
+        function seedPicksOnce() {
+            if (_seeded || !getTiles().length) return;
+            syncPicksFromDOM();
+            _seeded = true;
+        }
         setInterval(() => {
             const tiles = getTiles();
             if (!tiles.length) return;
             const gridParent = tiles[0].parentElement;
             if (gridParent && gridParent !== _observedGrid) {
                 _observedGrid = gridParent;
-                syncPicksFromDOM();
+                seedPicksOnce();
                 renderCurrent();
             }
         }, 500);
         setInterval(renderCurrent, 800);
 
         renderPresets();
-        syncPicksFromDOM();
+        seedPicksOnce();
         renderCurrent();
     }
 
@@ -8406,14 +8578,23 @@ self.onmessage = async (e) => {
         // Shuffle: GraphQL VaultDeposit via fetch + Bearer token captured from page.
         function getShuffleAuth() { return window.__shuffleAvLatestAuth || null; }
         function detectShuffleCurrency() {
-            // Active currency tab on Shuffle has 'data-testid' + aria-selected="true"
-            const activeTab = document.querySelector('button[aria-selected="true"][data-testid]');
-            if (activeTab) {
-                const tid = activeTab.getAttribute('data-testid') || '';
-                const m = tid.match(/balance-([a-z]+)/i);
-                if (m) return m[1].toUpperCase();
+            // The active currency is the icon on the header balance button:
+            //   <button> … <img alt="ETH"> … <span data-testid="balance">…</span>
+            // (verified live on shuffle.com). The old aria-selected[data-testid]
+            // selector matched the "Manual" bet-mode tab and always fell through
+            // to 'GC', which isn't a valid currency on shuffle.com.
+            const balEl = document.querySelector('[data-testid="balance"]');
+            const btn = balEl && balEl.closest('button');
+            if (btn) {
+                const icon = Array.from(btn.querySelectorAll('img[alt]'))
+                    .map(im => (im.getAttribute('alt') || '').trim())
+                    .find(a => /^[A-Za-z]{2,6}$/.test(a) && !/^(arrow|wallet|chevron|menu|icon|token|search)$/i.test(a));
+                if (icon) return icon.toUpperCase();
             }
-            return 'GC'; // default to GC if undetected
+            // Legacy fallback: shuffle.us sweeps tabs (balance-gc / balance-sc).
+            const usTab = document.querySelector('button[aria-selected="true"][data-testid*="balance"]');
+            if (usTab) { const m = (usTab.getAttribute('data-testid') || '').match(/balance-([a-z]+)/i); if (m) return m[1].toUpperCase(); }
+            return 'GC';
         }
         async function shuffleDeposit(amount) {
             const auth = getShuffleAuth();
@@ -8428,7 +8609,9 @@ self.onmessage = async (e) => {
                 query
             };
             try {
-                const res = await fetch('https://shuffle.us/main-api/graphql/api/graphql', {
+                // Path is stable across shuffle.com / .us; only the origin differs.
+                const endpoint = location.origin + '/main-api/graphql/api/graphql';
+                const res = await fetch(endpoint, {
                     method: 'POST',
                     credentials: 'include',
                     headers: {

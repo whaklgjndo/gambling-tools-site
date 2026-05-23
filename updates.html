@@ -79,6 +79,102 @@
       <!-- ============ Add new releases above this line (newest first) ============ -->
       <article class="release latest">
         <div class="release-head">
+          <span class="ver-badge">v5.0</span>
+          <span class="chip">Mobile</span>
+          <span class="rel-date">May 22, 2026</span>
+        </div>
+        <h2 class="rel-title">Shuffle Auto-Vault fixes + roomier Dice/Limbo HUD</h2>
+        <ul class="changes">
+          <li>
+            <span class="tag fixed">Fixed</span>
+            <span class="ctxt"><b>Shuffle Auto-Vault</b>: deposits were failing with a "fetch error" and never vaulting on shuffle.com. The deposit now goes to the correct endpoint for whichever Shuffle domain you're on, so vaulting works again.</span>
+          </li>
+          <li>
+            <span class="tag fixed">Fixed</span>
+            <span class="ctxt"><b>Shuffle Auto-Vault</b>: it could try to vault the wrong currency on shuffle.com. It now reads your active wallet currency straight from the balance, so it vaults what you're actually playing.</span>
+          </li>
+          <li>
+            <span class="tag fixed">Fixed</span>
+            <span class="ctxt"><b>Smart mode</b> (Dice &amp; Limbo): the tool could nudge your <b>bet amount</b> while you were betting by hand. It now only sizes bets while the auto-bet loop is actually running, and leaves your wager alone otherwise.</span>
+          </li>
+          <li>
+            <span class="tag changed">Changed</span>
+            <span class="ctxt"><b>Dice &amp; Limbo</b>: gave the HUD a taller game stage on mobile so the controls have room to breathe — no more cramped, no-space layout on Limbo.</span>
+          </li>
+        </ul>
+      </article>
+
+      <article class="release">
+        <div class="release-head">
+          <span class="ver-badge">v2.31</span>
+          <span class="chip">Desktop</span>
+          <span class="rel-date">May 22, 2026</span>
+        </div>
+        <h2 class="rel-title">Shuffle Auto-Vault fixes</h2>
+        <ul class="changes">
+          <li>
+            <span class="tag fixed">Fixed</span>
+            <span class="ctxt"><b>Shuffle Auto-Vault</b>: deposits now post to the correct endpoint for the Shuffle domain you're on, so vaulting works on shuffle.com instead of erroring out.</span>
+          </li>
+          <li>
+            <span class="tag fixed">Fixed</span>
+            <span class="ctxt"><b>Shuffle Auto-Vault</b>: now detects your active wallet currency from the balance instead of defaulting to the wrong one.</span>
+          </li>
+          <li>
+            <span class="tag fixed">Fixed</span>
+            <span class="ctxt"><b>Smart mode</b> (Dice &amp; Limbo): no longer adjusts your bet amount during manual play — it only sizes bets while the tool is actively running.</span>
+          </li>
+        </ul>
+      </article>
+
+      <article class="release">
+        <div class="release-head">
+          <span class="ver-badge">v4.8</span>
+          <span class="chip">Mobile</span>
+          <span class="rel-date">May 22, 2026</span>
+        </div>
+        <h2 class="rel-title">Keno picks fixed + a denser, no-scroll HUD</h2>
+        <ul class="changes">
+          <li>
+            <span class="tag fixed">Fixed</span>
+            <span class="ctxt"><b>Keno</b> (Stake, Nuts &amp; Shuffle): the panel could drift out of sync with the board and even <b>count the round's drawn result numbers</b> as your picks. It now reads your selection live from the board, so it always matches and never counts results.</span>
+          </li>
+          <li>
+            <span class="tag fixed">Fixed</span>
+            <span class="ctxt"><b>Keno</b> (Nuts): loading a different preset right after a round did nothing until you cleared the board by hand — it now clears the table automatically first.</span>
+          </li>
+          <li>
+            <span class="tag changed">Changed</span>
+            <span class="ctxt">Rebuilt the Dice &amp; Limbo HUD into a denser, <b>no-scroll cockpit</b> — live stats and a focal Profit/Loss up top, a space-filling graph, and the <b>START/STOP · RESET · Switch</b> buttons pinned so they're always visible and reachable.</span>
+          </li>
+          <li>
+            <span class="tag changed">Changed</span>
+            <span class="ctxt">Matched the <b>Advanced IOW</b> Stats tab to the new cockpit layout and removed unused Settings (Color Theme, Large Fonts).</span>
+          </li>
+        </ul>
+      </article>
+
+      <article class="release">
+        <div class="release-head">
+          <span class="ver-badge">v2.30</span>
+          <span class="chip">Desktop</span>
+          <span class="rel-date">May 22, 2026</span>
+        </div>
+        <h2 class="rel-title">Keno picks fixed</h2>
+        <ul class="changes">
+          <li>
+            <span class="tag fixed">Fixed</span>
+            <span class="ctxt"><b>Keno</b> (Stake, Nuts &amp; Shuffle): brought the desktop Keno preset manager in line with mobile — picks are read live from the board, so they no longer drift or count the round's drawn results.</span>
+          </li>
+          <li>
+            <span class="tag fixed">Fixed</span>
+            <span class="ctxt"><b>Keno</b> (Nuts): loading a preset after a round now auto-clears the board first, instead of silently doing nothing.</span>
+          </li>
+        </ul>
+      </article>
+
+      <article class="release">
+        <div class="release-head">
           <span class="ver-badge">v4.7</span>
           <span class="chip">Mobile</span>
           <span class="rel-date">May 21, 2026</span>

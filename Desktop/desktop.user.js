@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Desktop
 // @namespace    http://tampermonkey.net/
-// @version      2.29
+// @version      2.31
 // @description  .
 // @author       .
 // @match        https://nuts.gg/*
@@ -3877,6 +3877,7 @@ Bets</span><span id="h-total-bets" class="hud-val">0</span></div>
         if (!isShuffle()) syncLastSeenBet();
         if (ACTIVE_MODE === 'iow') setBet(baseBet);
         if (ACTIVE_MODE === 'manual') setBet(manualBet);
+        if (ACTIVE_MODE === 'smart') updateBetAmount();
         updateUI();
         if (isShuffle()) {
             // Shuffle: poll every 150ms for an enabled play button and click
@@ -4102,6 +4103,11 @@ Bets</span><span id="h-total-bets" class="hud-val">0</span></div>
     }
     function updateBetAmount() {
         if (ACTIVE_MODE !== 'smart') return;
+        // Only size the native bet input while the auto-bet loop is actually
+        // running. Without this guard the HUD ticker rewrites the wager during
+        // manual play, fighting the value the user typed (reported on mobile:
+        // bet "adjusts itself" with the dice tool not running).
+        if (!isRapidFiring) return;
         // While the user is in the Advanced IOW mode (cross-tool integration
         // owns the bet field via the dice tool's strategy editor), do NOT
         // overwrite the wager input. ACTIVE_MODE stays 'smart' here because
@@ -6832,8 +6838,12 @@ const PRESETS_KEY = 'keno-presets';
     const userPicks = new Set();
 
     function readPicksFromDOM() {
+        // A genuine pick is data-game-tile-status 'selected' (not drawn) or
+        // 'match' (picked AND drawn = a hit). data-selected flips to false on a
+        // hit, so the old data-selected check missed hits and let drawn results
+        // bleed in during the reveal.
         return getTiles()
-            .filter(t => t.dataset.selected === 'true')
+            .filter(t => { const s = t.getAttribute('data-game-tile-status'); return s === 'selected' || s === 'match'; })
             .map(t => Number(t.dataset.index) + 1)
             .filter(n => !isNaN(n));
     }
@@ -6842,6 +6852,10 @@ const PRESETS_KEY = 'keno-presets';
         for (const n of readPicksFromDOM()) userPicks.add(n);
     }
     function getSelectedNumbers() {
+        // Read live from the board (status-based) so the panel can't drift out
+        // of sync and never counts drawn results. userPicks is only a fallback
+        // for when the board isn't mounted yet.
+        if (getTiles().length) return readPicksFromDOM().slice().sort((a, b) => a - b);
         return Array.from(userPicks).sort((a, b) => a - b);
     }
     function getRisk() {
@@ -9620,6 +9634,7 @@ let isRunning = false;
         lastPlacedBet = baseBet;
         if (ACTIVE_MODE === 'iow') forceSetBet(baseBet);
         if (ACTIVE_MODE === 'manual') forceSetBet(manualBet);
+        if (ACTIVE_MODE === 'smart') updateBetAmount();
         startBetGuardian();
         updateUI();
         playButton = getPlayButton();
@@ -9814,6 +9829,11 @@ let isRunning = false;
     }
     function updateBetAmount() {
         if (ACTIVE_MODE !== 'smart') return;
+        // Only size the native bet input while the auto-bet loop is actually
+        // running. Without this guard the HUD ticker rewrites the wager during
+        // manual play, fighting the value the user typed (reported on mobile:
+        // bet "adjusts itself" with the dice tool not running).
+        if (!isRapidFiring) return;
         // While the user is in the Advanced IOW mode (cross-tool integration
         // owns the bet field via the dice tool's strategy editor), do NOT
         // overwrite the wager input. ACTIVE_MODE stays 'smart' here because
@@ -9984,29 +10004,33 @@ const PRESETS_KEY = 'keno-presets';
     // DOM-based best guess — only reliable while the board is IDLE (no hits
     // showing). Used once on load to seed userPicks, and via the Sync button.
     function readPicksFromDOM() {
-        const tiles = getTiles();
-        if (!tiles.length) return [];
-        const freq = {};
-        for (const t of tiles) {
+        // A picked tile's cover (children[1]) is the purple accent
+        // (~rgb(150,46,255)); unpicked is gray and drawn results are green.
+        // A hit flashes green during the reveal then reverts to purple, so this
+        // is accurate between rounds. Number comes from the tile's label span.
+        const picks = [];
+        for (const t of getTiles()) {
             const cover = t.children[1];
             if (!cover) continue;
-            const key = cover.className || '';
-            freq[key] = (freq[key] || 0) + 1;
+            const m = (getComputedStyle(cover).backgroundColor || '').match(/(\d+),\s*(\d+),\s*(\d+)/);
+            if (!m) continue;
+            const r = +m[1], g = +m[2], b = +m[3];
+            if (!((r + b) > 200 && g < 100)) continue; // purple cover = picked; green/gray excluded
+            const sp = t.querySelector('span');
+            const n = sp ? parseInt((sp.textContent || '').trim(), 10) : NaN;
+            if (n >= 1 && n <= 40) picks.push(n);
         }
-        const entries = Object.entries(freq);
-        if (entries.length < 2) return [];
-        entries.sort((a, b) => a[1] - b[1]);
-        const selectedClass = entries[0][0];
-        return tiles
-            .map((t, i) => ({ n: i + 1, selected: (t.children[1]?.className || '') === selectedClass }))
-            .filter(x => x.selected)
-            .map(x => x.n);
+        return picks;
     }
     function syncPicksFromDOM() {
         userPicks.clear();
         for (const n of readPicksFromDOM()) userPicks.add(n);
     }
     function getSelectedNumbers() {
+        // Read live from the board (purple cover = picked) so the panel can't
+        // drift out of sync and never counts drawn results. userPicks is only a
+        // fallback for when the board isn't mounted yet.
+        if (getTiles().length) return readPicksFromDOM().slice().sort((a, b) => a - b);
         return Array.from(userPicks).sort((a, b) => a - b);
     }
 
@@ -10063,6 +10087,13 @@ const PRESETS_KEY = 'keno-presets';
             await setRisk(preset.risk);
             await sleep(80);
         }
+        // After a round the Nuts board is locked (tiles disabled) until the
+        // table is cleared back to the betting phase — so loading a different
+        // preset would silently do nothing. Click "Clear Table" first to unlock
+        // it (resets to 0 picks, all tiles enabled), then select fresh.
+        const clearBtn = Array.from(document.querySelectorAll('button'))
+            .find(b => /clear\s*table/i.test(b.textContent || ''));
+        if (clearBtn && !clearBtn.disabled) { clearBtn.click(); await sleep(250); }
         const current = new Set(getSelectedNumbers());
         const target = new Set(preset.numbers);
         for (const n of current) {
@@ -10801,13 +10832,13 @@ let isRunning = false;
         function getTiles() { return Array.from(document.querySelectorAll(TILE_SELECTOR)); }
         function getTileNumber(btn) { const m = (btn.dataset.testid || '').match(/keno-button-(\d+)/); return m ? parseInt(m[1], 10) : null; }
         function isTilePicked(btn) {
-            // Picked tiles render with a vivid purple background. Unpicked = dark gray.
-            const bg = window.getComputedStyle(btn).backgroundColor || '';
-            const m = bg.match(/^rgba?\((\d+),\s*(\d+),\s*(\d+)/);
-            if (!m) return false;
-            const r = +m[1], g = +m[2], b = +m[3];
-            // Purple has high red+blue, low green. Dark gray is ~32/35/41.
-            return (r + b) > 200 && g < 100;
+            // Shuffle marks tiles with hashed CSS-module classes:
+            //   selectedButton = a pick that wasn't drawn (miss)
+            //   buttonSuccess  = a pick that WAS drawn (a hit)
+            //   buttonFailed   = a drawn number you did NOT pick (result — exclude)
+            // Picks = selectedButton + buttonSuccess. (The old purple-bg check
+            // missed hits, which turn green rather than purple.)
+            return /selectedButton|buttonSuccess/.test(btn.className || '');
         }
         function getSelectedNumbers() { return getTiles().filter(isTilePicked).map(getTileNumber).filter(n => n != null).sort((a,b)=>a-b); }
         function getActiveRisk() {
@@ -11437,8 +11468,10 @@ let isRunning = false;
        the profit threshold is hit. A "big win" multiplier triggers a larger
        deposit on outsized wins.
 
-       Deposit mechanism: GraphQL `vaultDeposit` mutation posted to
-       https://shuffle.us/main-api/graphql/api/graphql. Authorization is
+       Deposit mechanism: GraphQL `vaultDeposit` mutation posted to the
+       page's own origin (shuffle.com or shuffle.us) — the live endpoint is
+       captured from Shuffle's own GraphQL traffic so a cross-origin POST
+       can't trip a CORS "Load failed". Authorization is likewise
        captured live from Shuffle's own outgoing fetch calls so we always
        use a current token — same general pattern as Stake's autovault,
        just adapted to Shuffle's session-bound auth header. */
@@ -11499,6 +11532,19 @@ let isRunning = false;
 
         // ---- Combined balance + currency reader (single DOM query) ----
         function readBalanceAndCurrency() {
+            // shuffle.com (crypto): balance + currency icon live on the header
+            // balance button — <button>…<img alt="ETH">…<span data-testid="balance">.
+            // Verified live; the .us GC/SC path below is kept as a fallback.
+            const balEl = document.querySelector('[data-testid="balance"]');
+            const comBtn = balEl && balEl.closest('button');
+            if (comBtn) {
+                const cv = parseFloat((balEl.textContent || '').trim().replace(/,/g, ''));
+                const alt = Array.from(comBtn.querySelectorAll('img[alt]'))
+                    .map(im => (im.getAttribute('alt') || '').trim())
+                    .find(a => /^[A-Za-z]{2,6}$/.test(a) && !/^(arrow|wallet|chevron|menu|icon|token|search)$/i.test(a));
+                if (alt) return { balance: isNaN(cv) || cv < 0 ? NaN : cv, currency: alt.toUpperCase() };
+            }
+            // shuffle.us (sweeps): GC/SC tab button with img alt.
             const active = getActiveBalanceButton();
             if (!active) return { balance: NaN, currency: 'GC' };
             const v = parseFloat((active.textContent || '').trim().replace(/,/g, ''));
@@ -11554,7 +11600,9 @@ let isRunning = false;
         // been rotated by the server. Warn but still attempt the deposit.
         const AUTH_FRESH_MS = 10 * 60 * 1000; // 10 minutes
 
-        const SHUFFLE_GQL_ENDPOINT = 'https://shuffle.us/main-api/graphql/api/graphql';
+        // The vault GraphQL endpoint is path-stable across shuffle.com / .us;
+        // only the origin differs, so derive it from the current page.
+        const SHUFFLE_GQL_ENDPOINT = location.origin + '/main-api/graphql/api/graphql';
         function genCorrId() {
             try {
                 if (window.crypto && window.crypto.randomUUID) return window.crypto.randomUUID();
