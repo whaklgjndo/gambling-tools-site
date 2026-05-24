@@ -4,69 +4,41 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Updates &amp; Patch Notes — Gambling Tools</title>
-  <meta name="description" content="Release notes and version history for the Gambling Tools userscript bundles (Desktop &amp; Mobile) for Stake, Nuts, and Shuffle." />
+  <meta name="description" content="Release notes and version history for the Gambling Tools userscript bundles (Desktop & Mobile) for Stake, Nuts, and Shuffle." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link rel="stylesheet" href="assets/style.css" />
-  <style>
-    /* ---- Changelog (scoped to this page; reuses global tokens) ---- */
-    .changelog { display: flex; flex-direction: column; gap: 18px; padding-bottom: 8px; }
-    .release {
-      background: var(--card);
-      border: 1px solid var(--border);
-      border-radius: var(--radius);
-      box-shadow: var(--shadow-sm);
-      padding: 20px 22px;
-    }
-    .release.latest { border-color: var(--accent-strong); box-shadow: 0 0 0 1px var(--accent-soft), var(--shadow-sm); }
-    .release-head { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
-    .ver-badge {
-      font-weight: 800; font-size: 0.92rem; letter-spacing: 0.01em;
-      color: #04140c; background: linear-gradient(180deg, var(--accent), var(--accent-strong));
-      border-radius: 999px; padding: 4px 13px;
-    }
-    .rel-date { color: var(--text-faint); font-size: 0.85rem; font-weight: 600; margin-left: auto; }
-    .rel-title { margin: 14px 0 4px; font-size: 1.16rem; font-weight: 760; }
-    .changes { list-style: none; margin: 12px 0 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
-    .changes li { display: flex; gap: 11px; align-items: flex-start; font-size: 0.95rem; color: var(--text); }
-    .tag {
-      flex: 0 0 auto; margin-top: 2px;
-      font-size: 0.68rem; font-weight: 800; letter-spacing: 0.06em; text-transform: uppercase;
-      padding: 3px 9px; border-radius: 6px; border: 1px solid var(--border-strong);
-      min-width: 64px; text-align: center;
-    }
-    .tag.fixed   { color: var(--accent); border-color: rgba(52, 211, 153, 0.4);  background: var(--accent-soft); }
-    .tag.added   { color: var(--shuffle); border-color: rgba(167, 139, 250, 0.4); background: rgba(167, 139, 250, 0.1); }
-    .tag.changed { color: var(--nuts);   border-color: rgba(255, 176, 32, 0.4);  background: rgba(255, 176, 32, 0.1); }
-    .changes li .ctxt b { color: var(--text); }
-    .changelog-empty { color: var(--text-dim); font-size: 0.95rem; }
-    header.site nav a.active { color: var(--text); }
-    @media (max-width: 480px) {
-      .rel-date { margin-left: 0; width: 100%; }
-      .tag { min-width: 56px; }
-    }
-  </style>
+  <script>document.documentElement.classList.add("js");</script>
 </head>
 <body>
+  <a href="#main" class="skip-link">Skip to content</a>
+
   <header class="site">
     <div class="container">
-      <a href="index.html#top" class="brand"><span class="dot"></span> Gambling Tools</a>
-      <nav>
-        <a href="index.html#download">Download</a>
-        <a href="index.html#install">Setup</a>
-        <a href="index.html#tools">What's inside</a>
-        <a href="updates.html" class="active">Updates</a>
+      <a href="index.html#top" class="brand"><span class="dot" aria-hidden="true"></span> Gambling Tools</a>
+      <nav aria-label="Primary">
+        <a href="index.html#download" class="nav-anchor">Download</a>
+        <a href="index.html#install" class="nav-anchor">Setup</a>
+        <a href="index.html#tools" class="nav-anchor">What's inside</a>
+        <a href="updates.html" class="active" aria-current="page">Updates</a>
       </nav>
     </div>
   </header>
 
-  <main class="container" id="top">
+  <main class="container" id="main">
+    <span id="top"></span>
 
     <section class="hero">
       <span class="eyebrow">Changelog</span>
-      <h1>Updates &amp; Patch Notes</h1>
+      <h1>Updates &amp; patch notes</h1>
       <p class="lead">
-        Every release of the Desktop and Mobile bundles, newest first. Your script updates
-        automatically through Tampermonkey / Userscripts when a newer version is published.
+        Every release of the Desktop and Mobile bundles, newest first. Your script updates itself
+        through Tampermonkey or Userscripts when a newer version ships.
       </p>
+      <div class="versions">
+        <a class="ver-chip" href="index.html#download"><span class="live-dot" aria-hidden="true"></span><span class="k">Desktop</span><span class="v" data-ver-target="desktop">v··</span></a>
+        <a class="ver-chip" href="index.html#download"><span class="live-dot" aria-hidden="true"></span><span class="k">Mobile</span><span class="v" data-ver-target="mobile">v··</span></a>
+      </div>
       <div class="sites" style="justify-content:center;">
         <span class="chip stake">Stake</span>
         <span class="chip nuts">Nuts</span>
@@ -74,136 +46,89 @@
       </div>
     </section>
 
-    <section class="changelog" aria-label="Release notes">
+    <section class="section" style="margin-top: clamp(20px, 4vw, 36px);">
+      <div class="changelog" aria-label="Release notes" style="max-width: 860px; margin: 0 auto;">
 
-      <!-- ============ Add new releases above this line (newest first) ============ -->
-      <article class="release latest">
-        <div class="release-head">
-          <span class="ver-badge">v5.0</span>
-          <span class="chip">Mobile</span>
-          <span class="rel-date">May 22, 2026</span>
-        </div>
-        <h2 class="rel-title">Shuffle Auto-Vault fixes + roomier Dice/Limbo HUD</h2>
-        <ul class="changes">
-          <li>
-            <span class="tag fixed">Fixed</span>
-            <span class="ctxt"><b>Shuffle Auto-Vault</b>: deposits were failing with a "fetch error" and never vaulting on shuffle.com. The deposit now goes to the correct endpoint for whichever Shuffle domain you're on, so vaulting works again.</span>
-          </li>
-          <li>
-            <span class="tag fixed">Fixed</span>
-            <span class="ctxt"><b>Shuffle Auto-Vault</b>: it could try to vault the wrong currency on shuffle.com. It now reads your active wallet currency straight from the balance, so it vaults what you're actually playing.</span>
-          </li>
-          <li>
-            <span class="tag fixed">Fixed</span>
-            <span class="ctxt"><b>Smart mode</b> (Dice &amp; Limbo): the tool could nudge your <b>bet amount</b> while you were betting by hand. It now only sizes bets while the auto-bet loop is actually running, and leaves your wager alone otherwise.</span>
-          </li>
-          <li>
-            <span class="tag changed">Changed</span>
-            <span class="ctxt"><b>Dice &amp; Limbo</b>: gave the HUD a taller game stage on mobile so the controls have room to breathe — no more cramped, no-space layout on Limbo.</span>
-          </li>
-        </ul>
-      </article>
+        <!-- ============ Add new releases above this line (newest first) ============ -->
+        <article class="release latest" data-reveal>
+          <div class="release-head">
+            <span class="ver-badge">v5.0</span>
+            <span class="chip">Mobile</span>
+            <span class="rel-date">May 22, 2026</span>
+          </div>
+          <h2 class="rel-title">Shuffle Auto-Vault fixes + roomier Dice/Limbo HUD</h2>
+          <ul class="changes">
+            <li><span class="tag fixed">Fixed</span><span class="ctxt"><b>Shuffle Auto-Vault</b>: deposits were failing with a "fetch error" and never vaulting on shuffle.com. The deposit now goes to the correct endpoint for whichever Shuffle domain you're on, so vaulting works again.</span></li>
+            <li><span class="tag fixed">Fixed</span><span class="ctxt"><b>Shuffle Auto-Vault</b>: it could try to vault the wrong currency on shuffle.com. It now reads your active wallet currency straight from the balance, so it vaults what you're actually playing.</span></li>
+            <li><span class="tag fixed">Fixed</span><span class="ctxt"><b>Smart mode</b> (Dice &amp; Limbo): the tool could nudge your <b>bet amount</b> while you were betting by hand. It now only sizes bets while the auto-bet loop is actually running, and leaves your wager alone otherwise.</span></li>
+            <li><span class="tag changed">Changed</span><span class="ctxt"><b>Dice &amp; Limbo</b>: gave the HUD a taller game stage on mobile so the controls have room to breathe — no more cramped, no-space layout on Limbo.</span></li>
+          </ul>
+        </article>
 
-      <article class="release">
-        <div class="release-head">
-          <span class="ver-badge">v2.31</span>
-          <span class="chip">Desktop</span>
-          <span class="rel-date">May 22, 2026</span>
-        </div>
-        <h2 class="rel-title">Shuffle Auto-Vault fixes</h2>
-        <ul class="changes">
-          <li>
-            <span class="tag fixed">Fixed</span>
-            <span class="ctxt"><b>Shuffle Auto-Vault</b>: deposits now post to the correct endpoint for the Shuffle domain you're on, so vaulting works on shuffle.com instead of erroring out.</span>
-          </li>
-          <li>
-            <span class="tag fixed">Fixed</span>
-            <span class="ctxt"><b>Shuffle Auto-Vault</b>: now detects your active wallet currency from the balance instead of defaulting to the wrong one.</span>
-          </li>
-          <li>
-            <span class="tag fixed">Fixed</span>
-            <span class="ctxt"><b>Smart mode</b> (Dice &amp; Limbo): no longer adjusts your bet amount during manual play — it only sizes bets while the tool is actively running.</span>
-          </li>
-        </ul>
-      </article>
+        <article class="release" data-reveal>
+          <div class="release-head">
+            <span class="ver-badge">v2.31</span>
+            <span class="chip">Desktop</span>
+            <span class="rel-date">May 22, 2026</span>
+          </div>
+          <h2 class="rel-title">Shuffle Auto-Vault fixes</h2>
+          <ul class="changes">
+            <li><span class="tag fixed">Fixed</span><span class="ctxt"><b>Shuffle Auto-Vault</b>: deposits now post to the correct endpoint for the Shuffle domain you're on, so vaulting works on shuffle.com instead of erroring out.</span></li>
+            <li><span class="tag fixed">Fixed</span><span class="ctxt"><b>Shuffle Auto-Vault</b>: now detects your active wallet currency from the balance instead of defaulting to the wrong one.</span></li>
+            <li><span class="tag fixed">Fixed</span><span class="ctxt"><b>Smart mode</b> (Dice &amp; Limbo): no longer adjusts your bet amount during manual play — it only sizes bets while the tool is actively running.</span></li>
+          </ul>
+        </article>
 
-      <article class="release">
-        <div class="release-head">
-          <span class="ver-badge">v4.8</span>
-          <span class="chip">Mobile</span>
-          <span class="rel-date">May 22, 2026</span>
-        </div>
-        <h2 class="rel-title">Keno picks fixed + a denser, no-scroll HUD</h2>
-        <ul class="changes">
-          <li>
-            <span class="tag fixed">Fixed</span>
-            <span class="ctxt"><b>Keno</b> (Stake, Nuts &amp; Shuffle): the panel could drift out of sync with the board and even <b>count the round's drawn result numbers</b> as your picks. It now reads your selection live from the board, so it always matches and never counts results.</span>
-          </li>
-          <li>
-            <span class="tag fixed">Fixed</span>
-            <span class="ctxt"><b>Keno</b> (Nuts): loading a different preset right after a round did nothing until you cleared the board by hand — it now clears the table automatically first.</span>
-          </li>
-          <li>
-            <span class="tag changed">Changed</span>
-            <span class="ctxt">Rebuilt the Dice &amp; Limbo HUD into a denser, <b>no-scroll cockpit</b> — live stats and a focal Profit/Loss up top, a space-filling graph, and the <b>START/STOP · RESET · Switch</b> buttons pinned so they're always visible and reachable.</span>
-          </li>
-          <li>
-            <span class="tag changed">Changed</span>
-            <span class="ctxt">Matched the <b>Advanced IOW</b> Stats tab to the new cockpit layout and removed unused Settings (Color Theme, Large Fonts).</span>
-          </li>
-        </ul>
-      </article>
+        <article class="release" data-reveal>
+          <div class="release-head">
+            <span class="ver-badge">v4.8</span>
+            <span class="chip">Mobile</span>
+            <span class="rel-date">May 22, 2026</span>
+          </div>
+          <h2 class="rel-title">Keno picks fixed + a denser, no-scroll HUD</h2>
+          <ul class="changes">
+            <li><span class="tag fixed">Fixed</span><span class="ctxt"><b>Keno</b> (Stake, Nuts &amp; Shuffle): the panel could drift out of sync with the board and even <b>count the round's drawn result numbers</b> as your picks. It now reads your selection live from the board, so it always matches and never counts results.</span></li>
+            <li><span class="tag fixed">Fixed</span><span class="ctxt"><b>Keno</b> (Nuts): loading a different preset right after a round did nothing until you cleared the board by hand — it now clears the table automatically first.</span></li>
+            <li><span class="tag changed">Changed</span><span class="ctxt">Rebuilt the Dice &amp; Limbo HUD into a denser, <b>no-scroll cockpit</b> — live stats and a focal Profit/Loss up top, a space-filling graph, and the <b>START/STOP · RESET · Switch</b> buttons pinned so they're always visible and reachable.</span></li>
+            <li><span class="tag changed">Changed</span><span class="ctxt">Matched the <b>Advanced IOW</b> Stats tab to the new cockpit layout and removed unused settings (Color Theme, Large Fonts).</span></li>
+          </ul>
+        </article>
 
-      <article class="release">
-        <div class="release-head">
-          <span class="ver-badge">v2.30</span>
-          <span class="chip">Desktop</span>
-          <span class="rel-date">May 22, 2026</span>
-        </div>
-        <h2 class="rel-title">Keno picks fixed</h2>
-        <ul class="changes">
-          <li>
-            <span class="tag fixed">Fixed</span>
-            <span class="ctxt"><b>Keno</b> (Stake, Nuts &amp; Shuffle): brought the desktop Keno preset manager in line with mobile — picks are read live from the board, so they no longer drift or count the round's drawn results.</span>
-          </li>
-          <li>
-            <span class="tag fixed">Fixed</span>
-            <span class="ctxt"><b>Keno</b> (Nuts): loading a preset after a round now auto-clears the board first, instead of silently doing nothing.</span>
-          </li>
-        </ul>
-      </article>
+        <article class="release" data-reveal>
+          <div class="release-head">
+            <span class="ver-badge">v2.30</span>
+            <span class="chip">Desktop</span>
+            <span class="rel-date">May 22, 2026</span>
+          </div>
+          <h2 class="rel-title">Keno picks fixed</h2>
+          <ul class="changes">
+            <li><span class="tag fixed">Fixed</span><span class="ctxt"><b>Keno</b> (Stake, Nuts &amp; Shuffle): brought the desktop Keno preset manager in line with mobile — picks are read live from the board, so they no longer drift or count the round's drawn results.</span></li>
+            <li><span class="tag fixed">Fixed</span><span class="ctxt"><b>Keno</b> (Nuts): loading a preset after a round now auto-clears the board first, instead of silently doing nothing.</span></li>
+          </ul>
+        </article>
 
-      <article class="release">
-        <div class="release-head">
-          <span class="ver-badge">v4.7</span>
-          <span class="chip">Mobile</span>
-          <span class="rel-date">May 21, 2026</span>
-        </div>
-        <h2 class="rel-title">Dice &amp; Limbo controls fixed for Stake's new layout</h2>
-        <ul class="changes">
-          <li>
-            <span class="tag fixed">Fixed</span>
-            <span class="ctxt">On Stake's updated Dice and Limbo pages, the <b>Multiplier</b>, <b>Win Chance</b>, and <b>Over/Under switch</b> were hidden behind the tool overlay. They now appear directly inside the HUD and stay fully interactive.</span>
-          </li>
-          <li>
-            <span class="tag fixed">Fixed</span>
-            <span class="ctxt">Dice and Limbo can now be <b>enabled and disabled independently</b> from the control panel — toggling one no longer affects the other.</span>
-          </li>
-          <li>
-            <span class="tag changed">Changed</span>
-            <span class="ctxt">Tightened the HUD layout — compacted the relocated controls and shortened the Manual / IOW / Smart / Advanced IOW buttons to free up screen space.</span>
-          </li>
-        </ul>
-      </article>
+        <article class="release" data-reveal>
+          <div class="release-head">
+            <span class="ver-badge">v4.7</span>
+            <span class="chip">Mobile</span>
+            <span class="rel-date">May 21, 2026</span>
+          </div>
+          <h2 class="rel-title">Dice &amp; Limbo controls fixed for Stake's new layout</h2>
+          <ul class="changes">
+            <li><span class="tag fixed">Fixed</span><span class="ctxt">On Stake's updated Dice and Limbo pages, the <b>Multiplier</b>, <b>Win Chance</b>, and <b>Over/Under switch</b> were hidden behind the tool overlay. They now appear directly inside the HUD and stay fully interactive.</span></li>
+            <li><span class="tag fixed">Fixed</span><span class="ctxt">Dice and Limbo can now be <b>enabled and disabled independently</b> from the control panel — toggling one no longer affects the other.</span></li>
+            <li><span class="tag changed">Changed</span><span class="ctxt">Tightened the HUD layout — compacted the relocated controls and shortened the Manual / IOW / Smart / Advanced IOW buttons to free up screen space.</span></li>
+          </ul>
+        </article>
 
+      </div>
     </section>
-
   </main>
 
   <footer class="site">
     <div class="container">
-      <p class="rg">These userscripts run entirely in your own browser. Use them at your own risk, and please gamble responsibly — only play with what you can afford to lose.</p>
-      <p>Gambling Tools · Desktop &amp; Mobile bundles</p>
+      <p class="rg">These userscripts run entirely in your own browser. They don't change the odds of any game. Use them at your own risk, and please gamble responsibly — only play with what you can afford to lose.</p>
+      <p class="cr">Gambling Tools · Desktop &amp; Mobile bundles · client-side only</p>
     </div>
   </footer>
 
