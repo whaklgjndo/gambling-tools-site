@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Gambling Tools — Setup Guide for Stake, Nuts &amp; Shuffle</title>
-  <meta name="description" content="Step-by-step setup for the Gambling Tools userscript bundle. One script, all the tools — for Desktop, iPhone/iPad, and Android. Free, client-side, and honest about what it can and can't do." />
+  <title>Gambling Tools Setup Guide for Stake, Nuts &amp; Shuffle</title>
+  <meta name="description" content="Step-by-step setup for the Gambling Tools userscript bundle. One script, all the tools, for Desktop, iPhone/iPad, and Android. Free, client-side, and honest about what it can and can't do." />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link rel="stylesheet" href="assets/style.css" />
@@ -33,18 +33,18 @@
       <span class="eyebrow">One script · every tool</span>
       <h1>Get the tools running in <span class="hl">a few minutes</span></h1>
       <p class="lead">
-        Everything is bundled into a single userscript per device. Grab it below and go —
+        Everything is bundled into a single userscript per device. Grab it below and go,
         or follow the setup guide if it's your first time.
       </p>
 
       <div class="quickdl" id="download">
         <a class="btn primary big" href="Desktop/desktop.user.js">
           <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 3v10.6l3.3-3.3 1.4 1.4L12 17.4l-4.7-4.7 1.4-1.4 3.3 3.3V3h2ZM5 19h14v2H5z"/></svg>
-          <span class="bt"><b>Download — Desktop</b><small>Chrome · Edge · Brave · Opera</small></span>
+          <span class="bt"><b>Download Desktop</b><small>Chrome · Edge · Brave · Opera</small></span>
         </a>
         <a class="btn primary big" href="Mobile/mobile.user.js">
           <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 3v10.6l3.3-3.3 1.4 1.4L12 17.4l-4.7-4.7 1.4-1.4 3.3 3.3V3h2ZM5 19h14v2H5z"/></svg>
-          <span class="bt"><b>Download — Mobile</b><small>iPhone · iPad · Android</small></span>
+          <span class="bt"><b>Download Mobile</b><small>iPhone · iPad · Android</small></span>
         </a>
       </div>
       <p class="qd-hint">Already have Tampermonkey (desktop / Android) or Userscripts (iOS)? Click and install. First time? <a href="#install">Follow the setup guide ↓</a></p>
@@ -63,55 +63,57 @@
     </section>
 
     <!-- ===================== READ THIS FIRST ===================== -->
-    <section class="section" id="risk" data-reveal>
+    <section class="section" id="risk">
       <span class="eyebrow">Read this first</span>
       <h2>Before you start</h2>
 
-      <div class="note" style="margin-top:18px;">
-        <span class="ico" aria-hidden="true">👋</span>
-        <div>Before diving into using these tools, it's important to understand that they were originally built for myself, and the ideas behind them were catered towards my own playstyles. That being said, you may notice that some of the tools only offer certain playstyles. This impacts <b>Dice</b> and <b>Limbo</b> the most. If you enjoy “Increase on Win (IOW)” strategies or playstyles, then I'm sure you will find those tools useful to you in some way.</div>
-      </div>
+      <div class="disclosure" data-reveal>
+        <p class="disc-lead"><span class="ico" aria-hidden="true">👋</span><span>Before diving into using these tools, it's important to understand that they were originally built for myself, and the ideas behind them were catered towards my own playstyles. That being said, you may notice that some of the tools only offer certain playstyles. This impacts <b>Dice</b> and <b>Limbo</b> the most. If you enjoy “Increase on Win (IOW)” strategies or playstyles, then I'm sure you will find those tools useful to you in some way.</span></p>
 
-      <p class="lede">These tools are <strong>free and open source, and always will be.</strong> The honest reason: none of them lower the house edge, so you'll still lose. What they do is make it easier to mess with different strategies, add auto-play where the games don't, and show you live stats the sites keep to themselves. Mostly, they just make gambling more fun.</p>
+        <p class="disc-manifesto">These tools are <strong>free and open source, and always will be.</strong> The honest reason: none of them lower the house edge, so you'll still lose. What they do is make it easier to mess with different strategies, add auto-play where the games don't, and show you live stats the sites keep to themselves. Mostly, they just make gambling more fun.</p>
 
-      <div class="risk">
-        <h3>What these tools can — and can't — do</h3>
-        <p class="risk-lead">Stake, Nuts, and Shuffle are provably-fair — the house edge is fixed and nothing changes it. These tools handle the clicking and show you what's happening while you play. They don't give you an edge. <strong>Nothing can.</strong></p>
-        <div class="risk-cols">
-          <div class="can">
-            <h3>What they do</h3>
-            <ul>
-              <li>Click the bet button for you so you're not doing it by hand</li>
-              <li>Auto-play games that don't have the autoplay options you want</li>
-              <li>Move a cut of your winnings into the vault as you go</li>
-              <li>Save your board and bet setups and reload them in a click</li>
-              <li>Show live stats the site doesn't — payout, streaks, next-gem odds</li>
-              <li>Let you test a betting pattern in the simulator before risking real money</li>
-            </ul>
-          </div>
-          <div class="cant">
-            <h3>What they don't do</h3>
-            <ul>
-              <li>Change the house edge, or the odds on any single bet</li>
-              <li>Know, predict, or affect a result</li>
-              <li>Make a losing approach win if you just run it long enough</li>
-              <li>Guarantee a profit — or that you'll get your money back</li>
-            </ul>
+        <div class="disc-section">
+          <h3 class="disc-h">What these tools can and can't do</h3>
+          <p class="disc-risklead">Stake, Nuts, and Shuffle are provably-fair. The house edge is fixed and nothing changes it. These tools handle the clicking and show you what's happening while you play. They don't give you an edge. <strong>Nothing can.</strong></p>
+          <div class="risk-cols">
+            <div class="can">
+              <h3>What they do</h3>
+              <ul>
+                <li>Click the bet button for you so you're not doing it by hand</li>
+                <li>Auto-play games that don't have the autoplay options you want</li>
+                <li>Move a cut of your winnings into the vault as you go</li>
+                <li>Save your board and bet setups and reload them in a click</li>
+                <li>Show live stats the site doesn't: payout, streaks, next-gem odds</li>
+                <li>Let you test a betting pattern in the simulator before risking real money</li>
+              </ul>
+            </div>
+            <div class="cant">
+              <h3>What they don't do</h3>
+              <ul>
+                <li>Change the house edge, or the odds on any single bet</li>
+                <li>Know, predict, or affect a result</li>
+                <li>Make a losing approach win if you just run it long enough</li>
+                <li>Guarantee a profit, or that you'll get your money back</li>
+              </ul>
+            </div>
           </div>
         </div>
-      </div>
 
-      <div class="note" style="margin-top:18px;">
-        <span class="ico" aria-hidden="true">🔒</span>
-        <div>The script runs entirely in your own browser and stores its settings locally — there's no account, server, or login involved. It automates clicks and reads what's already on screen. That said, automating play on a gambling site may be against that site's terms, and it's still real money at real risk — use your own judgement.</div>
-      </div>
+        <div class="disc-fine">
+          <p class="fine-item"><span class="ico" aria-hidden="true">🔒</span><span>The script runs entirely in your own browser and stores its settings locally. There's no account, server, or login involved. It automates clicks and reads what's already on screen. That said, automating play on a gambling site may be against that site's terms, and it's still real money at real risk, so use your own judgement.</span></p>
+          <p class="fine-item"><span class="ico" aria-hidden="true">🐛</span><span><b>Glitches and bugs are still potentially present.</b> That said, I use these tools every day and am 95% sure I have ironed out anything that might cause you to lose a large portion, or all of your balance. I've also put safety mechanisms and guardrails in place for potential balance-harming scenarios. While very rare, if you ever find a balance-deleting bug, or even ALMOST trigger something that would have wiped most of your balance, please report it and I'll address it as soon as I see the report. Don't just learn how to avoid said bug and avoid it without mentioning it. <b>Report it. Please.</b> It takes 5 minutes. Although I use the tools daily, others may run different settings, or a combination of settings, that might reveal an unintended behavior I haven't uncovered myself. It's important to understand these risks, and reporting these things will help anyone else using these tools.</span></p>
+        </div>
 
-      <div class="note warn" style="margin-top:14px;">
-        <span class="ico" aria-hidden="true">🐛</span>
-        <div><b>Glitches and bugs are still potentially present.</b> That said, I use these tools every day and am 95% sure I have ironed out anything that might cause you to lose a large portion, or all of your balance. I've also put safety mechanisms and guardrails in place for potential balance-harming scenarios. While very rare, if you ever find a balance-deleting bug, or even ALMOST trigger something that would have wiped most of your balance, please report it and I'll address it as soon as I see the report. Don't just learn how to avoid said bug and avoid it without mentioning it. <b>Report it. Please.</b> It takes 5 minutes. Although I use the tools daily, others may run different settings, or a combination of settings, that might reveal an unintended behavior I haven't uncovered myself. It's important to understand these risks, and reporting these things will help anyone else using these tools.</div>
+        <p class="disc-foot">These tools <strong>ARE NOT</strong> a way to win. The longer you play, the more the house edge adds up, and the more you risk losing. If you're going to lose, might as well have fun doing it. If it stops being fun or becomes a financial hardship, walk away. Help's at <a href="https://www.begambleaware.org/" target="_blank" rel="noopener">BeGambleAware</a>, or 1-800-GAMBLER in the US.</p>
       </div>
+    </section>
 
-      <p class="rg-line">These tools <strong>ARE NOT</strong> a way to win. The longer you play, the more the house edge adds up, and the more you risk losing. If you're going to lose, might as well have fun doing it. If it stops being fun or becomes a financial hardship, walk away — help's at <a href="https://www.begambleaware.org/" target="_blank" rel="noopener">BeGambleAware</a>, or 1-800-GAMBLER in the US.</p>
+    <!-- ===================== INTERLUDE ===================== -->
+    <section class="interlude" data-reveal>
+      <span class="eyebrow">alright, enough of that</span>
+      <h2 class="interlude-title">Now, on to the <span class="hl">cool shit</span>.</h2>
+      <p class="interlude-sub">Pick your device and let's get you set up.</p>
+      <a href="#install" class="interlude-arrow" aria-label="Jump to setup">↓</a>
     </section>
 
     <!-- ===================== PLATFORM PICKER ===================== -->
@@ -152,7 +154,7 @@
       <div class="tab-panel active" id="tab-desktop" role="tabpanel" aria-labelledby="tabbtn-desktop" tabindex="0">
         <div class="panel-intro">
           <span aria-hidden="true">🖥️</span>
-          <div>Works on any Chromium browser — <b>Chrome, Edge, Brave, Opera</b>. You'll install the Tampermonkey extension, flip one required switch, then add the script.</div>
+          <div>Works on any Chromium browser: <b>Chrome, Edge, Brave, Opera</b>. You'll install the Tampermonkey extension, flip one required switch, then add the script.</div>
         </div>
 
         <ol class="steps">
@@ -170,12 +172,12 @@
           </li>
           <li>
             <span class="st">Turn on “Allow User Scripts”</span>
-            <p>On the extension page, scroll down and switch <em>Allow User Scripts</em> on. Chrome requires this — without it, no script can run.</p>
+            <p>On the extension page, scroll down and switch <em>Allow User Scripts</em> on. Chrome requires this. Without it, no script can run.</p>
             <img class="shot shot--wide" src="Guide%20Screenshots/Desktop/d4.png" alt="Chrome extension details page with the Allow User Scripts toggle turned on" loading="lazy" />
           </li>
           <li>
             <span class="st">Install the Desktop script</span>
-            <p>Click the button below. Tampermonkey opens its install page — review it and click <em>Install</em>.</p>
+            <p>Click the button below. Tampermonkey opens its install page. Review it and click <em>Install</em>.</p>
             <div class="dl">
               <div class="dl-label">⬇ Desktop script <span data-ver-target="desktop" style="color:var(--mint);">v··</span></div>
               <a class="btn primary" href="Desktop/desktop.user.js" id="dl-desktop">
@@ -202,19 +204,19 @@
             </div>
             <div class="note">
               <span class="ico" aria-hidden="true">⚙️</span>
-              <div><b>Turn tools on or off from the gear icon.</b> Once the script is running, a gear icon sits in the <b>bottom-left corner</b> of the page. Click it to open the tools panel, where every tool has its own on/off switch — plus <em>Enable matched</em> and <em>Disable all</em> shortcuts at the bottom.
+              <div><b>Turn tools on or off from the gear icon.</b> Once the script is running, a gear icon sits in the <b>bottom-left corner</b> of the page. Click it to open the tools panel, where every tool has its own on/off switch, plus <em>Enable matched</em> and <em>Disable all</em> shortcuts at the bottom.
                 <div class="ref"><figure><span class="thumb gear"><img src="assets/gear-ref.webp" alt="The Gambling Tools gear icon" loading="lazy" /></span><figcaption>Gear icon</figcaption></figure></div>
               </div>
             </div>
             <div class="note">
               <span class="ico" aria-hidden="true">⚡</span>
-              <div><b>Or use the per-tool quick toggles.</b> On each game page, small chips appear just above the gear icon — one per tool for that game. Click a chip to <b>instantly load or unload</b> that tool with no menus (green = on, grey = off).
+              <div><b>Or use the per-tool quick toggles.</b> On each game page, small chips appear just above the gear icon, one per tool for that game. Click a chip to <b>instantly load or unload</b> that tool with no menus (green = on, grey = off).
                 <div class="ref"><figure><span class="thumb chip"><img src="assets/chip-on.webp" alt="Quick-toggle chip in the enabled (green) state" loading="lazy" /></span><figcaption>Enabled</figcaption></figure><figure><span class="thumb chip"><img src="assets/chip-off.webp" alt="Quick-toggle chip in the disabled (grey) state" loading="lazy" /></span><figcaption>Disabled</figcaption></figure></div>
               </div>
             </div>
             <div class="note warn">
               <span class="ico" aria-hidden="true">🛑</span>
-              <div><b>Only if you really want to switch the whole thing off:</b> click the Tampermonkey icon → <em>Dashboard</em>, then flip the on/off switch next to the script. (The gear and chips above are the easy day-to-day way — this disables everything at once.)</div>
+              <div><b>Only if you really want to switch the whole thing off:</b> click the Tampermonkey icon → <em>Dashboard</em>, then flip the on/off switch next to the script. (The gear and chips above are the easy day-to-day way; this disables everything at once.)</div>
             </div>
           </li>
         </ol>
@@ -251,7 +253,7 @@
           </li>
           <li>
             <span class="st">Download the Mobile script</span>
-            <p>Tap the button below. Safari opens the script as plain text — that's exactly what should happen, you don't need to read it.</p>
+            <p>Tap the button below. Safari opens the script as plain text. That's exactly what should happen, you don't need to read it.</p>
             <div class="dl">
               <div class="dl-label">⬇ Mobile script <span data-ver-target="mobile" style="color:var(--mint);">v··</span></div>
               <a class="btn primary" href="Mobile/mobile.user.js" id="dl-ios">
@@ -275,7 +277,7 @@
           </li>
           <li>
             <span class="st">Tap “Tap to install”</span>
-            <p>The Userscripts panel opens with a yellow <em>Userscript Detected — Tap to install</em> banner. Tap it.</p>
+            <p>The Userscripts panel opens with a yellow <em>Userscript Detected, Tap to install</em> banner. Tap it.</p>
             <img class="shot shot--phone" src="Guide%20Screenshots/iOS/alt4.png" alt="Userscripts panel showing the yellow Userscript Detected, Tap to install banner" loading="lazy" />
           </li>
           <li>
@@ -296,19 +298,19 @@
             <p>Open <em>Stake</em>, <em>Nuts</em> or <em>Shuffle</em> in Safari and reload once. The tool appears on supported game pages.</p>
             <div class="note">
               <span class="ico" aria-hidden="true">⚙️</span>
-              <div><b>Turn tools on or off from the gear icon.</b> Once the script is running, a gear icon sits in the <b>bottom-left corner</b> of the page. Tap it to open the tools panel, where every tool has its own on/off switch — plus <em>Enable matched</em> and <em>Disable all</em> shortcuts at the bottom.
+              <div><b>Turn tools on or off from the gear icon.</b> Once the script is running, a gear icon sits in the <b>bottom-left corner</b> of the page. Tap it to open the tools panel, where every tool has its own on/off switch, plus <em>Enable matched</em> and <em>Disable all</em> shortcuts at the bottom.
                 <div class="ref"><figure><span class="thumb gear"><img src="assets/gear-ref.webp" alt="The Gambling Tools gear icon" loading="lazy" /></span><figcaption>Gear icon</figcaption></figure></div>
               </div>
             </div>
             <div class="note">
               <span class="ico" aria-hidden="true">⚡</span>
-              <div><b>Or use the per-tool quick toggles.</b> On each game page, small chips appear just above the gear icon — one per tool for that game. Tap a chip to <b>instantly load or unload</b> that tool with no menus (green = on, grey = off).
+              <div><b>Or use the per-tool quick toggles.</b> On each game page, small chips appear just above the gear icon, one per tool for that game. Tap a chip to <b>instantly load or unload</b> that tool with no menus (green = on, grey = off).
                 <div class="ref"><figure><span class="thumb chip"><img src="assets/chip-on.webp" alt="Quick-toggle chip in the enabled (green) state" loading="lazy" /></span><figcaption>Enabled</figcaption></figure><figure><span class="thumb chip"><img src="assets/chip-off.webp" alt="Quick-toggle chip in the disabled (grey) state" loading="lazy" /></span><figcaption>Disabled</figcaption></figure></div>
               </div>
             </div>
             <div class="note warn">
               <span class="ico" aria-hidden="true">🛑</span>
-              <div><b>Only if you really want to switch the whole thing off:</b> tap the puzzle-piece / <code>AA</code> icon in Safari's address bar → <em>Userscripts</em>, then toggle the entire script off. (The gear and chips above are the easy day-to-day way — this disables everything at once.)</div>
+              <div><b>Only if you really want to switch the whole thing off:</b> tap the puzzle-piece / <code>AA</code> icon in Safari's address bar → <em>Userscripts</em>, then toggle the entire script off. (The gear and chips above are the easy day-to-day way; this disables everything at once.)</div>
             </div>
             <div class="shots">
               <img class="shot shot--phone" src="Guide%20Screenshots/iOS/i2.png" alt="Safari on stake.us with the Userscripts option in the extensions popover" loading="lazy" />
@@ -322,13 +324,13 @@
       <div class="tab-panel" id="tab-android" role="tabpanel" aria-labelledby="tabbtn-android" tabindex="0" hidden>
         <div class="panel-intro">
           <span aria-hidden="true">🤖</span>
-          <div>Android needs <b>Firefox</b> — Chrome on Android can't run extensions. You'll add Tampermonkey inside Firefox, then install our script.</div>
+          <div>Android needs <b>Firefox</b>. Chrome on Android can't run extensions. You'll add Tampermonkey inside Firefox, then install our script.</div>
         </div>
 
         <ol class="steps">
           <li>
             <span class="st">Install Firefox from the Play Store</span>
-            <p>Get <em>Firefox Browser by Mozilla</em> — the regular one. Not Firefox Focus, not Firefox Beta; only the standard Firefox supports extensions.</p>
+            <p>Get <em>Firefox Browser by Mozilla</em>, the regular one. Not Firefox Focus, not Firefox Beta; only the standard Firefox supports extensions.</p>
           </li>
           <li>
             <span class="st">Open Firefox's Extensions menu</span>
@@ -350,7 +352,7 @@
           </li>
           <li>
             <span class="st">Confirm Tampermonkey is ready</span>
-            <p>Open <em>⋮ → Extensions</em> again and tap <em>Tampermonkey</em>. Its dashboard opens — that's where every script lives.</p>
+            <p>Open <em>⋮ → Extensions</em> again and tap <em>Tampermonkey</em>. Its dashboard opens. That's where every script lives.</p>
             <div class="shots">
               <img class="shot shot--wide" src="Guide%20Screenshots/Android/710513bdf9fc3af3884b546353430c14.png" alt="Firefox extensions menu listing Tampermonkey" loading="lazy" />
               <img class="shot shot--phone" src="Guide%20Screenshots/Android/76f804d5f94a360649e3e8062d50da68.png" alt="Tampermonkey dashboard with Installed Userscripts, Settings and Utilities tabs" loading="lazy" />
@@ -358,7 +360,7 @@
           </li>
           <li>
             <span class="st">Install the Mobile script</span>
-            <p>Tap the button below. Tampermonkey opens its install page — tap <em>Install</em>.</p>
+            <p>Tap the button below. Tampermonkey opens its install page. Tap <em>Install</em>.</p>
             <div class="dl">
               <div class="dl-label">⬇ Mobile script <span data-ver-target="mobile" style="color:var(--mint);">v··</span></div>
               <a class="btn primary" href="Mobile/mobile.user.js" id="dl-android">
@@ -366,7 +368,7 @@
                 Install Mobile bundle <span class="ver">.user.js</span>
               </a>
               <img class="shot shot--phone" src="Guide%20Screenshots/Android/f0f82505bf62bb4b1714b4d1ba280c22.png" alt="Tampermonkey install page in Firefox with the Install button highlighted" loading="lazy" style="margin-top:14px;" />
-              <p class="hint">Nothing happened on tap? <b>Long-press</b> the button → <em>Copy link</em>, then paste it into Firefox's address bar and go — Tampermonkey will catch it.</p>
+              <p class="hint">Nothing happened on tap? <b>Long-press</b> the button → <em>Copy link</em>, then paste it into Firefox's address bar and go. Tampermonkey will catch it.</p>
             </div>
           </li>
           <li>
@@ -374,19 +376,19 @@
             <p>Open <em>Stake</em>, <em>Nuts</em> or <em>Shuffle</em> in Firefox and reload once. The tool appears on supported game pages.</p>
             <div class="note">
               <span class="ico" aria-hidden="true">⚙️</span>
-              <div><b>Turn tools on or off from the gear icon.</b> Once the script is running, a gear icon sits in the <b>bottom-left corner</b> of the page. Tap it to open the tools panel, where every tool has its own on/off switch — plus <em>Enable matched</em> and <em>Disable all</em> shortcuts at the bottom.
+              <div><b>Turn tools on or off from the gear icon.</b> Once the script is running, a gear icon sits in the <b>bottom-left corner</b> of the page. Tap it to open the tools panel, where every tool has its own on/off switch, plus <em>Enable matched</em> and <em>Disable all</em> shortcuts at the bottom.
                 <div class="ref"><figure><span class="thumb gear"><img src="assets/gear-ref.webp" alt="The Gambling Tools gear icon" loading="lazy" /></span><figcaption>Gear icon</figcaption></figure></div>
               </div>
             </div>
             <div class="note">
               <span class="ico" aria-hidden="true">⚡</span>
-              <div><b>Or use the per-tool quick toggles.</b> On each game page, small chips appear just above the gear icon — one per tool for that game. Tap a chip to <b>instantly load or unload</b> that tool with no menus (green = on, grey = off).
+              <div><b>Or use the per-tool quick toggles.</b> On each game page, small chips appear just above the gear icon, one per tool for that game. Tap a chip to <b>instantly load or unload</b> that tool with no menus (green = on, grey = off).
                 <div class="ref"><figure><span class="thumb chip"><img src="assets/chip-on.webp" alt="Quick-toggle chip in the enabled (green) state" loading="lazy" /></span><figcaption>Enabled</figcaption></figure><figure><span class="thumb chip"><img src="assets/chip-off.webp" alt="Quick-toggle chip in the disabled (grey) state" loading="lazy" /></span><figcaption>Disabled</figcaption></figure></div>
               </div>
             </div>
             <div class="note warn">
               <span class="ico" aria-hidden="true">🛑</span>
-              <div><b>Only if you really want to switch the whole thing off:</b> open <em>⋮ → Extensions → Tampermonkey</em> to reach its dashboard, then toggle the script off. (The gear and chips above are the easy day-to-day way — this disables everything at once.)</div>
+              <div><b>Only if you really want to switch the whole thing off:</b> open <em>⋮ → Extensions → Tampermonkey</em> to reach its dashboard, then toggle the script off. (The gear and chips above are the easy day-to-day way; this disables everything at once.)</div>
             </div>
           </li>
         </ol>
@@ -394,7 +396,7 @@
 
       <div class="note" style="margin-top:24px;">
         <span class="ico" aria-hidden="true">🔄</span>
-        <div><b>Updating later:</b> when a new version drops, install it the same way — your userscript manager replaces the old one and keeps your saved settings.</div>
+        <div><b>Updating later:</b> when a new version drops, install it the same way. Your userscript manager replaces the old one and keeps your saved settings.</div>
       </div>
     </section>
 
@@ -409,30 +411,37 @@
         <article class="tool">
           <div class="tool-head"><div class="tool-icon" aria-hidden="true">🔒</div><h3>Auto-Vault</h3></div>
           <div class="tool-body">
-            <p class="credit-lead">Credit to <strong>Ruby</strong> (of StakeStats) for the Stake autovaulter — the Shuffle and Nuts versions are basically direct copies of her Stake autovaulter.</p>
+            <div class="tool-copy">
+            <p class="credit-lead">Credit to <strong>Ruby</strong> (of StakeStats) for the Stake autovaulter. The Shuffle and Nuts versions are basically direct copies of her Stake autovaulter.</p>
             <p class="plain">Your discipline, automated. Auto-Vault watches your balance as you play and quietly sweeps a slice of every win straight into your vault.</p>
-            <details class="details-toggle">
-              <summary>Detailed Human Written Tool Description <span class="chev" aria-hidden="true">›</span></summary>
-              <div class="dt-body">
-                <div class="mode-h">Save %</div>
-                <p>The share of each gain that gets swept into your vault. Enter it as a decimal between 0 and 1, where 0.1 = 10%, 0.25 = 25%, 0.5 = 50%. Whenever your balance goes up, this portion of the increase is moved to the vault automatically.</p>
-                <div class="mode-h">Big Win Threshold</div>
-                <p>What counts as a “big win.” It's a multiple of your balance: if your balance grows to more than this many times its size since the last check, the gain is treated as a big win and the Big Win Multiplier applies. Default is 5 (balance has to grow 5×). Lower it to something like 1.5 or 2 if you want big-win handling to trigger more often.</p>
-                <div class="mode-h">Big Win Multiplier</div>
-                <p>How much extra to vault when a big win is detected. Your Save % is multiplied by this number. Example: a Save % of 0.1 (10%) with a multiplier of 3 vaults 30% on a big win.</p>
-                <div class="note warn" style="margin:10px 0 4px;"><span class="ico" aria-hidden="true">⚠️</span><div><b>Important:</b> keep <b>Save % × Big Win Multiplier ≤ 1</b>, or you'll be vaulting all the money you just won — plus some.</div></div>
-                <div class="mode-h">Check Interval (sec)</div>
-                <p>How often the tool checks your balance for changes, in seconds. Default is 90. A lower number reacts faster and catches smaller swings but uses up your hourly vault limit quicker; a higher number is calmer and vaults less often.</p>
-              </div>
-            </details>
-            <div class="tool-gallery">
-              <figure><img src="assets/tools/tool-autovault-stake-desktop.png" alt="Auto-Vault on Stake, desktop" loading="lazy" /><figcaption>Stake <span class="dev">· Desktop</span></figcaption></figure>
-              <figure><img src="assets/tools/tool-autovault-stake-mobile.png" alt="Auto-Vault on Stake, mobile" loading="lazy" /><figcaption>Stake <span class="dev">· Mobile</span></figcaption></figure>
-              <figure><img src="assets/tools/tool-autovault-nuts-desktop.png" alt="Auto-Vault on Nuts, desktop" loading="lazy" /><figcaption>Nuts <span class="dev">· Desktop</span></figcaption></figure>
-              <figure><img src="assets/tools/tool-autovault-nuts-mobile.png" alt="Auto-Vault on Nuts, mobile" loading="lazy" /><figcaption>Nuts <span class="dev">· Mobile</span></figcaption></figure>
-              <figure><img src="assets/tools/tool-autovault-shuffle-desktop.png" alt="Auto-Vault on Shuffle, desktop" loading="lazy" /><figcaption>Shuffle <span class="dev">· Desktop</span></figcaption></figure>
-              <figure><img src="assets/tools/tool-autovault-shuffle-mobile.png" alt="Auto-Vault on Shuffle, mobile" loading="lazy" /><figcaption>Shuffle <span class="dev">· Mobile</span></figcaption></figure>
+            <div class="mode-h">Save %</div>
+            <p>The share of each gain that gets swept into your vault. Enter it as a decimal between 0 and 1, where 0.1 = 10%, 0.25 = 25%, 0.5 = 50%. Whenever your balance goes up, this portion of the increase is moved to the vault automatically.</p>
+            <div class="mode-h">Big Win Threshold</div>
+            <p>What counts as a “big win.” It's a multiple of your balance: if your balance grows to more than this many times its size since the last check, the gain is treated as a big win and the Big Win Multiplier applies. Default is 5 (balance has to grow 5×). Lower it to something like 1.5 or 2 if you want big-win handling to trigger more often.</p>
+            <div class="mode-h">Big Win Multiplier</div>
+            <p>How much extra to vault when a big win is detected. Your Save % is multiplied by this number. Example: a Save % of 0.1 (10%) with a multiplier of 3 vaults 30% on a big win.</p>
+            <div class="note warn" style="margin:14px 0 0;"><span class="ico" aria-hidden="true">⚠️</span><div><b>Important:</b> keep <b>Save % × Big Win Multiplier ≤ 1</b>, or you'll be vaulting all the money you just won, plus some.</div></div>
+            <div class="mode-h">Check Interval (sec)</div>
+            <p>How often the tool checks your balance for changes, in seconds. Default is 90. A lower number reacts faster and catches smaller swings but uses up your hourly vault limit quicker; a higher number is calmer and vaults less often.</p>
             </div>
+            <aside class="tool-shots">
+              <div class="shot-group is-desktop">
+                <div class="shot-label">Desktop</div>
+                <div class="shot-row">
+                  <figure><img src="assets/tools/tool-autovault-stake-desktop.png" alt="Auto-Vault on Stake, desktop" loading="lazy" /><figcaption>Stake</figcaption></figure>
+                  <figure><img src="assets/tools/tool-autovault-nuts-desktop.png" alt="Auto-Vault on Nuts, desktop" loading="lazy" /><figcaption>Nuts</figcaption></figure>
+                  <figure><img src="assets/tools/tool-autovault-shuffle-desktop.png" alt="Auto-Vault on Shuffle, desktop" loading="lazy" /><figcaption>Shuffle</figcaption></figure>
+                </div>
+              </div>
+              <div class="shot-group is-mobile">
+                <div class="shot-label">Mobile</div>
+                <div class="shot-row">
+                  <figure><img src="assets/tools/tool-autovault-stake-mobile.png" alt="Auto-Vault on Stake, mobile" loading="lazy" /><figcaption>Stake</figcaption></figure>
+                  <figure><img src="assets/tools/tool-autovault-nuts-mobile.png" alt="Auto-Vault on Nuts, mobile" loading="lazy" /><figcaption>Nuts</figcaption></figure>
+                  <figure><img src="assets/tools/tool-autovault-shuffle-mobile.png" alt="Auto-Vault on Shuffle, mobile" loading="lazy" /><figcaption>Shuffle</figcaption></figure>
+                </div>
+              </div>
+            </aside>
           </div>
         </article>
 
@@ -440,37 +449,38 @@
         <article class="tool">
           <div class="tool-head"><div class="tool-icon" aria-hidden="true">🎲</div><h3>Dice</h3></div>
           <div class="tool-body">
-            <p class="plain">Runs Dice on autoplay the way you want it — flat bets, increase-after-win, or Smart sizing that scales off your balance and aggression. The Advanced IOW tab is where you build and test your own 8.47-style strategies.</p>
-            <ul class="feature-list">
-              <li>Manual, IOW, and Smart bet modes</li>
-              <li>Change your bet or flip over/under without stopping the run</li>
-              <li>Advanced IOW: a calculator, two simulators, and strategy import</li>
-            </ul>
-            <details class="details-toggle">
-              <summary>Detailed Human Written Tool Description <span class="chev" aria-hidden="true">›</span></summary>
-              <div class="dt-body">
-                <div class="mode-h">Manual</div>
-                <p>Self-explanatory, only it allows you to run Dice on auto using the tool-injected Start button. This gives you the flexibility of adjusting your bet size on the fly, or switching the over/under without interrupting the tool's injected version of autoplay.</p>
-                <div class="mode-h">IOW</div>
-                <p>Allows you to set an increase percentage to your bet after a win, and a number of losses in a row before resetting back to base bet. You can also set the number of wins needed (before the loss reset occurs) to reset back to base bet. If you hit the win-reset value, the HUD will flash, letting you know you hit the win reset each time. You may also adjust your bet on the fly without interrupting the tool's injected version of autoplay.</p>
-                <div class="mode-h">Smart</div>
-                <p>Smart primarily calculates bet size from three user-facing factors: the user-selected multiplier, the current balance, and the user-selected Aggression value. The Aggression State statistic and Momentum Window statistic also play a role in the calculation. Those state rules are hardcoded, but they are heavily influenced by the selected Aggression value and selected multiplier. The Aggression State can be locked to any of the five aggression states; locking the state also locks the Momentum Window for that specific multiplier, Aggression value, and Aggression State combination. Just set these three values to your liking, and send it. Recommended aggression values sit between 1 and 2. But you can do what you want. Anything above a 2 on the aggression slider is typically set in tandem with a "Take Profit %" value, or an "Autostop On Balance" value.</p>
-                <div class="note warn" style="margin: 14px 0 0;"><span class="ico" aria-hidden="true">⚠️</span><div><b>“Smart” isn't smart.</b> It's just a name I've given to a deterministic, rule-based algorithm using a multi-step mathematical formula. It knows nothing. Please get a good feel for using this mode before attempting with larger balances.</div></div>
-                <div class="mode-h">Advanced IOW</div>
-                <p>Inspired by SWALD BANKMAN-FRIED's (of StakeStats) 8.47 dice strategy. This mode gives you the ability to easily create your own 8.47 style of strategy on Stake or Shuffle.</p>
-                <p>Equipped with 2 separate simulators. The main simulator is for testing your own input values. The optimizer simulator allows you to enter value ranges for each parameter — a simulation with each value combination within your set ranges will be run a number of times depending on how many "Trials per combo" you have set.</p>
-                <p>The results of these trial runs will be on the Results tab. From there you can examine the stats of each combination. You can sort the results by any category, or you can see which combination was best overall by sorting by Score (the default sorting method). When you find a combination you like, you can apply that selected strategy to the Calculator (first tab) for further testing of that individual strategy using your own balance with Simulation Controls.</p>
-                <p>If you want to use that strategy for real, you can import it into the game by selecting Import New Strategy at the bottom of the Calculator page. This will create the strategy in your game. Be sure to always click the Update Strategy button located on the Stats tab's control deck before a run, and after each profit stop.</p>
-              </div>
-            </details>
-            <div class="tool-gallery">
-              <figure><img src="assets/tools/tool-dice-stake-desktop.png" alt="Dice on Stake, desktop" loading="lazy" /><figcaption>Stake <span class="dev">· Desktop</span></figcaption></figure>
-              <figure><img src="assets/tools/tool-dice-stake-mobile.png" alt="Dice on Stake, mobile" loading="lazy" /><figcaption>Stake <span class="dev">· Mobile</span></figcaption></figure>
-              <figure><img src="assets/tools/tool-dice-nuts-desktop.png" alt="Dice on Nuts, desktop" loading="lazy" /><figcaption>Nuts <span class="dev">· Desktop</span></figcaption></figure>
-              <figure><img src="assets/tools/tool-dice-nuts-mobile.png" alt="Dice on Nuts, mobile" loading="lazy" /><figcaption>Nuts <span class="dev">· Mobile</span></figcaption></figure>
-              <figure><img src="assets/tools/tool-dice-shuffle-desktop.png" alt="Dice on Shuffle, desktop" loading="lazy" /><figcaption>Shuffle <span class="dev">· Desktop</span></figcaption></figure>
-              <figure><img src="assets/tools/tool-dice-shuffle-mobile.png" alt="Dice on Shuffle, mobile" loading="lazy" /><figcaption>Shuffle <span class="dev">· Mobile</span></figcaption></figure>
+            <div class="tool-copy">
+            <div class="mode-h">Manual</div>
+            <p>Self-explanatory, only it allows you to run Dice on auto using the tool-injected Start button. This gives you the flexibility of adjusting your bet size on the fly, or switching the over/under without interrupting the tool's injected version of autoplay.</p>
+            <div class="mode-h">IOW</div>
+            <p>Allows you to set an increase percentage to your bet after a win, and a number of losses in a row before resetting back to base bet. You can also set the number of wins needed (before the loss reset occurs) to reset back to base bet. If you hit the win-reset value, the HUD will flash, letting you know you hit the win reset each time. You may also adjust your bet on the fly without interrupting the tool's injected version of autoplay.</p>
+            <div class="mode-h">Smart</div>
+            <p>Smart primarily calculates bet size from three user-facing factors: the user-selected multiplier, the current balance, and the user-selected Aggression value. The Aggression State statistic and Momentum Window statistic also play a role in the calculation. Those state rules are hardcoded, but they are heavily influenced by the selected Aggression value and selected multiplier. The Aggression State can be locked to any of the five aggression states; locking the state also locks the Momentum Window for that specific multiplier, Aggression value, and Aggression State combination. Just set these three values to your liking, and send it. Recommended aggression values sit between 1 and 2. But you can do what you want. Anything above a 2 on the aggression slider is typically set in tandem with a "Take Profit %" value, or an "Autostop On Balance" value.</p>
+            <div class="note warn" style="margin: 14px 0 0;"><span class="ico" aria-hidden="true">⚠️</span><div><b>“Smart” isn't smart.</b> It's just a name I've given to a deterministic, rule-based algorithm using a multi-step mathematical formula. It knows nothing. Please get a good feel for using this mode before attempting with larger balances.</div></div>
+            <div class="mode-h">Advanced IOW</div>
+            <p>Inspired by SWALD BANKMAN-FRIED's (of StakeStats) 8.47 dice strategy. This mode gives you the ability to easily create your own 8.47 style of strategy on Stake or Shuffle.</p>
+            <p>Equipped with 2 separate simulators. The main simulator is for testing your own input values. The optimizer simulator allows you to enter value ranges for each parameter. A simulation with each value combination within your set ranges will be run a number of times depending on how many "Trials per combo" you have set.</p>
+            <p>The results of these trial runs will be on the Results tab. From there you can examine the stats of each combination. You can sort the results by any category, or you can see which combination was best overall by sorting by Score (the default sorting method). When you find a combination you like, you can apply that selected strategy to the Calculator (first tab) for further testing of that individual strategy using your own balance with Simulation Controls.</p>
+            <p>If you want to use that strategy for real, you can import it into the game by selecting Import New Strategy at the bottom of the Calculator page. This will create the strategy in your game. Be sure to always click the Update Strategy button located on the Stats tab's control deck before a run, and after each profit stop.</p>
             </div>
+            <aside class="tool-shots">
+              <div class="shot-group is-desktop">
+                <div class="shot-label">Desktop</div>
+                <div class="shot-row">
+                  <figure><img src="assets/tools/tool-dice-stake-desktop.png" alt="Dice on Stake, desktop" loading="lazy" /><figcaption>Stake</figcaption></figure>
+                  <figure><img src="assets/tools/tool-dice-nuts-desktop.png" alt="Dice on Nuts, desktop" loading="lazy" /><figcaption>Nuts</figcaption></figure>
+                  <figure><img src="assets/tools/tool-dice-shuffle-desktop.png" alt="Dice on Shuffle, desktop" loading="lazy" /><figcaption>Shuffle</figcaption></figure>
+                </div>
+              </div>
+              <div class="shot-group is-mobile">
+                <div class="shot-label">Mobile</div>
+                <div class="shot-row">
+                  <figure><img src="assets/tools/tool-dice-stake-mobile.png" alt="Dice on Stake, mobile" loading="lazy" /><figcaption>Stake</figcaption></figure>
+                  <figure><img src="assets/tools/tool-dice-nuts-mobile.png" alt="Dice on Nuts, mobile" loading="lazy" /><figcaption>Nuts</figcaption></figure>
+                  <figure><img src="assets/tools/tool-dice-shuffle-mobile.png" alt="Dice on Shuffle, mobile" loading="lazy" /><figcaption>Shuffle</figcaption></figure>
+                </div>
+              </div>
+            </aside>
           </div>
         </article>
 
@@ -478,30 +488,32 @@
         <article class="tool">
           <div class="tool-head"><div class="tool-icon" aria-hidden="true">🚀</div><h3>Limbo</h3></div>
           <div class="tool-body">
-            <p class="plain">Same autoplay and bet modes as Dice — Manual, IOW, and Smart — on Limbo. No over/under here, just your target multiplier.</p>
-            <ul class="feature-list">
-              <li>Manual, IOW, and Smart bet modes</li>
-              <li>Change your bet on the fly without stopping the run</li>
-            </ul>
-            <details class="details-toggle">
-              <summary>Detailed Human Written Tool Description <span class="chev" aria-hidden="true">›</span></summary>
-              <div class="dt-body">
-                <div class="mode-h">Manual</div>
-                <p>Self-explanatory, only it allows you to run Limbo on auto using the tool-injected Start button. This gives you the flexibility of adjusting your bet size on the fly.</p>
-                <div class="mode-h">IOW</div>
-                <p>Allows you to set an increase percentage to your bet after a win, and a number of losses in a row before resetting back to base bet. You can also set the number of wins needed (before the loss reset occurs) to reset back to base bet. If you hit the win-reset value, the HUD will flash, letting you know you hit the win reset each time. You may also adjust your bet on the fly without interrupting the tool's injected version of autoplay.</p>
-                <div class="mode-h">Smart</div>
-                <p>Smart primarily calculates bet size from three user-facing factors: the user-selected multiplier, the current balance, and the user-selected Aggression value. The Aggression State statistic and Momentum Window statistic also play a role in the calculation. Those state rules are hardcoded, but they are heavily influenced by the selected Aggression value and selected multiplier. The Aggression State can be locked to any of the five aggression states; locking the state also locks the Momentum Window for that specific multiplier, Aggression value, and Aggression State combination. Just set these three values to your liking, and send it. Recommended aggression values sit between 1 and 2. But you can do what you want. Anything above a 2 on the aggression slider is typically set in tandem with a "Take Profit %" value, or an "Autostop On Balance" value.</p>
-                <div class="note warn" style="margin: 14px 0 0;"><span class="ico" aria-hidden="true">⚠️</span><div><b>“Smart” isn't smart.</b> It's just a name I've given to a deterministic, rule-based algorithm using a multi-step mathematical formula. It knows nothing. Please get a good feel for using this mode before attempting with larger balances.</div></div>
-              </div>
-            </details>
-            <div class="tool-gallery">
-              <figure><img src="assets/tools/tool-limbo-stake-desktop.png" alt="Limbo on Stake, desktop" loading="lazy" /><figcaption>Stake <span class="dev">· Desktop</span></figcaption></figure>
-              <figure><img src="assets/tools/tool-limbo-stake-mobile.png" alt="Limbo on Stake, mobile" loading="lazy" /><figcaption>Stake <span class="dev">· Mobile</span></figcaption></figure>
-              <figure><img src="assets/tools/tool-limbo-nuts-desktop.png" alt="Limbo on Nuts, desktop" loading="lazy" /><figcaption>Nuts <span class="dev">· Desktop</span></figcaption></figure>
-              <figure><img src="assets/tools/tool-limbo-shuffle-desktop.png" alt="Limbo on Shuffle, desktop" loading="lazy" /><figcaption>Shuffle <span class="dev">· Desktop</span></figcaption></figure>
-              <figure><img src="assets/tools/tool-limbo-shuffle-mobile.png" alt="Limbo on Shuffle, mobile" loading="lazy" /><figcaption>Shuffle <span class="dev">· Mobile</span></figcaption></figure>
+            <div class="tool-copy">
+            <div class="mode-h">Manual</div>
+            <p>Self-explanatory, only it allows you to run Limbo on auto using the tool-injected Start button. This gives you the flexibility of adjusting your bet size on the fly.</p>
+            <div class="mode-h">IOW</div>
+            <p>Allows you to set an increase percentage to your bet after a win, and a number of losses in a row before resetting back to base bet. You can also set the number of wins needed (before the loss reset occurs) to reset back to base bet. If you hit the win-reset value, the HUD will flash, letting you know you hit the win reset each time. You may also adjust your bet on the fly without interrupting the tool's injected version of autoplay.</p>
+            <div class="mode-h">Smart</div>
+            <p>Smart primarily calculates bet size from three user-facing factors: the user-selected multiplier, the current balance, and the user-selected Aggression value. The Aggression State statistic and Momentum Window statistic also play a role in the calculation. Those state rules are hardcoded, but they are heavily influenced by the selected Aggression value and selected multiplier. The Aggression State can be locked to any of the five aggression states; locking the state also locks the Momentum Window for that specific multiplier, Aggression value, and Aggression State combination. Just set these three values to your liking, and send it. Recommended aggression values sit between 1 and 2. But you can do what you want. Anything above a 2 on the aggression slider is typically set in tandem with a "Take Profit %" value, or an "Autostop On Balance" value.</p>
+            <div class="note warn" style="margin: 14px 0 0;"><span class="ico" aria-hidden="true">⚠️</span><div><b>“Smart” isn't smart.</b> It's just a name I've given to a deterministic, rule-based algorithm using a multi-step mathematical formula. It knows nothing. Please get a good feel for using this mode before attempting with larger balances.</div></div>
             </div>
+            <aside class="tool-shots">
+              <div class="shot-group is-desktop">
+                <div class="shot-label">Desktop</div>
+                <div class="shot-row">
+                  <figure><img src="assets/tools/tool-limbo-stake-desktop.png" alt="Limbo on Stake, desktop" loading="lazy" /><figcaption>Stake</figcaption></figure>
+                  <figure><img src="assets/tools/tool-limbo-nuts-desktop.png" alt="Limbo on Nuts, desktop" loading="lazy" /><figcaption>Nuts</figcaption></figure>
+                  <figure><img src="assets/tools/tool-limbo-shuffle-desktop.png" alt="Limbo on Shuffle, desktop" loading="lazy" /><figcaption>Shuffle</figcaption></figure>
+                </div>
+              </div>
+              <div class="shot-group is-mobile">
+                <div class="shot-label">Mobile</div>
+                <div class="shot-row">
+                  <figure><img src="assets/tools/tool-limbo-stake-mobile.png" alt="Limbo on Stake, mobile" loading="lazy" /><figcaption>Stake</figcaption></figure>
+                  <figure><img src="assets/tools/tool-limbo-shuffle-mobile.png" alt="Limbo on Shuffle, mobile" loading="lazy" /><figcaption>Shuffle</figcaption></figure>
+                </div>
+              </div>
+            </aside>
           </div>
         </article>
 
@@ -509,29 +521,30 @@
         <article class="tool">
           <div class="tool-head"><div class="tool-icon" aria-hidden="true">💎</div><h3>Mines</h3></div>
           <div class="tool-body">
-            <p class="plain">Set how many tiles to open and it picks them at random and cashes out for you, round after round. Playing by hand, it shows your live multiplier, payout, and exact next-gem odds.</p>
-            <ul class="feature-list">
-              <li>Picks random tiles in the range you set, then auto-cashes out</li>
-              <li>Projected min and max multipliers and payouts for your bet</li>
-              <li>Live multiplier, payout, and next-gem chance</li>
-            </ul>
-            <details class="details-toggle">
-              <summary>Detailed Human Written Tool Description <span class="chev" aria-hidden="true">›</span></summary>
-              <div class="dt-body">
-                <div class="mode-h">For auto players</div>
-                <p>Set your preferred amount of mines in the native game. Set your preferred min and max range of tiles to click, and the tool will randomly pick somewhere in that range every round, auto-cash out, and run it back until you stop. Projected Ranges show you the min and max multipliers you can hit based on your selected mines amount, and your min and max range of tiles to click. Additionally, a min and max payout projection will also be displayed in reference to your bet size.</p>
-                <div class="mode-h">For manual players</div>
-                <p>Live stats are displayed right on the panel. Current Multiplier, Payout, and Next Gem Chance — the exact probability of the next tile being a gem, computed from how many mines and how many tiles are left on the board.</p>
-              </div>
-            </details>
-            <div class="tool-gallery">
-              <figure><img src="assets/tools/tool-mines-stake-desktop.png" alt="Mines on Stake, desktop" loading="lazy" /><figcaption>Stake <span class="dev">· Desktop</span></figcaption></figure>
-              <figure><img src="assets/tools/tool-mines-stake-mobile.webp" alt="Mines on Stake, mobile" loading="lazy" /><figcaption>Stake <span class="dev">· Mobile</span></figcaption></figure>
-              <figure><img src="assets/tools/tool-mines-nuts-desktop.png" alt="Mines on Nuts, desktop" loading="lazy" /><figcaption>Nuts <span class="dev">· Desktop</span></figcaption></figure>
-              <figure><img src="assets/tools/tool-mines-nuts-mobile.png" alt="Mines on Nuts, mobile" loading="lazy" /><figcaption>Nuts <span class="dev">· Mobile</span></figcaption></figure>
-              <figure><img src="assets/tools/tool-mines-shuffle-desktop.png" alt="Mines on Shuffle, desktop" loading="lazy" /><figcaption>Shuffle <span class="dev">· Desktop</span></figcaption></figure>
-              <figure><img src="assets/tools/tool-mines-shuffle-mobile.webp" alt="Mines on Shuffle, mobile" loading="lazy" /><figcaption>Shuffle <span class="dev">· Mobile</span></figcaption></figure>
+            <div class="tool-copy">
+            <div class="mode-h">For auto players</div>
+            <p>Set your preferred amount of mines in the native game. Set your preferred min and max range of tiles to click, and the tool will randomly pick somewhere in that range every round, auto-cash out, and run it back until you stop. Projected Ranges show you the min and max multipliers you can hit based on your selected mines amount, and your min and max range of tiles to click. Additionally, a min and max payout projection will also be displayed in reference to your bet size.</p>
+            <div class="mode-h">For manual players</div>
+            <p>Live stats are displayed right on the panel. Current Multiplier, Payout, and Next Gem Chance: the exact probability of the next tile being a gem, computed from how many mines and how many tiles are left on the board.</p>
             </div>
+            <aside class="tool-shots">
+              <div class="shot-group is-desktop">
+                <div class="shot-label">Desktop</div>
+                <div class="shot-row">
+                  <figure><img src="assets/tools/tool-mines-stake-desktop.png" alt="Mines on Stake, desktop" loading="lazy" /><figcaption>Stake</figcaption></figure>
+                  <figure><img src="assets/tools/tool-mines-nuts-desktop.png" alt="Mines on Nuts, desktop" loading="lazy" /><figcaption>Nuts</figcaption></figure>
+                  <figure><img src="assets/tools/tool-mines-shuffle-desktop.png" alt="Mines on Shuffle, desktop" loading="lazy" /><figcaption>Shuffle</figcaption></figure>
+                </div>
+              </div>
+              <div class="shot-group is-mobile">
+                <div class="shot-label">Mobile</div>
+                <div class="shot-row">
+                  <figure><img src="assets/tools/tool-mines-stake-mobile.webp" alt="Mines on Stake, mobile" loading="lazy" /><figcaption>Stake</figcaption></figure>
+                  <figure><img src="assets/tools/tool-mines-nuts-mobile.png" alt="Mines on Nuts, mobile" loading="lazy" /><figcaption>Nuts</figcaption></figure>
+                  <figure><img src="assets/tools/tool-mines-shuffle-mobile.webp" alt="Mines on Shuffle, mobile" loading="lazy" /><figcaption>Shuffle</figcaption></figure>
+                </div>
+              </div>
+            </aside>
           </div>
         </article>
 
@@ -539,19 +552,27 @@
         <article class="tool">
           <div class="tool-head"><div class="tool-icon" aria-hidden="true">🎱</div><h3>Keno</h3></div>
           <div class="tool-body">
-            <p class="plain">Save the Keno boards you like, then drop the exact numbers and risk back on the board in one click instead of re-picking them every time.</p>
-            <ul class="feature-list">
-              <li>Save and reload number presets</li>
-              <li>Presets can include the selected risk or difficulty</li>
-            </ul>
-            <div class="tool-gallery">
-              <figure><img src="assets/tools/tool-keno-stake-desktop.png" alt="Keno on Stake, desktop" loading="lazy" /><figcaption>Stake <span class="dev">· Desktop</span></figcaption></figure>
-              <figure><img src="assets/tools/tool-keno-stake-mobile.webp" alt="Keno on Stake, mobile" loading="lazy" /><figcaption>Stake <span class="dev">· Mobile</span></figcaption></figure>
-              <figure><img src="assets/tools/tool-keno-nuts-desktop.png" alt="Keno on Nuts, desktop" loading="lazy" /><figcaption>Nuts <span class="dev">· Desktop</span></figcaption></figure>
-              <figure><img src="assets/tools/tool-keno-nuts-mobile.png" alt="Keno on Nuts, mobile" loading="lazy" /><figcaption>Nuts <span class="dev">· Mobile</span></figcaption></figure>
-              <figure><img src="assets/tools/tool-keno-shuffle-desktop.png" alt="Keno on Shuffle, desktop" loading="lazy" /><figcaption>Shuffle <span class="dev">· Desktop</span></figcaption></figure>
-              <figure><img src="assets/tools/tool-keno-shuffle-mobile.webp" alt="Keno on Shuffle, mobile" loading="lazy" /><figcaption>Shuffle <span class="dev">· Mobile</span></figcaption></figure>
+            <div class="tool-copy">
+            <p class="plain">Save the Keno boards you like, then drop the exact numbers and risk back on the board in one click instead of re-picking them every time. Each preset can include the selected risk or difficulty.</p>
             </div>
+            <aside class="tool-shots">
+              <div class="shot-group is-desktop">
+                <div class="shot-label">Desktop</div>
+                <div class="shot-row">
+                  <figure><img src="assets/tools/tool-keno-stake-desktop.png" alt="Keno on Stake, desktop" loading="lazy" /><figcaption>Stake</figcaption></figure>
+                  <figure><img src="assets/tools/tool-keno-nuts-desktop.png" alt="Keno on Nuts, desktop" loading="lazy" /><figcaption>Nuts</figcaption></figure>
+                  <figure><img src="assets/tools/tool-keno-shuffle-desktop.png" alt="Keno on Shuffle, desktop" loading="lazy" /><figcaption>Shuffle</figcaption></figure>
+                </div>
+              </div>
+              <div class="shot-group is-mobile">
+                <div class="shot-label">Mobile</div>
+                <div class="shot-row">
+                  <figure><img src="assets/tools/tool-keno-stake-mobile.webp" alt="Keno on Stake, mobile" loading="lazy" /><figcaption>Stake</figcaption></figure>
+                  <figure><img src="assets/tools/tool-keno-nuts-mobile.png" alt="Keno on Nuts, mobile" loading="lazy" /><figcaption>Nuts</figcaption></figure>
+                  <figure><img src="assets/tools/tool-keno-shuffle-mobile.webp" alt="Keno on Shuffle, mobile" loading="lazy" /><figcaption>Shuffle</figcaption></figure>
+                </div>
+              </div>
+            </aside>
           </div>
         </article>
       </div>
@@ -567,29 +588,29 @@
         <details class="qa">
           <summary>I installed it but nothing shows up on the game.</summary>
           <div class="qa-body">
-            <p>Refresh the game page once after installing — it loads with the page. Tools only show up on supported games (Stake, Nuts, Shuffle), so check the gear in the bottom-left and make sure the one for that game is switched on.</p>
+            <p>Refresh the game page once after installing. It loads with the page. Tools only show up on supported games (Stake, Nuts, Shuffle), so check the gear in the bottom-left and make sure the one for that game is switched on.</p>
           </div>
         </details>        <details class="qa">
           <summary>Can these tools beat the house or guarantee a profit?</summary>
           <div class="qa-body">
-            <p>No. The games are provably-fair and the house edge is fixed — none of the modes or settings change the odds of a single bet. They make playing easier and clearer, that's all. More on this under <a href="#risk">Before you start</a>.</p>
+            <p>No. The games are provably-fair and the house edge is fixed, so none of the modes or settings change the odds of a single bet. They make playing easier and clearer, that's all. More on this under <a href="#risk">Before you start</a>.</p>
           </div>
         </details>
         <details class="qa">
           <summary>How do I turn a tool off, or remove everything?</summary>
           <div class="qa-body">
-            <p>Each tool has its own switch in the bottom-left gear panel, and per-game quick-toggle chips sit just above the gear — so you can switch off just one. To remove everything, open your userscript manager's dashboard (Tampermonkey or Userscripts) and disable or delete the bundle.</p>
+            <p>Each tool has its own switch in the bottom-left gear panel, and per-game quick-toggle chips sit just above the gear, so you can switch off just one. To remove everything, open your userscript manager's dashboard (Tampermonkey or Userscripts) and disable or delete the bundle.</p>
           </div>
         </details>
         <details class="qa">
           <summary>Which sites and games are supported?</summary>
           <div class="qa-body">
-            <p>Stake, Nuts, and Shuffle. The bundle only shows the tools that match the game you're currently on — Auto-Vault, Dice, Limbo, Mines, and Keno where each is supported.</p>
+            <p>Stake, Nuts, and Shuffle. The bundle only shows the tools that match the game you're currently on: Auto-Vault, Dice, Limbo, Mines, and Keno where each is supported.</p>
           </div>
         </details>        <details class="qa">
-          <summary>Something's broken or I have a question — where do I go?</summary>
+          <summary>Something's broken or I have a question. Where do I go?</summary>
           <div class="qa-body">
-            <p>Check the <a href="updates.html">Updates page</a> first — a recent fix may already cover it. Bugs and requests can be raised on the project's <a href="https://github.com/whaklgjndo/gambling-tools-site/issues" target="_blank" rel="noopener">GitHub issues</a>.</p>
+            <p>Check the <a href="updates.html">Updates page</a> first. A recent fix may already cover it. Bugs and requests can be raised on the project's <a href="https://github.com/whaklgjndo/gambling-tools-site/issues" target="_blank" rel="noopener">GitHub issues</a>.</p>
           </div>
         </details>
       </div>
@@ -608,7 +629,7 @@
 
   <footer class="site">
     <div class="container">
-      <p class="rg">These userscripts run entirely in your own browser. They don't change the odds of any game. Use them at your own risk, and please gamble responsibly — only play with what you can afford to lose.</p>
+      <p class="rg">These userscripts run entirely in your own browser. They don't change the odds of any game. Use them at your own risk, and please gamble responsibly. Only play with what you can afford to lose.</p>
       <p class="cr">Gambling Tools · Desktop &amp; Mobile bundles · client-side only</p>
     </div>
   </footer>

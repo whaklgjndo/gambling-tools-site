@@ -109,11 +109,11 @@
     }
 
     document.addEventListener("click", (e) => {
-      const img = e.target.closest(".tool-gallery img, .shot, .ref img");
+      const img = e.target.closest(".tool-shots img, .shot, .ref img");
       if (!img || img.tagName !== "IMG") return;
-      const gallery = img.closest(".tool-gallery");
-      if (gallery) {
-        const imgs = Array.from(gallery.querySelectorAll("img"));
+      const tool = img.closest(".tool");
+      if (tool) {
+        const imgs = Array.from(tool.querySelectorAll(".tool-shots img"));
         open(imgs.map((m) => ({ src: m.currentSrc || m.src, alt: m.alt })), Math.max(0, imgs.indexOf(img)));
       } else {
         open([{ src: img.currentSrc || img.src, alt: img.alt }], 0);
