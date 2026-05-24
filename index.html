@@ -108,10 +108,10 @@
 
       <div class="note warn" style="margin-top:14px;">
         <span class="ico" aria-hidden="true">🐛</span>
-        <div><b>Glitches and bugs are still potentially present.</b> That said, I use these tools every day and have ironed out anything that might cause you to lose a large portion — or all — of your balance, and I've put safety mechanisms and guardrails in place for balance-deleting bugs. While very rare, if you ever find a balance-deleting bug — or even <em>almost</em> trigger something that would have wiped your balance — please report it and I'll address it as soon as I see the report. Although I use them daily, others may run different settings, or a combination of settings, that I haven't uncovered myself. It's important to understand the risks, and reporting these things can and will help everyone.</div>
+        <div><b>Glitches and bugs are still potentially present.</b> That said, I use these tools every day and am 95% sure I have ironed out anything that might cause you to lose a large portion, or all of your balance. I've also put safety mechanisms and guardrails in place for potential balance-harming scenarios. While very rare, if you ever find a balance-deleting bug, or even ALMOST trigger something that would have wiped most of your balance, please report it and I'll address it as soon as I see the report. Don't just learn how to avoid said bug and avoid it without mentioning it. <b>Report it. Please.</b> It takes 5 minutes. Although I use the tools daily, others may run different settings, or a combination of settings, that might reveal an unintended behavior I haven't uncovered myself. It's important to understand these risks, and reporting these things will help anyone else using these tools.</div>
       </div>
 
-      <p class="rg-line"><em>Smart</em>, <em>Aggression</em>, and <em>Take Profit</em> are just ways to size or stop your bets — not ways to win. The longer you play, the more the house edge adds up, so <strong>only play with money you can afford to lose</strong>. If it stops being fun, walk away — help's at <a href="https://www.begambleaware.org/" target="_blank" rel="noopener">BeGambleAware</a>, or 1-800-GAMBLER in the US.</p>
+      <p class="rg-line">These tools <strong>ARE NOT</strong> a way to win. The longer you play, the more the house edge adds up, and the more you risk losing. If you're going to lose, might as well have fun doing it. If it stops being fun or becomes a financial hardship, walk away — help's at <a href="https://www.begambleaware.org/" target="_blank" rel="noopener">BeGambleAware</a>, or 1-800-GAMBLER in the US.</p>
     </section>
 
     <!-- ===================== PLATFORM PICKER ===================== -->
@@ -455,6 +455,7 @@
                 <p>Allows you to set an increase percentage to your bet after a win, and a number of losses in a row before resetting back to base bet. You can also set the number of wins needed (before the loss reset occurs) to reset back to base bet. If you hit the win-reset value, the HUD will flash, letting you know you hit the win reset each time. You may also adjust your bet on the fly without interrupting the tool's injected version of autoplay.</p>
                 <div class="mode-h">Smart</div>
                 <p>Smart primarily calculates bet size from three user-facing factors: the user-selected multiplier, the current balance, and the user-selected Aggression value. The Aggression State statistic and Momentum Window statistic also play a role in the calculation. Those state rules are hardcoded, but they are heavily influenced by the selected Aggression value and selected multiplier. The Aggression State can be locked to any of the five aggression states; locking the state also locks the Momentum Window for that specific multiplier, Aggression value, and Aggression State combination. Just set these three values to your liking, and send it. Recommended aggression values sit between 1 and 2. But you can do what you want. Anything above a 2 on the aggression slider is typically set in tandem with a "Take Profit %" value, or an "Autostop On Balance" value.</p>
+                <div class="note warn" style="margin: 14px 0 0;"><span class="ico" aria-hidden="true">⚠️</span><div><b>“Smart” isn't smart.</b> It's just a name I've given to a deterministic, rule-based algorithm using a multi-step mathematical formula. It knows nothing. Please get a good feel for using this mode before attempting with larger balances.</div></div>
                 <div class="mode-h">Advanced IOW</div>
                 <p>Inspired by SWALD BANKMAN-FRIED's (of StakeStats) 8.47 dice strategy. This mode gives you the ability to easily create your own 8.47 style of strategy on Stake or Shuffle.</p>
                 <p>Equipped with 2 separate simulators. The main simulator is for testing your own input values. The optimizer simulator allows you to enter value ranges for each parameter — a simulation with each value combination within your set ranges will be run a number of times depending on how many "Trials per combo" you have set.</p>
@@ -491,6 +492,7 @@
                 <p>Allows you to set an increase percentage to your bet after a win, and a number of losses in a row before resetting back to base bet. You can also set the number of wins needed (before the loss reset occurs) to reset back to base bet. If you hit the win-reset value, the HUD will flash, letting you know you hit the win reset each time. You may also adjust your bet on the fly without interrupting the tool's injected version of autoplay.</p>
                 <div class="mode-h">Smart</div>
                 <p>Smart primarily calculates bet size from three user-facing factors: the user-selected multiplier, the current balance, and the user-selected Aggression value. The Aggression State statistic and Momentum Window statistic also play a role in the calculation. Those state rules are hardcoded, but they are heavily influenced by the selected Aggression value and selected multiplier. The Aggression State can be locked to any of the five aggression states; locking the state also locks the Momentum Window for that specific multiplier, Aggression value, and Aggression State combination. Just set these three values to your liking, and send it. Recommended aggression values sit between 1 and 2. But you can do what you want. Anything above a 2 on the aggression slider is typically set in tandem with a "Take Profit %" value, or an "Autostop On Balance" value.</p>
+                <div class="note warn" style="margin: 14px 0 0;"><span class="ico" aria-hidden="true">⚠️</span><div><b>“Smart” isn't smart.</b> It's just a name I've given to a deterministic, rule-based algorithm using a multi-step mathematical formula. It knows nothing. Please get a good feel for using this mode before attempting with larger balances.</div></div>
               </div>
             </details>
             <div class="tool-gallery">
@@ -567,14 +569,7 @@
           <div class="qa-body">
             <p>Refresh the game page once after installing — it loads with the page. Tools only show up on supported games (Stake, Nuts, Shuffle), so check the gear in the bottom-left and make sure the one for that game is switched on.</p>
           </div>
-        </details>
-        <details class="qa">
-          <summary>How do I get updates?</summary>
-          <div class="qa-body">
-            <p>Tampermonkey and Userscripts check for new versions automatically and replace the old one in place, keeping your saved settings — no reinstall needed. The current build numbers are shown at the top of this page, and every change is listed on the <a href="updates.html">Updates page</a>.</p>
-          </div>
-        </details>
-        <details class="qa">
+        </details>        <details class="qa">
           <summary>Can these tools beat the house or guarantee a profit?</summary>
           <div class="qa-body">
             <p>No. The games are provably-fair and the house edge is fixed — none of the modes or settings change the odds of a single bet. They make playing easier and clearer, that's all. More on this under <a href="#risk">Before you start</a>.</p>
