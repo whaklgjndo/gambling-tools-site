@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mobile 
 // @namespace    https://whaklgjndo.github.io/gambling-tools/
-// @version      5.0
+// @version      5.1
 // @description  .
 // @author       .
 // @match        https://stake.com/*
@@ -2397,12 +2397,47 @@
     /* ============================================================
        BET TRACKING
        ============================================================ */
+    // Tracks Nuts bet-tile DOM nodes we've already counted. WeakSet so we
+    // don't pin nodes alive after Nuts GCs old bets out of the feed.
+    const _nutsProcessedBetEls = new WeakSet();
     function startObserver() {
         if (isShuffle()) return;
         pastBetsContainer = findPastBetsContainer();
         if (!pastBetsContainer) { setTimeout(startObserver, 500); return; }
         if (observer) observer.disconnect();
         syncLastSeenBet(pastBetsContainer);
+        if (isNuts()) {
+            // Nuts emits TWO bet tiles per single roll — the same bet shown two
+            // ways in the feed (different displayed multipliers, same win/loss
+            // result). The old "read latest entry, dedup by id" path counted
+            // both, doubling every stat. Fix mirrors the desktop Nuts tool:
+            // seed already-present tiles, then count only the FIRST new tile per
+            // mutation batch, with a WeakSet guarding the same node bubbling
+            // through twice. Real back-to-back rolls land in separate mutation
+            // batches, so rapid fire isn't undercounted.
+            pastBetsContainer.querySelectorAll('.styles-module___IID9a__game')
+                .forEach(el => _nutsProcessedBetEls.add(el));
+            observer = new MutationObserver((mutations) => {
+                let countedThisBatch = false;
+                outer: for (const m of mutations) {
+                    for (const node of m.addedNodes) {
+                        if (countedThisBatch) break outer;
+                        if (node.nodeType !== 1) continue;
+                        const tile = node.matches && node.matches('.styles-module___IID9a__game')
+                            ? node
+                            : (node.querySelector && node.querySelector('.styles-module___IID9a__game'));
+                        if (!tile) continue;
+                        if (_nutsProcessedBetEls.has(tile)) continue;
+                        if (!(tile.textContent || '').trim()) continue; // skip placeholders
+                        _nutsProcessedBetEls.add(tile);
+                        countedThisBatch = true;
+                        processNewBet(pastBetsContainer, tile);
+                    }
+                }
+            });
+            observer.observe(pastBetsContainer, { childList: true, subtree: true });
+            return;
+        }
         observer = new MutationObserver(() => processNewBet(pastBetsContainer));
         observer.observe(pastBetsContainer, { childList: true, subtree: true });
     }
@@ -2542,9 +2577,13 @@
         obs.observe(feed, { childList: true });
     }
 
-    function processNewBet(container) {
-        const latestBet = getLatestBetEntry(container);
-        if (!latestBet || latestBet.id === lastBetId) return;
+    function processNewBet(container, specificTile) {
+        // The Nuts observer passes the exact tile it counted; other callers
+        // fall back to "latest entry" + id-based dedup (Stake path).
+        const latestBet = specificTile
+            ? { element: specificTile, id: specificTile }
+            : getLatestBetEntry(container);
+        if (!latestBet || (!specificTile && latestBet.id === lastBetId)) return;
         lastBetId = latestBet.id;
         lastObservedBetTime = Date.now();
         rapidBlockedSince = 0;
