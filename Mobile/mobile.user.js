@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mobile 
 // @namespace    https://whaklgjndo.github.io/gambling-tools/
-// @version      5.4
+// @version      5.5
 // @description  .
 // @author       .
 // @match        https://stake.com/*
@@ -26,7 +26,7 @@
 (function () {
     'use strict';
 
-    try { console.log('[unified-mobile] boot v5.4 — blend redesign of dice/limbo calc/opt/results tabs (Coach + risk bars), taller stage on those tabs; native-overlay-safe element relocation; fresh import seeds Stats divisor/mult from Calculator'); } catch (e) {}
+    try { console.log('[unified-mobile] boot v5.5 — chat/modal can no longer be grabbed into the HUD (never adopts an element containing a chat subtree); blend redesign of dice/limbo tabs; taller stage on those tabs; fresh-import Stats seed'); } catch (e) {}
 
     /* ============================================================
        iOS USERSCRIPTS COMPATIBILITY
@@ -1462,21 +1462,27 @@
     }
 
     function findNativeElement(selector) {
-        // Skip our own HUD and any native modal/chat overlay so opening chat/settings
-        // can't pull their DOM into the HUD (mirrors the desktop fix).
-        const inOverlay = el => el.closest('[role="dialog"], [aria-modal="true"], [data-testid*="chat" i], [data-test*="chat" i], [class*="chat" i]');
-        const ok = el => !el.closest('#ratchet-master-container') && !inOverlay(el);
+        // Skip our own HUD, native modals (.game-modal/dialog), and the chat drawer —
+        // including any element that CONTAINS a chat subtree. Stake's chat wraps its
+        // input in a .footer whose only chat marker (.chat-input) is a DESCENDANT, so
+        // an ancestor-only closest() misses it and we'd grab the chat input.
+        const inOverlay = el =>
+            el.closest('#ratchet-master-container, [role="dialog"], [aria-modal="true"], .game-modal, [class*="chat" i], [data-testid*="chat" i]') ||
+            el.querySelector('.chat-input, [class*="chat" i], [data-testid*="chat" i]');
+        const ok = el => !inOverlay(el);
         const host = getHudHost();
-        const scope = host || document;
-        const scoped = Array.from(scope.querySelectorAll(selector)).filter(ok);
+        const scoped = host ? Array.from(host.querySelectorAll(selector)).filter(ok) : [];
         if (scoped.length) return scoped[0];
         const fallback = Array.from(document.querySelectorAll(selector)).filter(ok);
         return fallback[0] || null;
     }
 
     function findShuffleFooter() {
-        // Skip chat/modal overlays so we never grab their DOM (mirrors the desktop fix).
-        const inOverlay = el => el.closest('[role="dialog"], [aria-modal="true"], [data-testid*="chat" i], [data-test*="chat" i], [class*="chat" i]');
+        // Skip chat/modal overlays — incl. any element that CONTAINS a chat subtree
+        // (ancestor-only closest misses Stake's chat .footer > .chat-input).
+        const inOverlay = el =>
+            el.closest('[role="dialog"], [aria-modal="true"], .game-modal, [class*="chat" i], [data-testid*="chat" i]') ||
+            el.querySelector('.chat-input, [class*="chat" i], [data-testid*="chat" i]');
         const byClass = document.querySelector(
             '[class*="footer"][class*="dice"], [class*="Dice"][class*="footer"], ' +
             '[class*="TBYuRq__footer"], [class*="gameFooter"], [class*="GameFooter"], ' +
@@ -4134,7 +4140,7 @@ self.onmessage = async (e) => {
               <div class="dt-card-title">About</div>
               <div class="dt-setting-row">
                 <div class="dt-setting-label">Version</div>
-                <div style="opacity:0.7;">Dice &amp; Limbo Tools v5.4 (Mobile)</div>
+                <div style="opacity:0.7;">Dice &amp; Limbo Tools v5.5 (Mobile)</div>
               </div>
               <button class="dt-btn dt-btn-block dt-btn-small" id="dt-reset_state">Reset All Saved Data</button>
             </div>

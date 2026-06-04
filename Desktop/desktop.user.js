@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Desktop
 // @namespace    http://tampermonkey.net/
-// @version      2.42
+// @version      2.43
 // @description  .
 // @author       .
 // @match        https://nuts.gg/*
@@ -28,7 +28,7 @@
 (function () {
     'use strict';
 
-    console.log('%c🎲 Dice & Limbo Tools — desktop v2.42 — blend redesign + native-UI guard (hotkeys/chat) + fresh import seeds Stats divisor/mult from Calculator', 'color:#17c7b8;font-weight:800;font-size:13px');
+    console.log('%c🎲 Dice & Limbo Tools — desktop v2.43 — Settings>Hotkeys & chat no longer break the HUD (detects Stake .game-modal/.chat-input, never grabs the chat footer); blend redesign; fresh-import Stats seed', 'color:#17c7b8;font-weight:800;font-size:13px');
 
     /* =========================================================
        PRE-STITCH UI HIDER
@@ -2870,15 +2870,18 @@ let ACTIVE_MODE = 'smart';
         return bestBottom;
     }
     function findNativeElement(selector) {
-        // Never adopt elements inside our own HUD, a native modal/dialog, or the
-        // chat drawer — otherwise opening chat/settings yanks their DOM into the
-        // HUD and breaks them (and us). If only overlay/HUD matches exist, return
-        // null so mountSingleElement leaves the slot untouched.
-        const inOverlay = el => el.closest('[role="dialog"], [aria-modal="true"], [data-testid*="chat" i], [data-test*="chat" i], [class*="chat" i]');
-        const ok = el => !el.closest('#ratchet-master-container') && !inOverlay(el);
+        // Never adopt elements inside our own HUD, a native modal (Stake's chat /
+        // Hotkeys / Game-Info render as .game-modal or a chat drawer, NOT [role=dialog]),
+        // or — crucially — any element that CONTAINS a chat subtree. Stake's chat
+        // wraps its input in a `.footer` whose only "chat" marker (.chat-input) is a
+        // DESCENDANT, so an ancestor-only closest() misses it and we'd yank the chat
+        // input into the game's footer slot. Verified live on stake.us/casino/games/dice.
+        const inOverlay = el =>
+            el.closest('#ratchet-master-container, [role="dialog"], [aria-modal="true"], .game-modal, [class*="chat" i], [data-testid*="chat" i]') ||
+            el.querySelector('.chat-input, [class*="chat" i], [data-testid*="chat" i]');
+        const ok = el => !inOverlay(el);
         const host = getHudHost();
-        const scope = host || document;
-        const scoped = Array.from(scope.querySelectorAll(selector)).filter(ok);
+        const scoped = host ? Array.from(host.querySelectorAll(selector)).filter(ok) : [];
         if (scoped.length) return scoped[0];
         const fallback = Array.from(document.querySelectorAll(selector)).filter(ok);
         return fallback[0] || null;
@@ -2886,8 +2889,11 @@ let ACTIVE_MODE = 'smart';
     function findShuffleFooter() {
         // Shuffle's CSS module hashes change on every deploy — use broad
         // selectors that catch most variants, with a label-based fallback.
-        // Skip anything inside the chat drawer or a modal so we never grab those.
-        const inOverlay = el => el.closest('[role="dialog"], [aria-modal="true"], [data-testid*="chat" i], [data-test*="chat" i], [class*="chat" i]');
+        // Skip the chat drawer or a modal — including any element that CONTAINS a
+        // chat subtree (ancestor-only closest misses Stake's chat .footer > .chat-input).
+        const inOverlay = el =>
+            el.closest('[role="dialog"], [aria-modal="true"], .game-modal, [class*="chat" i], [data-testid*="chat" i]') ||
+            el.querySelector('.chat-input, [class*="chat" i], [data-testid*="chat" i]');
         const byClass = document.querySelector(
             '[class*="footer"][class*="dice"], [class*="Dice"][class*="footer"], ' +
             '[class*="TBYuRq__footer"], [class*="gameFooter"], [class*="GameFooter"], ' +
@@ -4254,7 +4260,7 @@ Bets</span><span id="h-total-bets" class="hud-val">0</span></div>
     // UIs (fixes the Settings>Hotkeys and chat malfunctions). ---
     function nativeOverlayOpen() {
         try {
-            const dialogs = document.querySelectorAll('[role="dialog"], [aria-modal="true"]');
+            const dialogs = document.querySelectorAll('[role="dialog"], [aria-modal="true"], .game-modal, [class*="GameModal" i]'); // Stake's Hotkeys/Game-Info modals are .game-modal, NOT [role=dialog]
             for (let i = 0; i < dialogs.length; i++) {
                 const r = dialogs[i].getBoundingClientRect();
                 if (r.width > 1 && r.height > 1) return true; // a visible modal is open
@@ -4273,7 +4279,7 @@ Bets</span><span id="h-total-bets" class="hud-val">0</span></div>
         if (t) {
             const tag = t.tagName;
             if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || t.isContentEditable) return true;
-            if (t.closest && t.closest('[role="dialog"], [aria-modal="true"], [data-testid*="chat" i], [data-test*="chat" i], [class*="chat" i], [class*="settings" i], [class*="hotkey" i]')) return true;
+            if (t.closest && t.closest('[role="dialog"], [aria-modal="true"], .game-modal, [data-testid*="chat" i], [data-test*="chat" i], [class*="chat" i], [class*="settings" i], [class*="hotkey" i]')) return true;
         }
         return nativeOverlayOpen();
     }
@@ -5936,7 +5942,7 @@ self.onmessage = async (e) => {
               <div class="dt-card-title">About</div>
               <div class="dt-setting-row">
                 <div class="dt-setting-label">Version</div>
-                <div style="opacity:0.7;">Dice &amp; Limbo Tools v2.42 (Desktop)</div>
+                <div style="opacity:0.7;">Dice &amp; Limbo Tools v2.43 (Desktop)</div>
               </div>
               <button class="dt-btn dt-btn-block dt-btn-small" id="dt-reset_state">Reset all saved data</button>
             </div>
@@ -9652,10 +9658,13 @@ let isRunning = false;
             || null;
     }
     function findNativeElement(selector) {
-        // Skip our own HUD and any native modal/chat overlay (mirrors tool_stake_iow_smart)
-        // so opening chat/settings can't yank their DOM into the HUD.
-        const inOverlay = el => el.closest('[role="dialog"], [aria-modal="true"], [data-testid*="chat" i], [data-test*="chat" i], [class*="chat" i]');
-        const elements = Array.from(document.querySelectorAll(selector)).filter(el => !el.closest('#ratchet-master-container') && !inOverlay(el));
+        // Skip our own HUD, native modals (.game-modal/dialog), and the chat drawer —
+        // including any element that CONTAINS a chat subtree (ancestor-only closest
+        // misses the chat .footer > .chat-input). Mirrors tool_stake_iow_smart.
+        const inOverlay = el =>
+            el.closest('#ratchet-master-container, [role="dialog"], [aria-modal="true"], .game-modal, [class*="chat" i], [data-testid*="chat" i]') ||
+            el.querySelector('.chat-input, [class*="chat" i], [data-testid*="chat" i]');
+        const elements = Array.from(document.querySelectorAll(selector)).filter(el => !inOverlay(el));
         return elements[0] || null;
     }
     function mountSingleElement(slot, element) {
@@ -10654,7 +10663,7 @@ let isRunning = false;
     // chat, any modal) is open or a text field is focused. ---
     function nativeOverlayOpen() {
         try {
-            const dialogs = document.querySelectorAll('[role="dialog"], [aria-modal="true"]');
+            const dialogs = document.querySelectorAll('[role="dialog"], [aria-modal="true"], .game-modal, [class*="GameModal" i]'); // Stake's Hotkeys/Game-Info modals are .game-modal, NOT [role=dialog]
             for (let i = 0; i < dialogs.length; i++) {
                 const r = dialogs[i].getBoundingClientRect();
                 if (r.width > 1 && r.height > 1) return true;
@@ -10673,7 +10682,7 @@ let isRunning = false;
         if (t) {
             const tag = t.tagName;
             if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || t.isContentEditable) return true;
-            if (t.closest && t.closest('[role="dialog"], [aria-modal="true"], [data-testid*="chat" i], [data-test*="chat" i], [class*="chat" i], [class*="settings" i], [class*="hotkey" i]')) return true;
+            if (t.closest && t.closest('[role="dialog"], [aria-modal="true"], .game-modal, [data-testid*="chat" i], [data-test*="chat" i], [class*="chat" i], [class*="settings" i], [class*="hotkey" i]')) return true;
         }
         return nativeOverlayOpen();
     }
