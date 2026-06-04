@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Desktop
 // @namespace    http://tampermonkey.net/
-// @version      2.44
+// @version      2.45
 // @description  .
 // @author       .
 // @match        https://nuts.gg/*
@@ -28,7 +28,7 @@
 (function () {
     'use strict';
 
-    console.log('%c🎲 Dice & Limbo Tools — desktop v2.44 — FIX: Shuffle/Nuts HUD restored (chat guard narrowed to .chat-input so it no longer over-matches game sidebars/footers that contain a chat widget); Settings>Hotkeys + chat still safe; blend redesign', 'color:#17c7b8;font-weight:800;font-size:13px');
+    console.log('%c🎲 Dice & Limbo Tools — desktop v2.45 — FIX: Shuffle dice/limbo multiplier restored (the overlay sync-guard false-positived on Shuffle\'s persistent role=dialog popovers; removed it + narrowed overlay detection to Stake\'s .game-modal); Nuts HUD restored; chat/Hotkeys still safe', 'color:#17c7b8;font-weight:800;font-size:13px');
 
     /* =========================================================
        PRE-STITCH UI HIDER
@@ -2921,10 +2921,11 @@ let ACTIVE_MODE = 'smart';
         slot.replaceChildren(element);
     }
     function syncNativeHudElements() {
-        // Suspend while a native overlay (chat / settings / any modal) is open so
-        // we never reparent their DOM into the HUD. findNativeElement/findShuffleFooter
-        // also exclude overlay matches as a second layer of defense.
-        if (nativeOverlayOpen()) return;
+        // NOTE: deliberately NO "overlay open -> return" early-exit here. Shuffle keeps
+        // persistent visible role=dialog popovers in the DOM, which made that check
+        // false-positive and permanently suspend the sync (the Shuffle multiplier never
+        // relocated). Chat/modal protection lives per-element in findNativeElement /
+        // findShuffleFooter, which exclude chat/overlay matches as they search.
         if (isShuffle()) {
             // Shuffle has no .game-sidebar / .past-bets / .footer in the
             // Stake sense — instead we move its bet-controls footer (which
@@ -4262,7 +4263,7 @@ Bets</span><span id="h-total-bets" class="hud-val">0</span></div>
     // UIs (fixes the Settings>Hotkeys and chat malfunctions). ---
     function nativeOverlayOpen() {
         try {
-            const dialogs = document.querySelectorAll('[role="dialog"], [aria-modal="true"], .game-modal'); // Stake's Hotkeys/Game-Info modals are .game-modal (exact class), NOT [role=dialog]
+            const dialogs = document.querySelectorAll('.game-modal'); // ONLY Stake's in-game modals (Hotkeys/Game-Info). Intentionally NOT [role=dialog]/[aria-modal] — Shuffle keeps several persistent VISIBLE role=dialog popovers that would false-positive and wrongly pause the tool.
             for (let i = 0; i < dialogs.length; i++) {
                 const r = dialogs[i].getBoundingClientRect();
                 if (r.width > 1 && r.height > 1) return true; // a visible modal is open
@@ -5944,7 +5945,7 @@ self.onmessage = async (e) => {
               <div class="dt-card-title">About</div>
               <div class="dt-setting-row">
                 <div class="dt-setting-label">Version</div>
-                <div style="opacity:0.7;">Dice &amp; Limbo Tools v2.44 (Desktop)</div>
+                <div style="opacity:0.7;">Dice &amp; Limbo Tools v2.45 (Desktop)</div>
               </div>
               <button class="dt-btn dt-btn-block dt-btn-small" id="dt-reset_state">Reset all saved data</button>
             </div>
@@ -9674,7 +9675,8 @@ let isRunning = false;
         slot.replaceChildren(element);
     }
     function syncNativeHudElements() {
-        if (nativeOverlayOpen()) return; // suspend while a native chat/settings/modal is open
+        // No "overlay open -> return" early-exit (see tool_stake_iow_smart): it
+        // false-positived on persistent role=dialog popovers. findNativeElement excludes overlays.
         const nativeSidebar = findNativeElement('.sc-8d275cfe-1.eGfUZM') || findNativeElement('.sc-8d275cfe-1');
         const recentBets = findNativeElement('.sc-9b1418e2-1') || findNativeElement('.sc-9b1418e2-0');
         const sidebarSlot = document.getElementById('hud-native-sidebar-slot');
@@ -10664,7 +10666,7 @@ let isRunning = false;
     // chat, any modal) is open or a text field is focused. ---
     function nativeOverlayOpen() {
         try {
-            const dialogs = document.querySelectorAll('[role="dialog"], [aria-modal="true"], .game-modal'); // Stake's Hotkeys/Game-Info modals are .game-modal (exact class), NOT [role=dialog]
+            const dialogs = document.querySelectorAll('.game-modal'); // ONLY Stake's in-game modals (Hotkeys/Game-Info). Intentionally NOT [role=dialog]/[aria-modal] — Shuffle keeps several persistent VISIBLE role=dialog popovers that would false-positive and wrongly pause the tool.
             for (let i = 0; i < dialogs.length; i++) {
                 const r = dialogs[i].getBoundingClientRect();
                 if (r.width > 1 && r.height > 1) return true;
