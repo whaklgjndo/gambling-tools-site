@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Desktop
 // @namespace    http://tampermonkey.net/
-// @version      2.32
+// @version      2.42
 // @description  .
 // @author       .
 // @match        https://nuts.gg/*
@@ -27,6 +27,8 @@
 
 (function () {
     'use strict';
+
+    console.log('%c🎲 Dice & Limbo Tools — desktop v2.42 — blend redesign + native-UI guard (hotkeys/chat) + fresh import seeds Stats divisor/mult from Calculator', 'color:#17c7b8;font-weight:800;font-size:13px');
 
     /* =========================================================
        PRE-STITCH UI HIDER
@@ -2868,30 +2870,37 @@ let ACTIVE_MODE = 'smart';
         return bestBottom;
     }
     function findNativeElement(selector) {
+        // Never adopt elements inside our own HUD, a native modal/dialog, or the
+        // chat drawer — otherwise opening chat/settings yanks their DOM into the
+        // HUD and breaks them (and us). If only overlay/HUD matches exist, return
+        // null so mountSingleElement leaves the slot untouched.
+        const inOverlay = el => el.closest('[role="dialog"], [aria-modal="true"], [data-testid*="chat" i], [data-test*="chat" i], [class*="chat" i]');
+        const ok = el => !el.closest('#ratchet-master-container') && !inOverlay(el);
         const host = getHudHost();
         const scope = host || document;
-        const scoped = Array.from(scope.querySelectorAll(selector));
-        const pick = scoped.find(el => !el.closest('#ratchet-master-container')) || scoped[0];
-        if (pick) return pick;
-        const fallback = Array.from(document.querySelectorAll(selector));
-        return fallback.find(el => !el.closest('#ratchet-master-container')) || fallback[0] || null;
+        const scoped = Array.from(scope.querySelectorAll(selector)).filter(ok);
+        if (scoped.length) return scoped[0];
+        const fallback = Array.from(document.querySelectorAll(selector)).filter(ok);
+        return fallback[0] || null;
     }
     function findShuffleFooter() {
         // Shuffle's CSS module hashes change on every deploy — use broad
         // selectors that catch most variants, with a label-based fallback.
+        // Skip anything inside the chat drawer or a modal so we never grab those.
+        const inOverlay = el => el.closest('[role="dialog"], [aria-modal="true"], [data-testid*="chat" i], [data-test*="chat" i], [class*="chat" i]');
         const byClass = document.querySelector(
             '[class*="footer"][class*="dice"], [class*="Dice"][class*="footer"], ' +
             '[class*="TBYuRq__footer"], [class*="gameFooter"], [class*="GameFooter"], ' +
             '[class*="betControls"], [class*="BetControls"], [class*="gameControls"], [class*="GameControls"]'
         );
-        if (byClass) return byClass;
+        if (byClass && !inOverlay(byClass)) return byClass;
         // Fallback: find the element containing a "Multiplier" label + ≥2 inputs
         for (const el of document.querySelectorAll('label, p, span, div')) {
-            if ((el.textContent || '').trim() === 'Multiplier') {
+            if ((el.textContent || '').trim() === 'Multiplier' && !inOverlay(el)) {
                 let p = el.parentElement;
                 for (let i = 0; i < 7; i++) {
                     if (!p || p === document.body) break;
-                    if (p.querySelectorAll('input').length >= 2) return p;
+                    if (!inOverlay(p) && p.querySelectorAll('input').length >= 2) return p;
                     p = p.parentElement;
                 }
             }
@@ -2904,6 +2913,10 @@ let ACTIVE_MODE = 'smart';
         slot.replaceChildren(element);
     }
     function syncNativeHudElements() {
+        // Suspend while a native overlay (chat / settings / any modal) is open so
+        // we never reparent their DOM into the HUD. findNativeElement/findShuffleFooter
+        // also exclude overlay matches as a second layer of defense.
+        if (nativeOverlayOpen()) return;
         if (isShuffle()) {
             // Shuffle has no .game-sidebar / .past-bets / .footer in the
             // Stake sense — instead we move its bet-controls footer (which
@@ -3896,9 +3909,9 @@ Bets</span><span id="h-total-bets" class="hud-val">0</span></div>
             return;
         }
         const keyDown = new KeyboardEvent('keydown', { key: ' ', code: 'Space', keyCode: 32, which: 32, bubbles: true, cancelable: true });
-        document.dispatchEvent(keyDown);
+        if (!nativeOverlayOpen()) document.dispatchEvent(keyDown);
         spacePressInterval = setInterval(() => {
-            if (isRapidFiring) {
+            if (isRapidFiring && !nativeOverlayOpen()) {
                 const repeat = new KeyboardEvent('keydown', { key: ' ', code: 'Space', keyCode: 32, which: 32, bubbles: true });
                 document.dispatchEvent(repeat);
             }
@@ -4234,8 +4247,38 @@ Bets</span><span id="h-total-bets" class="hud-val">0</span></div>
         monitorRapidFireHealth();
         if (ACTIVE_MODE === 'smart') updateBetAmount();
     }, 500);
+    // --- Native-UI guard: true while a native Stake/Shuffle overlay is open — a
+    // visible modal/dialog (Settings, incl. the Hotkeys panel), the chat drawer,
+    // or focus sitting in a text field/contenteditable. Used to suspend our global
+    // hotkeys AND the synthetic-spacebar autoclicker so they never leak into those
+    // UIs (fixes the Settings>Hotkeys and chat malfunctions). ---
+    function nativeOverlayOpen() {
+        try {
+            const dialogs = document.querySelectorAll('[role="dialog"], [aria-modal="true"]');
+            for (let i = 0; i < dialogs.length; i++) {
+                const r = dialogs[i].getBoundingClientRect();
+                if (r.width > 1 && r.height > 1) return true; // a visible modal is open
+            }
+            // A plain focused <input> is intentionally NOT treated as an overlay:
+            // this gate also pauses the rapid-fire autoclicker, which must keep
+            // running while the user edits a game/HUD field. Only real native
+            // overlays (modal above, or focus inside chat/settings/hotkeys) count.
+            const ae = document.activeElement;
+            if (ae && ae.closest && ae.closest('[data-testid*="chat" i], [data-test*="chat" i], [class*="chat" i], [class*="settings" i], [class*="hotkey" i]')) return true;
+        } catch (e) {}
+        return false;
+    }
+    function shouldIgnoreHotkey(e) {
+        const t = e && e.target;
+        if (t) {
+            const tag = t.tagName;
+            if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || t.isContentEditable) return true;
+            if (t.closest && t.closest('[role="dialog"], [aria-modal="true"], [data-testid*="chat" i], [data-test*="chat" i], [class*="chat" i], [class*="settings" i], [class*="hotkey" i]')) return true;
+        }
+        return nativeOverlayOpen();
+    }
     document.addEventListener('keydown', e => {
-        if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+        if (shouldIgnoreHotkey(e)) return;
         if (e.key.toLowerCase() === 'r') resetStats();
         if (ACTIVE_MODE === 'smart') {
             if (e.key === ']' || e.key === '[') {
@@ -4283,6 +4326,33 @@ Bets</span><span id="h-total-bets" class="hud-val">0</span></div>
         'AvgHigh', 'StdDev', 'MaxHigh', 'AvgCycles', 'AvgRounds',
         'CycleSuccess%', 'Bust%', 'Score'
     ];
+    // Friendlier results headers + per-column help (sort still keys off raw RES_COLS).
+    const RES_COL_LABELS = {
+        StartingBalance: 'Start $', Trials: 'Trials', BetDiv: 'Bet Divisor', ProfitMult: 'Profit Mult',
+        'W%': 'Win Inc %', L: 'Loss Reset', 'Buffer%': 'Buffer %', AvgHigh: 'Avg High $', StdDev: 'Std Dev',
+        MaxHigh: 'Max High $', AvgCycles: 'Avg Cycles', AvgRounds: 'Avg Rounds',
+        'CycleSuccess%': 'Success %', 'Bust%': 'Bust %', Score: 'Score'
+    };
+    const RES_COL_HELP = {
+        StartingBalance: 'Starting bankroll used for the simulations.',
+        Trials: 'Number of simulated runs per combo.',
+        BetDiv: 'Balance divided by this = starting bet (higher = smaller bets).',
+        ProfitMult: 'Multiplier that sets the profit stop.',
+        'W%': 'Bet increase after each win.',
+        L: 'Consecutive losses before the bet resets.',
+        'Buffer%': 'Extra safety margin added to the multiplier.',
+        AvgHigh: 'Median highest balance reached.',
+        StdDev: 'Variation in the highest balance (lower = steadier).',
+        MaxHigh: 'Best single highest balance seen.',
+        AvgCycles: 'Average completed profit cycles.',
+        AvgRounds: 'Average bets placed per run.',
+        'CycleSuccess%': 'Share of cycles that hit their profit goal.',
+        'Bust%': 'Share of runs that busted (lower is safer).',
+        Score: 'Risk-adjusted score = (Avg High - Start) / Std Dev. Higher is better.'
+    };
+    // Default-visible columns; the rest sit behind the "More columns" toggle.
+    const RES_COLS_PRIMARY = ['BetDiv', 'ProfitMult', 'W%', 'L', 'Buffer%', 'AvgHigh', 'Bust%', 'Score'];
+    const SAFE_BUST_MAX = 10;
 
     const state = {
         balance: '20', win_inc: '78', loss_reset: '5',
@@ -4308,6 +4378,8 @@ Bets</span><span id="h-total-bets" class="hud-val">0</span></div>
     let selectedRowIdx = -1;
     let resultsSortCol = 'Score';
     let resultsSortAsc = false;
+    let showAllCols = false;   // Results: show all columns vs RES_COLS_PRIMARY only
+    let safeOnly = false;      // Results: hide rows with Bust% above SAFE_BUST_MAX
 
     /* =========================================================
        STATE PERSISTENCE
@@ -5227,6 +5299,295 @@ self.onmessage = async (e) => {
         'Buffer % Range': 'Range or list of buffer percentages. Syntax: 20-40;step=2'
     };
 
+    /* Extra CSS for the Advanced IOW UX upgrades. Injected on init (see injectUxStyles).
+       Built entirely on existing theme vars so all three themes keep working. */
+    const DT_EXTRA_CSS = `
+        /* ============================================================
+           CLEAN LAYOUT — consistent settings-style rows, left-aligned,
+           one card per group, minimal decoration.
+           ============================================================ */
+        /* Section card title: plain, no serif/underline/italic. */
+        #${PANEL_ID} .dt-card-title { font-family: inherit !important; font-style: normal !important; font-weight: 800 !important;
+            text-decoration: none !important; letter-spacing: 0.02em; }
+        /* One brief helper line under a card title. */
+        .dt-card-sub { font-size: 0.74em; opacity: 0.6; margin: -2px 0 9px; line-height: 1.35; }
+        /* THE row primitive: "Label ............ [control]". Used everywhere. */
+        .dt-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 7px 0;
+            border-bottom: 1px solid color-mix(in srgb, var(--dt-border) 22%, transparent); }
+        .dt-row:last-child { border-bottom: none; }
+        .dt-row-label { flex: 1 1 auto; min-width: 0; font-size: 0.86em; font-weight: 600; color: var(--dt-fg); display: flex; align-items: center; gap: 5px; }
+        .dt-row-ctrl { flex: 0 0 auto; display: flex; align-items: center; gap: 6px; }
+        /* Inputs inside a row — fixed, right-aligned, consistent width. Own class so the
+           in-HUD .dt-field width clamp never touches them. */
+        .dt-row input.dt-in { width: 92px; box-sizing: border-box; padding: 6px 9px; text-align: right;
+            background: var(--dt-field-bg); color: var(--dt-fg); border: 1px solid var(--dt-border); border-radius: 7px;
+            font-size: 0.9em; font-variant-numeric: tabular-nums; }
+        .dt-row input.dt-in:focus { outline: none; box-shadow: 0 0 0 2px color-mix(in srgb, var(--dt-label-fg) 35%, transparent); }
+        .dt-row input.dt-in.dt-invalid { border-color: var(--dt-danger) !important; box-shadow: 0 0 0 1px var(--dt-danger); }
+        /* Read-only result rows: big value + copy, still aligned right. */
+        .dt-row.dt-row-out .dt-out-val { font-size: 1.05em; font-weight: 800; font-variant-numeric: tabular-nums; color: var(--dt-fg);
+            border: none; background: transparent; padding: 0; width: auto; text-align: right; min-width: 64px; }
+        .dt-row.dt-row-key .dt-out-val { color: var(--dt-label-fg); font-size: 1.2em; }
+        .dt-row.dt-row-key .dt-row-label { color: var(--dt-label-fg); }
+        .dt-copy { flex: 0 0 auto; padding: 3px 9px !important; min-height: 0 !important; font-size: 0.9em; line-height: 1.4; }
+        .dt-copied { background: var(--dt-progress) !important; color: #0b1216 !important; border-color: var(--dt-progress) !important; }
+        /* Full-width primary button. */
+        .dt-go { width: 100%; padding: 10px !important; font-weight: 800; }
+        /* ===== Guided workflow stepper: Optimize -> Review -> Use ===== */
+        .dt-steps { display: flex; align-items: stretch; gap: 0; margin: 0 0 11px; }
+        .dt-step { flex: 1 1 0; display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 7px 2px;
+            position: relative; cursor: pointer; background: none; border: none; color: var(--dt-fg); }
+        .dt-step:not(:last-child)::after { content: ''; position: absolute; top: 17px; left: 60%; right: -40%; height: 2px;
+            background: color-mix(in srgb, var(--dt-border) 55%, transparent); z-index: 0; }
+        .dt-step.done::after { background: var(--dt-label-fg); }
+        .dt-step-dot { z-index: 1; width: 22px; height: 22px; border-radius: 50%; display: inline-flex; align-items: center;
+            justify-content: center; font-size: 0.72em; font-weight: 800; background: var(--dt-field-bg);
+            border: 1.5px solid var(--dt-border); color: var(--dt-fg); transition: all .12s; }
+        .dt-step-name { font-size: 0.66em; font-weight: 700; letter-spacing: 0.03em; opacity: 0.6; text-transform: uppercase; }
+        .dt-step.active .dt-step-dot { background: var(--dt-label-fg); border-color: var(--dt-label-fg); color: var(--dt-bg);
+            box-shadow: 0 0 0 3px color-mix(in srgb, var(--dt-label-fg) 22%, transparent); }
+        .dt-step.active .dt-step-name { opacity: 1; color: var(--dt-label-fg); }
+        .dt-step.done .dt-step-dot { background: color-mix(in srgb, var(--dt-label-fg) 22%, var(--dt-field-bg));
+            border-color: var(--dt-label-fg); color: var(--dt-label-fg); }
+        .dt-step.done .dt-step-name { opacity: 0.85; }
+        /* "Next step" CTA that pulls the user forward through the flow. */
+        .dt-next { display: flex; align-items: center; justify-content: center; gap: 7px; width: 100%; margin-top: 11px;
+            padding: 11px; border-radius: 9px; cursor: pointer; font-weight: 800; font-size: 0.92em;
+            background: var(--dt-label-fg); color: var(--dt-bg); border: none; }
+        .dt-next[disabled] { background: var(--dt-field-bg); color: var(--dt-fg); opacity: 0.5; cursor: default;
+            border: 1px solid var(--dt-border); }
+        .dt-next-sub { font-size: 0.7em; font-weight: 600; opacity: 0.8; }
+        /* Optimizer presets — big tappable cards (2x2), the primary way to use this tab. */
+        .dt-preset-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 4px 0 2px; }
+        .dt-preset { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; text-align: left;
+            padding: 10px 11px; border-radius: 9px; cursor: pointer; background: var(--dt-field-bg);
+            border: 1px solid var(--dt-border); color: var(--dt-fg); transition: border-color .12s, background .12s; }
+        .dt-preset:hover { border-color: var(--dt-label-fg); background: color-mix(in srgb, var(--dt-label-fg) 8%, var(--dt-field-bg)); }
+        .dt-preset.active { border-color: var(--dt-label-fg); box-shadow: inset 0 0 0 1px var(--dt-label-fg); }
+        .dt-preset-name { font-weight: 800; font-size: 0.92em; }
+        .dt-preset-desc { font-size: 0.68em; opacity: 0.62; line-height: 1.25; }
+        /* Legacy inline presets row (still used if referenced). */
+        .dt-opt-presets { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 4px; }
+        .dt-opt-presets .dt-btn { flex: 1 1 0; padding: 6px 6px; font-size: 0.82em; }
+        /* Collapsible "advanced ranges" disclosure — collapsed by default. */
+        .dt-adv-ranges { margin-top: 4px; }
+        .dt-adv-ranges > summary { list-style: none; cursor: pointer; user-select: none; padding: 9px 2px;
+            font-size: 0.82em; font-weight: 600; color: var(--dt-label-fg); display: flex; align-items: center; gap: 6px; }
+        .dt-adv-ranges > summary::-webkit-details-marker { display: none; }
+        .dt-adv-ranges > summary::before { content: '▸'; font-size: 0.9em; opacity: 0.7; }
+        .dt-adv-ranges[open] > summary::before { content: '▾'; }
+        .dt-adv-ranges > summary .dt-adv-hint { margin-left: auto; font-weight: 400; opacity: 0.55; font-size: 0.85em; }
+        /* Range row: label on its own line, then min/max/step + advanced toggle. */
+        .dt-rng { padding: 8px 0; border-bottom: 1px solid color-mix(in srgb, var(--dt-border) 22%, transparent); }
+        .dt-rng:last-child { border-bottom: none; }
+        .dt-rng-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 5px; }
+        .dt-rng-name { font-size: 0.86em; font-weight: 600; }
+        .dt-rng-prev { font-size: 0.7em; opacity: 0.7; font-variant-numeric: tabular-nums; text-align: right; }
+        .dt-rng-prev.bad { color: var(--dt-danger); opacity: 0.95; font-style: italic; }
+        .dt-rng-row { display: flex; gap: 6px; align-items: stretch; }
+        .dt-rng-row input.dt-mms { flex: 1 1 0; width: 100% !important; min-width: 0 !important; box-sizing: border-box; padding: 6px 4px;
+            text-align: center; font-size: 0.84em; background: var(--dt-field-bg); color: var(--dt-fg); border: 1px solid var(--dt-border);
+            border-radius: 6px; font-variant-numeric: tabular-nums; }
+        .dt-rng-row input.dt-mms::placeholder { opacity: 0.4; font-variant-numeric: normal; }
+        .dt-rng-row input.dt-mms:focus { outline: none; box-shadow: 0 0 0 2px color-mix(in srgb, var(--dt-label-fg) 35%, transparent); }
+        .dt-rng-adv-btn { flex: 0 0 auto; width: 30px; padding: 0; font-size: 0.9em; background: var(--dt-button-bg); color: var(--dt-fg);
+            border: 1px solid var(--dt-border); border-radius: 6px; cursor: pointer; opacity: 0.65; }
+        .dt-rng-adv-btn:hover, .dt-rng-adv-btn.active { opacity: 1; color: var(--dt-label-fg); border-color: var(--dt-label-fg); }
+        .dt-rng-adv { margin-top: 6px; }
+        .dt-rng-adv[hidden] { display: none; }
+        .dt-rng-adv input { width: 100% !important; box-sizing: border-box; padding: 6px 8px; font-size: 0.82em;
+            background: var(--dt-field-bg); color: var(--dt-fg); border: 1px solid var(--dt-border); border-radius: 6px; }
+        /* Combo-count estimate line. */
+        .dt-est { text-align: center; padding: 7px; margin: 8px 0; border-radius: 8px; background: var(--dt-field-bg);
+            border: 1px solid var(--dt-border); font-size: 0.84em; }
+        .dt-est strong { color: var(--dt-label-fg); }
+        .dt-est.warn { border-color: #e0a23b; } .dt-est.warn::after { content: ' — large run'; color: #e0a23b; }
+        .dt-est.bad { color: var(--dt-danger); border-color: var(--dt-danger); }
+        /* Results: toolbar + best card. */
+        .dt-res-toolbar { display: flex; flex-wrap: wrap; gap: 14px; margin: 4px 0 10px; }
+        .dt-toggle { display: inline-flex; align-items: center; gap: 6px; font-size: 0.82em; cursor: pointer; user-select: none; }
+        .dt-toggle input { accent-color: var(--dt-label-fg); cursor: pointer; }
+        .dt-res-best { border: 1px solid var(--dt-label-fg); border-radius: 10px; padding: 11px 12px; margin-bottom: 12px;
+            background: var(--dt-field-bg); }
+        .dt-res-best-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 7px; }
+        .dt-res-best-tag { font-weight: 800; color: var(--dt-label-fg); font-size: 0.92em; }
+        .dt-res-best-score { font-weight: 800; font-variant-numeric: tabular-nums; opacity: 0.85; }
+        .dt-res-verdict { font-size: 0.8em; line-height: 1.45; opacity: 0.9; margin-bottom: 10px; }
+        .dt-res-best-stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 7px; margin-bottom: 10px; }
+        .dt-res-best-stats span { display: flex; flex-direction: column; align-items: center; gap: 2px; background: var(--dt-bg);
+            border-radius: 7px; padding: 6px 2px; }
+        .dt-res-best-stats b { font-size: 0.95em; font-weight: 800; font-variant-numeric: tabular-nums; }
+        .dt-res-best-stats i { font-size: 0.6em; opacity: 0.6; font-style: normal; text-transform: uppercase; letter-spacing: 0.03em; }
+        .dt-results td.dt-cell-good { background: rgba(46, 204, 113, 0.22); }
+        .dt-results td.dt-cell-mid { background: rgba(230, 200, 80, 0.16); }
+        .dt-results td.dt-cell-bad { background: rgba(225, 70, 80, 0.22); }
+        /* Terms search. */
+        .dt-terms-search { width: 100% !important; box-sizing: border-box; margin: 0 0 10px; padding: 8px 11px; border-radius: 8px;
+            background: var(--dt-field-bg); color: var(--dt-fg); border: 1px solid var(--dt-border); font-size: 0.85em; }
+        .dt-terms-search:focus { outline: none; box-shadow: 0 0 0 2px color-mix(in srgb, var(--dt-label-fg) 35%, transparent); }
+        .dt-terms-empty { opacity: 0.55; font-style: italic; font-size: 0.8em; padding: 10px 2px; }
+    `;
+
+    /* ============================================================
+       BLEND REDESIGN CSS — beginner-first "Coach" layout + terminal
+       risk bars, for the dice/limbo Advanced-IOW tabs (calc/opt/results).
+       Injected LAST (see injectUI) so it layers cleanly over base CSS +
+       DT_EXTRA_CSS. Everything is scoped to #${PANEL_ID} and built on the
+       existing theme vars, so all three themes keep working.
+       ============================================================ */
+    const DT_BLEND_CSS = `
+        /* Layout: even spacing between a tab's blocks; comfortable body padding. */
+        #${PANEL_ID} .dt-body { padding: 15px; }
+        #${PANEL_ID} .dt-panel.active { display: flex; flex-direction: column; gap: 13px; }
+        #${PANEL_ID} .dt-title { font-family: inherit; font-style: normal; font-weight: 800; text-decoration: none; letter-spacing: .02em; font-size: 15px; color: var(--dt-fg); }
+
+        /* Card primitive */
+        #${PANEL_ID} .dt-card { background: color-mix(in srgb, var(--dt-bg) 82%, white 4%); border: 1px solid color-mix(in srgb, var(--dt-border) 18%, transparent); border-radius: 13px; padding: 14px; }
+        #${PANEL_ID} .dt-card-title { font-family: inherit; font-style: normal; font-weight: 800; text-decoration: none; letter-spacing: .02em; font-size: 13.5px; margin: 0; display: flex; align-items: center; gap: 8px; }
+        #${PANEL_ID} .dt-card-sub { font-size: 11.5px; color: color-mix(in srgb, var(--dt-fg) 55%, transparent); line-height: 1.45; margin: 3px 0 11px; }
+        #${PANEL_ID} .dt-opt-tag { font-size: 9.5px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: color-mix(in srgb, var(--dt-fg) 50%, transparent); border: 1px solid color-mix(in srgb, var(--dt-border) 24%, transparent); border-radius: 20px; padding: 2px 8px; }
+
+        /* Guided step rail: Find -> Pick -> Use (reuses .dt-step[data-step]) */
+        #${PANEL_ID} .dt-steps { display: flex; align-items: center; gap: 0; margin: 0; }
+        #${PANEL_ID} .dt-step { flex: 0 0 auto; display: flex; align-items: center; gap: 8px; padding: 0; background: none; border: none; color: var(--dt-fg); cursor: pointer; font-family: inherit; }
+        #${PANEL_ID} .dt-step + .dt-step { flex: 1; }
+        #${PANEL_ID} .dt-step::before { content: ""; flex: 1; height: 2px; background: color-mix(in srgb, var(--dt-border) 22%, transparent); border-radius: 2px; margin: 0 9px; }
+        #${PANEL_ID} .dt-step:first-child::before { display: none; }
+        #${PANEL_ID} .dt-step::after { content: none; } /* neutralize the legacy DT_EXTRA_CSS absolute connector line */
+        #${PANEL_ID} .dt-step.done::before, #${PANEL_ID} .dt-step.active::before { background: var(--dt-label-fg); }
+        #${PANEL_ID} .dt-step-dot { width: 24px; height: 24px; border-radius: 50%; display: inline-grid; place-items: center; font-size: 11px; font-weight: 800; background: var(--dt-field-bg); border: 1.5px solid color-mix(in srgb, var(--dt-border) 30%, transparent); color: color-mix(in srgb, var(--dt-fg) 55%, transparent); transition: all .14s; }
+        #${PANEL_ID} .dt-step-name { font-size: 11px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: color-mix(in srgb, var(--dt-fg) 38%, transparent); }
+        #${PANEL_ID} .dt-step.done .dt-step-dot { background: color-mix(in srgb, var(--dt-label-fg) 22%, var(--dt-field-bg)); border-color: var(--dt-label-fg); color: var(--dt-label-fg); }
+        #${PANEL_ID} .dt-step.done .dt-step-name { color: color-mix(in srgb, var(--dt-fg) 60%, transparent); }
+        #${PANEL_ID} .dt-step.active .dt-step-dot { background: var(--dt-label-fg); border-color: var(--dt-label-fg); color: var(--dt-bg); box-shadow: 0 0 0 4px color-mix(in srgb, var(--dt-label-fg) 18%, transparent); }
+        #${PANEL_ID} .dt-step.active .dt-step-name { color: var(--dt-label-fg); }
+
+        /* One-line "what to do now" coach line */
+        #${PANEL_ID} .dt-coach { font-size: 12.5px; color: color-mix(in srgb, var(--dt-fg) 62%, transparent); line-height: 1.45; margin: -2px 2px 0; }
+        #${PANEL_ID} .dt-coach b { color: var(--dt-fg); font-weight: 700; }
+
+        /* Hero output tiles — the numbers you paste into the game */
+        #${PANEL_ID} .dt-heroes { display: grid; grid-template-columns: 1fr 1fr; gap: 11px; }
+        #${PANEL_ID} .dt-hero { position: relative; background: linear-gradient(160deg, color-mix(in srgb, var(--dt-label-fg) 14%, var(--dt-field-bg)), var(--dt-field-bg)); border: 1px solid color-mix(in srgb, var(--dt-label-fg) 32%, transparent); border-radius: 12px; padding: 13px 14px; }
+        #${PANEL_ID} .dt-hero-k { font-size: 10.5px; letter-spacing: .1em; text-transform: uppercase; color: var(--dt-label-fg); font-weight: 700; display: flex; align-items: center; gap: 5px; }
+        #${PANEL_ID} .dt-hero-row { display: flex; align-items: baseline; gap: 2px; margin-top: 5px; }
+        #${PANEL_ID} .dt-hero-cur { font-family: ui-monospace, "SF Mono", "Cascadia Code", Consolas, monospace; font-size: 18px; font-weight: 700; color: color-mix(in srgb, var(--dt-fg) 70%, transparent); }
+        #${PANEL_ID} .dt-hero .dt-out-val { font-family: ui-monospace, "SF Mono", "Cascadia Code", Consolas, monospace; font-size: 26px; font-weight: 700; color: var(--dt-fg); background: transparent; border: none; padding: 0; width: 100%; letter-spacing: -.02em; }
+        #${PANEL_ID} .dt-hero .dt-copy { position: absolute; top: 10px; right: 10px; }
+        #${PANEL_ID} .dt-subout { display: grid; grid-template-columns: 1fr 1fr; gap: 11px; }
+        #${PANEL_ID} .dt-so { position: relative; background: var(--dt-field-bg); border: 1px solid color-mix(in srgb, var(--dt-border) 18%, transparent); border-radius: 10px; padding: 9px 12px; }
+        #${PANEL_ID} .dt-so-k { font-size: 9.5px; letter-spacing: .07em; text-transform: uppercase; color: color-mix(in srgb, var(--dt-fg) 52%, transparent); display: flex; align-items: center; gap: 5px; }
+        #${PANEL_ID} .dt-so .dt-out-val { font-family: ui-monospace, "SF Mono", "Cascadia Code", Consolas, monospace; font-size: 16px; font-weight: 700; color: var(--dt-fg); background: transparent; border: none; padding: 0; width: 100%; margin-top: 2px; }
+        #${PANEL_ID} .dt-so .dt-copy { position: absolute; top: 7px; right: 7px; }
+        #${PANEL_ID} .dt-out-val:focus { outline: none; }
+
+        /* Copy buttons */
+        #${PANEL_ID} .dt-copy { padding: 3px 8px; font-size: 11px; line-height: 1.4; min-height: 0; border-radius: 7px; background: color-mix(in srgb, var(--dt-bg) 60%, black 40%); border: 1px solid color-mix(in srgb, var(--dt-border) 28%, transparent); color: color-mix(in srgb, var(--dt-fg) 70%, transparent); cursor: pointer; }
+        #${PANEL_ID} .dt-copy:hover { color: var(--dt-label-fg); border-color: var(--dt-label-fg); }
+        #${PANEL_ID} .dt-copied { background: var(--dt-progress) !important; color: #03171a !important; border-color: var(--dt-progress) !important; }
+
+        /* Big primary action buttons */
+        #${PANEL_ID} .dt-go { width: 100%; font-weight: 800; }
+        #${PANEL_ID} .dt-go-big { padding: 14px !important; font-size: 15px; } /* !important beats legacy .dt-go padding:10px!important */
+
+        /* Input rows: label (+ optional hint) on the left, control on the right */
+        #${PANEL_ID} .dt-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 9px 0; border-bottom: 1px solid color-mix(in srgb, var(--dt-border) 13%, transparent); }
+        #${PANEL_ID} .dt-row:last-child { border-bottom: none; }
+        #${PANEL_ID} .dt-row-label { flex: 1 1 auto; min-width: 0; font-size: 12.5px; font-weight: 600; color: color-mix(in srgb, var(--dt-fg) 92%, transparent); display: flex; flex-direction: column; align-items: flex-start; gap: 1px; }
+        #${PANEL_ID} .dt-rl-nm { display: flex; align-items: center; gap: 6px; }
+        #${PANEL_ID} .dt-row-hint { font-size: 10.5px; font-weight: 500; color: color-mix(in srgb, var(--dt-fg) 38%, transparent); }
+        #${PANEL_ID} .dt-row-ctrl { flex: 0 0 auto; display: flex; align-items: center; gap: 6px; }
+        #${PANEL_ID} input.dt-in { width: 104px; text-align: right; background: var(--dt-field-bg); color: var(--dt-fg); border: 1px solid color-mix(in srgb, var(--dt-border) 26%, transparent); border-radius: 8px; padding: 8px 10px; font-family: ui-monospace, "SF Mono", "Cascadia Code", Consolas, monospace; font-size: 13px; }
+        #${PANEL_ID} input.dt-in:focus { outline: none; border-color: var(--dt-label-fg); box-shadow: 0 0 0 3px color-mix(in srgb, var(--dt-label-fg) 22%, transparent); }
+        #${PANEL_ID} input.dt-in.dt-invalid { border-color: var(--dt-danger) !important; box-shadow: 0 0 0 1px var(--dt-danger); }
+
+        /* Optimizer preset cards — wide, tappable, vertical list */
+        #${PANEL_ID} .dt-preset-grid { display: flex; flex-direction: column; gap: 9px; margin: 2px 0 4px; }
+        #${PANEL_ID} .dt-preset { display: flex; align-items: center; gap: 13px; text-align: left; background: var(--dt-field-bg); border: 1px solid color-mix(in srgb, var(--dt-border) 20%, transparent); border-radius: 12px; padding: 12px 14px; cursor: pointer; position: relative; color: var(--dt-fg); font-family: inherit; }
+        #${PANEL_ID} .dt-preset:hover { border-color: var(--dt-label-fg); }
+        #${PANEL_ID} .dt-preset-ic { font-size: 21px; flex: 0 0 auto; width: 28px; text-align: center; }
+        #${PANEL_ID} .dt-preset-name { font-size: 14px; font-weight: 800; display: block; }
+        #${PANEL_ID} .dt-preset-desc { font-size: 11.5px; color: color-mix(in srgb, var(--dt-fg) 52%, transparent); display: block; margin-top: 1px; }
+        #${PANEL_ID} .dt-preset.active { border-color: var(--dt-label-fg); background: color-mix(in srgb, var(--dt-label-fg) 12%, var(--dt-field-bg)); box-shadow: inset 0 0 0 1px var(--dt-label-fg); }
+        #${PANEL_ID} .dt-preset-rec { position: absolute; top: -9px; right: 14px; font-size: 9px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; background: var(--dt-label-fg); color: var(--dt-bg); padding: 2px 8px; border-radius: 20px; }
+
+        /* Combo estimate */
+        #${PANEL_ID} .dt-est { text-align: center; padding: 9px; border-radius: 8px; background: var(--dt-field-bg); border: 1px solid color-mix(in srgb, var(--dt-border) 18%, transparent); font-size: 12px; font-family: ui-monospace, monospace; margin-bottom: 10px; }
+        #${PANEL_ID} .dt-est b { color: var(--dt-label-fg); }
+        #${PANEL_ID} .dt-est.warn { border-color: #e0a23b; } #${PANEL_ID} .dt-est.bad { color: var(--dt-danger); border-color: var(--dt-danger); }
+
+        /* Progress + status */
+        #${PANEL_ID} .dt-progress-wrap { height: 7px; border-radius: 6px; background: var(--dt-field-bg); border: 1px solid color-mix(in srgb, var(--dt-border) 18%, transparent); overflow: hidden; margin: 10px 0 7px; }
+        #${PANEL_ID} .dt-progress-bar { height: 100%; width: 0; background: linear-gradient(90deg, var(--dt-label-fg), var(--dt-progress)); transition: width .2s; }
+        #${PANEL_ID} .dt-status-line { font-size: 11px; color: color-mix(in srgb, var(--dt-fg) 55%, transparent); text-align: center; font-family: ui-monospace, monospace; }
+
+        /* Next-step CTA */
+        #${PANEL_ID} .dt-next { display: flex; align-items: center; justify-content: center; gap: 7px; width: 100%; margin-top: 11px; padding: 12px; border-radius: 9px; cursor: pointer; font-weight: 800; font-size: 13px; background: var(--dt-label-fg); color: var(--dt-bg); border: none; font-family: inherit; }
+        #${PANEL_ID} .dt-next[disabled] { background: var(--dt-field-bg); color: color-mix(in srgb, var(--dt-fg) 55%, transparent); opacity: .6; cursor: default; border: 1px solid color-mix(in srgb, var(--dt-border) 18%, transparent); }
+
+        /* Scroll regions + sim stats table */
+        #${PANEL_ID} .dt-scroll { max-height: 42vh; overflow-y: auto; border: 1px solid color-mix(in srgb, var(--dt-border) 14%, transparent); border-radius: 9px; }
+        #${PANEL_ID} table.dt-stats { width: 100%; border-collapse: collapse; font-size: 12px; }
+        #${PANEL_ID} table.dt-stats td { padding: 8px 11px; border-bottom: 1px solid color-mix(in srgb, var(--dt-border) 11%, transparent); }
+        #${PANEL_ID} table.dt-stats td:last-child { text-align: right; font-family: ui-monospace, monospace; font-weight: 700; color: var(--dt-fg); }
+        #${PANEL_ID} table.dt-stats td:first-child { color: color-mix(in srgb, var(--dt-fg) 65%, transparent); }
+        #${PANEL_ID} table.dt-stats tr:last-child td { border-bottom: none; }
+
+        /* Results: toolbar + table + risk bars */
+        #${PANEL_ID} .dt-res-toolbar { display: flex; flex-wrap: wrap; gap: 14px; margin: 2px 0 10px; }
+        #${PANEL_ID} .dt-toggle { display: inline-flex; align-items: center; gap: 6px; font-size: 11.5px; color: color-mix(in srgb, var(--dt-fg) 65%, transparent); cursor: pointer; user-select: none; }
+        #${PANEL_ID} .dt-toggle input { accent-color: var(--dt-label-fg); cursor: pointer; }
+        #${PANEL_ID} table.dt-results { width: 100%; border-collapse: collapse; font-size: 11.5px; }
+        #${PANEL_ID} table.dt-results th { position: sticky; top: 0; background: color-mix(in srgb, var(--dt-bg) 92%, black 8%); font-size: 9.5px; letter-spacing: .04em; text-transform: uppercase; color: color-mix(in srgb, var(--dt-fg) 55%, transparent); text-align: right; padding: 8px; border-bottom: 1px solid color-mix(in srgb, var(--dt-border) 24%, transparent); font-weight: 700; cursor: pointer; white-space: nowrap; }
+        #${PANEL_ID} table.dt-results th:first-child, #${PANEL_ID} table.dt-results td:first-child { text-align: left; }
+        #${PANEL_ID} table.dt-results td { padding: 7px 8px; border-bottom: 1px solid color-mix(in srgb, var(--dt-border) 10%, transparent); font-family: ui-monospace, monospace; text-align: right; color: color-mix(in srgb, var(--dt-fg) 88%, transparent); white-space: nowrap; }
+        #${PANEL_ID} table.dt-results tr { cursor: pointer; }
+        #${PANEL_ID} table.dt-results tr:hover td { background: color-mix(in srgb, var(--dt-label-fg) 6%, transparent); }
+        #${PANEL_ID} table.dt-results tr.selected td { background: color-mix(in srgb, var(--dt-label-fg) 16%, transparent); box-shadow: inset 2px 0 0 var(--dt-label-fg); }
+        #${PANEL_ID} td.dt-cell-good { color: var(--dt-progress) !important; background: transparent !important; }
+        #${PANEL_ID} td.dt-cell-mid { color: #e6c850 !important; background: transparent !important; }
+        #${PANEL_ID} td.dt-cell-bad { color: var(--dt-danger) !important; background: transparent !important; }
+        #${PANEL_ID} .dt-riskbar { display: inline-block; height: 7px; border-radius: 2px; vertical-align: middle; margin-right: 6px; min-width: 3px; }
+        #${PANEL_ID} .dt-riskbar.good { background: var(--dt-progress); } #${PANEL_ID} .dt-riskbar.mid { background: #e6c850; } #${PANEL_ID} .dt-riskbar.bad { background: var(--dt-danger); }
+
+        /* Recommended-setup card (built by renderBestCard) */
+        #${PANEL_ID} .dt-res-best { background: linear-gradient(165deg, color-mix(in srgb, var(--dt-label-fg) 16%, var(--dt-bg)), var(--dt-bg)); border: 1px solid var(--dt-label-fg); border-radius: 14px; padding: 15px; }
+        #${PANEL_ID} .dt-rb-tag { font-size: 11px; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; color: var(--dt-label-fg); display: flex; align-items: center; gap: 7px; }
+        #${PANEL_ID} .dt-rb-verdict { font-size: 13px; line-height: 1.5; color: color-mix(in srgb, var(--dt-fg) 92%, transparent); margin: 9px 0 13px; }
+        #${PANEL_ID} .dt-rb-verdict b { color: var(--dt-fg); }
+        #${PANEL_ID} .dt-rb-stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 9px; margin-bottom: 13px; }
+        #${PANEL_ID} .dt-rb-stat { background: color-mix(in srgb, var(--dt-bg) 70%, black 30%); border: 1px solid color-mix(in srgb, var(--dt-border) 18%, transparent); border-radius: 9px; padding: 9px 4px; text-align: center; }
+        #${PANEL_ID} .dt-rb-stat b { display: block; font-family: ui-monospace, monospace; font-size: 17px; font-weight: 700; color: var(--dt-fg); }
+        #${PANEL_ID} .dt-rb-stat i { display: block; font-size: 8.5px; letter-spacing: .05em; text-transform: uppercase; color: color-mix(in srgb, var(--dt-fg) 52%, transparent); font-style: normal; margin-top: 3px; }
+        #${PANEL_ID} .dt-rb-stat.good b { color: var(--dt-progress); }
+        #${PANEL_ID} .dt-rb-stat.bad b { color: var(--dt-danger); }
+
+        /* Settings tab — clean rows + themed controls, consistent with the blend. */
+        #${PANEL_ID} .dt-setting-row { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 10px 0; border-bottom: 1px solid color-mix(in srgb, var(--dt-border) 13%, transparent); }
+        #${PANEL_ID} .dt-setting-row:last-child { border-bottom: none; }
+        #${PANEL_ID} .dt-setting-label { font-size: 12.5px; font-weight: 600; color: color-mix(in srgb, var(--dt-fg) 92%, transparent); }
+        #${PANEL_ID} .dt-setting-desc { font-size: 10.5px; color: color-mix(in srgb, var(--dt-fg) 42%, transparent); margin-top: 1px; line-height: 1.35; }
+        #${PANEL_ID} select.dt-theme-select, #${PANEL_ID} input.dt-num-input { background: var(--dt-field-bg); color: var(--dt-fg); border: 1px solid color-mix(in srgb, var(--dt-border) 26%, transparent); border-radius: 8px; padding: 7px 9px; font-size: 12.5px; font-family: inherit; }
+        #${PANEL_ID} input.dt-num-input { width: 72px; text-align: right; font-family: ui-monospace, "SF Mono", Consolas, monospace; }
+        #${PANEL_ID} select.dt-theme-select:focus, #${PANEL_ID} input.dt-num-input:focus { outline: none; border-color: var(--dt-label-fg); box-shadow: 0 0 0 3px color-mix(in srgb, var(--dt-label-fg) 22%, transparent); }
+
+        /* ===== Extend downward: on the three working tabs, the STANDALONE floating
+           panel anchors near the top and uses more vertical space (less scrolling).
+           Settings keeps the original centered size. No effect when the panel is
+           stitched into the IOW HUD (there it is position:static and the HUD's own
+           height governs — see the stitched-height rule below). ===== */
+        #${PANEL_ID}[data-active-tab="calc"],
+        #${PANEL_ID}[data-active-tab="opt"],
+        #${PANEL_ID}[data-active-tab="results"] {
+            top: 4vh; height: 92vh; max-height: none; transform: translate(120%, 0);
+        }
+        #${PANEL_ID}.show[data-active-tab="calc"],
+        #${PANEL_ID}.show[data-active-tab="opt"],
+        #${PANEL_ID}.show[data-active-tab="results"] {
+            transform: translate(0, 0);
+        }
+    `;
+
     /* =========================================================
        DOM BUILDER — inject button + panel into page body
        ========================================================= */
@@ -5234,7 +5595,7 @@ self.onmessage = async (e) => {
         // Inject styles
         const style = document.createElement('style');
         style.id = 'dt-aio-styles';
-        style.textContent = CSS;
+        style.textContent = CSS + DT_EXTRA_CSS + DT_BLEND_CSS;
         document.head.appendChild(style);
 
         // Toggle button
@@ -5266,9 +5627,10 @@ self.onmessage = async (e) => {
         // Panel
         const panel = document.createElement('div');
         panel.id = PANEL_ID;
+        panel.setAttribute('data-active-tab', 'calc'); // initial tab; drives extend-downward sizing
         panel.innerHTML = `
             <div class="dt-head" data-drag-handle="true">
-              <h2 class="dt-title">Dice Tool</h2>
+              <h2 class="dt-title">🎲 Dice &amp; Limbo</h2>
               <button class="dt-close" id="dt-close-btn" aria-label="Close">×</button>
             </div>
             <nav class="dt-tabs" role="tablist">
@@ -5294,6 +5656,7 @@ self.onmessage = async (e) => {
         const gl = GLOSSARY[label];
         return gl ? `<button type="button" class="dt-help" data-tooltip="${label}" aria-label="Help about ${label}">?</button>` : '';
     }
+    /* Legacy field helpers (kept for any other callers). */
     function fieldHTML(label, id, value, type = 'text', inputmode = 'decimal') {
         return `
           <div class="dt-field">
@@ -5301,77 +5664,135 @@ self.onmessage = async (e) => {
             <input type="${type}" inputmode="${inputmode}" id="dt-${id}" value="${value}">
           </div>`;
     }
-    function fieldWideHTML(label, id, value, hint = '') {
-        const hintHTML = hint ? `<div class="dt-hint">${hint}</div>` : '';
+    function fieldWideHTML(label, id, value) {
         return `
           <div class="dt-field dt-field-wide">
             <span class="dt-label">${label}${helpBtn(label)}</span>
             <input type="text" id="dt-${id}" class="dt-text-input" value="${value}">
-            ${hintHTML}
           </div>`;
     }
 
-    /* ---- Tab: Calculator / Simulator ---- */
+    /* === CLEAN ROW PRIMITIVES ===
+       One consistent "Label .......... [control]" row, used across every tab.
+       Help (?) keys off `term` so glossary tooltips still resolve. */
+    function rowInputHTML(label, term, id, value, inputmode, hint) {
+        const hintHTML = hint ? `<span class="dt-row-hint">${hint}</span>` : '';
+        return `
+          <div class="dt-row">
+            <span class="dt-row-label"><span class="dt-rl-nm">${label}${helpBtn(term || label)}</span>${hintHTML}</span>
+            <span class="dt-row-ctrl"><input type="text" inputmode="${inputmode || 'decimal'}" class="dt-in" id="dt-${id}" value="${value}"></span>
+          </div>`;
+    }
+    /* Read-only result row: label on the left, big value + copy on the right.
+       `key` = the headline numbers you paste into the game (accent colored). */
+    function rowOutHTML(label, term, outId, key) {
+        return `
+          <div class="dt-row dt-row-out${key ? ' dt-row-key' : ''}">
+            <span class="dt-row-label">${label}${helpBtn(term || label)}</span>
+            <span class="dt-row-ctrl">
+              <input type="text" class="dt-out-val" id="dt-${outId}" readonly>
+              <button class="dt-btn dt-btn-small dt-copy" data-copy="${outId}" title="Copy ${label}">⧉</button>
+            </span>
+          </div>`;
+    }
+    /* Hero output tile — the headline numbers you paste into the game (big, mono).
+       `cur` is an optional currency prefix shown before the value (display only;
+       the copy button still copies the raw value). */
+    function heroOutHTML(label, term, outId, cur) {
+        return `
+          <div class="dt-hero">
+            <button class="dt-copy" data-copy="${outId}" title="Copy ${label}">⧉</button>
+            <span class="dt-hero-k">${label}${helpBtn(term || label)}</span>
+            <div class="dt-hero-row">${cur ? `<span class="dt-hero-cur">${cur}</span>` : ''}<input type="text" class="dt-out-val" id="dt-${outId}" readonly></div>
+          </div>`;
+    }
+    /* Secondary output tile — smaller supporting values. */
+    function subOutHTML(label, term, outId) {
+        return `
+          <div class="dt-so">
+            <button class="dt-copy" data-copy="${outId}" title="Copy ${label}">⧉</button>
+            <span class="dt-so-k">${label}${helpBtn(term || label)}</span>
+            <input type="text" class="dt-out-val" id="dt-${outId}" readonly>
+          </div>`;
+    }
+    /* Optimizer range row: name + live "expands to" preview, then min/max/step
+       + a ⌨ toggle that reveals the raw range-syntax field. The syntax field stays
+       the source of truth (still accepts lists like 25,30,40). */
+    function rangeGroupHTML(label, id, value, hint, term) {
+        const hintHTML = hint ? `<div class="dt-hint" style="margin-top:4px;">${hint}</div>` : '';
+        return `
+          <div class="dt-rng">
+            <div class="dt-rng-head">
+              <span class="dt-rng-name">${label}${helpBtn(term || label)}</span>
+              <span class="dt-rng-prev" id="dt-prev_${id}"></span>
+            </div>
+            <div class="dt-rng-row">
+              <input type="text" inputmode="decimal" class="dt-mms" id="dt-mms_${id}_min" placeholder="min" aria-label="${label} minimum">
+              <input type="text" inputmode="decimal" class="dt-mms" id="dt-mms_${id}_max" placeholder="max" aria-label="${label} maximum">
+              <input type="text" inputmode="decimal" class="dt-mms" id="dt-mms_${id}_step" placeholder="step" aria-label="${label} step">
+              <button type="button" class="dt-rng-adv-btn" data-advtoggle="${id}" title="Type a custom range or list (e.g. 25,30,40)" aria-label="Custom entry">⌨</button>
+            </div>
+            <div class="dt-rng-adv" id="dt-adv_${id}" hidden>
+              <input type="text" id="dt-${id}" value="${value}">
+              ${hintHTML}
+            </div>
+          </div>`;
+    }
+    /* Guided workflow rail. `active` = 1 (Find) | 2 (Pick) | 3 (Use), mapping to
+       Optimizer -> Results -> Calculator. Each step jumps to its tab via switchTab;
+       done-state is refreshed by updateStepper() from real engine state. */
+    const STEP_TABS = { 1: 'opt', 2: 'results', 3: 'calc' };
+    function stepperHTML(active) {
+        const steps = [[1, 'Find'], [2, 'Pick'], [3, 'Use']];
+        return `<div class="dt-steps">` + steps.map(([n, name]) =>
+            `<button type="button" class="dt-step${n === active ? ' active' : ''}" data-step="${n}">
+               <span class="dt-step-dot">${n}</span><span class="dt-step-name">${name}</span>
+             </button>`).join('') + `</div>`;
+    }
     function buildCalcPanel() {
         return `
           <section class="dt-panel active" id="dt-panel-calc">
-            <div class="dt-card">
-              <div class="dt-card-title">Parameters</div>
-              ${fieldHTML('Balance', 'balance', '20')}
-              ${fieldHTML('Win Increase %', 'win_inc', '78')}
-              ${fieldHTML('Loss Reset', 'loss_reset', '5', 'text', 'numeric')}
-              ${fieldHTML('Balance Divisor', 'bet_div', '500')}
-              ${fieldHTML('Profit Multiplier', 'profit_mult', '100')}
-              ${fieldHTML('Buffer %', 'buffer', '25')}
+            ${stepperHTML(3)}
+            <div class="dt-coach"><b>Use your strategy.</b> Put these two numbers into the game, then hit Send.</div>
+            <div class="dt-heroes">
+              ${heroOutHTML('Starting bet', 'Bet Size', 'out_bet', '$')}
+              ${heroOutHTML('Stop at profit', 'Profit Stop', 'out_profit', '$')}
             </div>
-            <div class="dt-card">
-              <div class="dt-card-title">Calculated Values</div>
-              <div class="dt-field">
-                <span class="dt-label">Multiplier${helpBtn('Multiplier')}</span>
-                <input type="text" id="dt-out_mult" readonly>
-                <button class="dt-btn dt-btn-small" data-copy="out_mult">Copy</button>
-              </div>
-              <div class="dt-field">
-                <span class="dt-label">Bet Size${helpBtn('Bet Size')}</span>
-                <input type="text" id="dt-out_bet" readonly>
-                <button class="dt-btn dt-btn-small" data-copy="out_bet">Copy</button>
-              </div>
-              <div class="dt-field">
-                <span class="dt-label">Profit Stop${helpBtn('Profit Stop')}</span>
-                <input type="text" id="dt-out_profit" readonly>
-                <button class="dt-btn dt-btn-small" data-copy="out_profit">Copy</button>
-              </div>
-              <div class="dt-field">
-                <span class="dt-label">Balance Target${helpBtn('Balance Target')}</span>
-                <input type="text" id="dt-out_target" readonly>
-                <button class="dt-btn dt-btn-small" data-copy="out_target">Copy</button>
-              </div>
+            <div class="dt-subout">
+              ${subOutHTML('Payout multiplier', 'Multiplier', 'out_mult')}
+              ${subOutHTML('Target balance', 'Balance Target', 'out_target')}
             </div>
+            <button class="dt-btn dt-btn-primary dt-go dt-go-big" id="dt-game_sync">Send to game →</button>
+            <button class="dt-btn dt-btn-block" id="dt-game_import">Create a fresh strategy</button>
+
             <div class="dt-card">
-              <div class="dt-card-title">Simulation Controls</div>
-              ${fieldHTML('Trials', 'n_trials', '100', 'text', 'numeric')}
-              <div class="dt-btn-row">
-                <button class="dt-btn dt-btn-primary" id="dt-sim_run">Run Simulation</button>
+              <div class="dt-card-title">Your numbers</div>
+              <div class="dt-card-sub">Edit anything — the bet &amp; profit above update instantly. Tap any ? for help.</div>
+              ${rowInputHTML('Bankroll', 'Balance', 'balance', '20', 'decimal', "Money you're playing with")}
+              ${rowInputHTML('Bet increase on win %', 'Win Increase %', 'win_inc', '78', 'decimal', 'Grows your bet after a win')}
+              ${rowInputHTML('Losses before reset', 'Loss Reset', 'loss_reset', '5', 'numeric', 'Back to base bet after N losses')}
+              ${rowInputHTML('Bet size control', 'Balance Divisor', 'bet_div', '500', 'decimal', 'Higher = smaller, safer bets')}
+              ${rowInputHTML('Profit target multiplier', 'Profit Multiplier', 'profit_mult', '100', 'decimal', 'Sets your profit stop')}
+              ${rowInputHTML('Safety margin %', 'Buffer %', 'buffer', '25', 'decimal', 'Extra cushion on the multiplier')}
+            </div>
+
+            <div class="dt-card">
+              <div class="dt-card-title">Test it first <span class="dt-opt-tag">optional</span></div>
+              <div class="dt-card-sub">See how this strategy performs before betting real money.</div>
+              ${rowInputHTML('Number of test runs', 'Trials', 'n_trials', '100', 'numeric')}
+              <div class="dt-btn-row" style="margin-top:9px;">
+                <button class="dt-btn dt-btn-primary" id="dt-sim_run">Run test</button>
                 <button class="dt-btn dt-btn-danger" id="dt-sim_stop" disabled>Stop</button>
               </div>
               <div class="dt-progress-wrap"><div class="dt-progress-bar" id="dt-sim_progress"></div></div>
               <div class="dt-status-line" id="dt-sim_status">Idle</div>
-            </div>
-            <div class="dt-card">
-              <div class="dt-card-title">Simulation Results</div>
-              <div class="dt-scroll">
+              <div class="dt-scroll" style="margin-top:8px;">
                 <table class="dt-stats" id="dt-sim_results">
                   <tbody>
-                    <tr><td colspan="2" style="text-align:center; opacity:0.5; padding:16px;">Run a simulation to see stats.</td></tr>
+                    <tr><td colspan="2" style="text-align:center; opacity:0.5; padding:14px;">Run a test to see how often this strategy wins.</td></tr>
                   </tbody>
                 </table>
               </div>
-            </div>
-            <div class="dt-card">
-              <div class="dt-card-title">Game Integration</div>
-              <button class="dt-btn dt-btn-primary dt-btn-block" id="dt-game_sync">Export Balance &amp; Update Strategy</button>
-              <button class="dt-btn dt-btn-block" id="dt-game_import">Import New Strategy</button>
-              <div class="dt-hint" style="margin-top:8px;">Sync reads your in-game balance, recalculates, then writes the new bet size + profit stop into your existing strategy. Import creates a fresh strategy from scratch.</div>
             </div>
           </section>
         `;
@@ -5381,25 +5802,40 @@ self.onmessage = async (e) => {
     function buildOptPanel() {
         return `
           <section class="dt-panel" id="dt-panel-opt">
+            ${stepperHTML(1)}
+            <div class="dt-coach"><b>Find a strategy.</b> The tool tests hundreds of setups and ranks the best for you.</div>
             <div class="dt-card">
-              <div class="dt-card-title">Parameter Ranges</div>
-              ${fieldWideHTML('Starting Balance', 'opt_balance', '20')}
-              ${fieldWideHTML('Trials per Combo', 'opt_trials', '10')}
-              ${fieldWideHTML('Bet Divisor Range', 'opt_betdiv', '256,500', 'e.g. 256-512;step=1 or 25,30,40')}
-              ${fieldWideHTML('Profit Multiplier Range', 'opt_profit', '50,100', 'e.g. 25-150;step=5')}
-              ${fieldWideHTML('Win Increase % Range', 'opt_w', '50-100;step=5', 'e.g. 50-150;step=5')}
-              ${fieldWideHTML('Loss Reset (whole)', 'opt_l', '3-5;step=1', 'e.g. 3-8 (integers only)')}
-              ${fieldWideHTML('Buffer % Range', 'opt_buf', '25,30,40', 'e.g. 20-40;step=2')}
-              <button class="dt-btn dt-btn-primary dt-btn-block" id="dt-opt_run">Run Optimizer</button>
+              <div class="dt-card-title">How hard should it search?</div>
+              <div class="dt-card-sub">Just pick one and press Find. You can fine-tune the ranges below.</div>
+              <div class="dt-preset-grid">
+                <button type="button" class="dt-preset" data-preset="quick"><span class="dt-preset-ic">⚡</span><span><span class="dt-preset-name">Quick</span><span class="dt-preset-desc">~70 setups · a few seconds</span></span></button>
+                <button type="button" class="dt-preset" data-preset="balanced"><span class="dt-preset-rec">Recommended</span><span class="dt-preset-ic">⚖️</span><span><span class="dt-preset-name">Balanced</span><span class="dt-preset-desc">a few hundred setups · best for most people</span></span></button>
+                <button type="button" class="dt-preset" data-preset="thorough"><span class="dt-preset-ic">🔬</span><span><span class="dt-preset-name">Thorough</span><span class="dt-preset-desc">thousands · slower, most complete</span></span></button>
+                <button type="button" class="dt-preset" data-preset="center"><span class="dt-preset-ic">🎯</span><span><span class="dt-preset-name">Around my setup</span><span class="dt-preset-desc">centers on your Calculator values</span></span></button>
+              </div>
+              ${rowInputHTML('Bankroll', 'Starting Balance', 'opt_balance', '20', 'decimal', "Money you're playing with")}
+              ${rowInputHTML('Tests per setup', 'Trials per Combo', 'opt_trials', '10', 'numeric', 'More = more accurate, slower')}
+
+              <details class="dt-adv-ranges">
+                <summary>Customize ranges<span class="dt-adv-hint">advanced — presets fill these</span></summary>
+                ${rangeGroupHTML('Bet size control', 'opt_betdiv', '256,500', 'e.g. 256-512;step=1 or 25,30,40', 'Bet Divisor Range')}
+                ${rangeGroupHTML('Profit target multiplier', 'opt_profit', '50,100', 'e.g. 25-150;step=5', 'Profit Multiplier Range')}
+                ${rangeGroupHTML('Bet increase on win %', 'opt_w', '50-100;step=5', 'e.g. 50-150;step=5', 'Win Increase % Range')}
+                ${rangeGroupHTML('Losses before reset', 'opt_l', '3-5;step=1', 'e.g. 3-8 (whole numbers)', 'Loss Reset (whole)')}
+                ${rangeGroupHTML('Safety margin %', 'opt_buf', '25,30,40', 'e.g. 20-40;step=2', 'Buffer % Range')}
+              </details>
             </div>
+
             <div class="dt-card">
-              <div class="dt-card-title">Progress</div>
-              <div class="dt-progress-wrap"><div class="dt-progress-bar" id="dt-opt_progress"></div></div>
-              <div class="dt-status-line" id="dt-opt_status">Idle</div>
-              <div class="dt-btn-row">
-                <button class="dt-btn" id="dt-opt_clear">Clear Results</button>
+              <div class="dt-est" id="dt-opt_preview">&mdash;</div>
+              <button class="dt-btn dt-btn-primary dt-go dt-go-big" id="dt-opt_run">⚙️ Find strategies</button>
+              <div class="dt-progress-wrap" style="margin-top:8px;"><div class="dt-progress-bar" id="dt-opt_progress"></div></div>
+              <div class="dt-status-line" id="dt-opt_status">Ready when you are.</div>
+              <div class="dt-btn-row" style="margin-top:9px;">
+                <button class="dt-btn" id="dt-opt_clear">Clear results</button>
                 <button class="dt-btn dt-btn-danger" id="dt-opt_stop" disabled>Stop</button>
               </div>
+              <button type="button" class="dt-next" id="dt-next_opt" data-goto="results" disabled>Run a search to continue</button>
             </div>
           </section>
         `;
@@ -5409,9 +5845,17 @@ self.onmessage = async (e) => {
     function buildResultsPanel() {
         return `
           <section class="dt-panel" id="dt-panel-results">
+            ${stepperHTML(2)}
+            <div class="dt-coach"><b>Pick a strategy.</b> We've highlighted the best one for you.</div>
+            <div id="dt-res_best"></div>
             <div class="dt-card">
-              <div class="dt-card-title">Optimizer Results</div>
-              <div class="dt-status-line" id="dt-res_status">No results yet. Run the Optimizer.</div>
+              <div class="dt-card-title">All results</div>
+              <div class="dt-card-sub">Ranked best-first. Tap a row to select it, then "Use selected".</div>
+              <div class="dt-res-toolbar">
+                <label class="dt-toggle"><input type="checkbox" id="dt-res_safe"> Hide risky <span style="opacity:0.6;">(bust &gt; ${SAFE_BUST_MAX}%)</span></label>
+                <label class="dt-toggle"><input type="checkbox" id="dt-res_allcols"> All columns</label>
+              </div>
+              <div class="dt-status-line" id="dt-res_status">No results yet — run the Optimizer first.</div>
               <div class="dt-scroll">
                 <table class="dt-results" id="dt-res_table">
                   <thead><tr id="dt-res_head"></tr></thead>
@@ -5419,10 +5863,9 @@ self.onmessage = async (e) => {
                 </table>
               </div>
               <div class="dt-btn-row">
-                <button class="dt-btn" id="dt-res_apply">Apply Selected</button>
-                <button class="dt-btn" id="dt-res_csv">Save to CSV</button>
+                <button class="dt-btn dt-btn-primary" id="dt-res_apply">Use selected</button>
+                <button class="dt-btn" id="dt-res_csv">Export CSV</button>
               </div>
-              <div class="dt-hint" style="margin-top:8px;">Tap a row to select it, then "Apply Selected" to load those parameters into the Calculator.</div>
             </div>
           </section>
         `;
@@ -5432,10 +5875,15 @@ self.onmessage = async (e) => {
     function buildSettingsPanel() {
         return `
           <section class="dt-panel" id="dt-panel-settings">
+            <div class="dt-coach">Tune the look and behaviour. <b>Everything here is optional</b> — the defaults work fine.</div>
             <div class="dt-card">
-              <div class="dt-card-title">Interface</div>
+              <div class="dt-card-title">Appearance</div>
+              <div class="dt-card-sub">Theme and text size.</div>
               <div class="dt-setting-row">
-                <div class="dt-setting-label">Color Theme</div>
+                <div>
+                  <div class="dt-setting-label">Color theme</div>
+                  <div class="dt-setting-desc">Match your casino's look.</div>
+                </div>
                 <select class="dt-theme-select" id="dt-theme_select">
                   <option value="original">Original</option>
                   <option value="stake">Stake</option>
@@ -5444,8 +5892,8 @@ self.onmessage = async (e) => {
               </div>
               <div class="dt-setting-row">
                 <div>
-                  <div class="dt-setting-label">Large Fonts (+20%)</div>
-                  <div class="dt-setting-desc">Increases text size across the app.</div>
+                  <div class="dt-setting-label">Bigger text</div>
+                  <div class="dt-setting-desc">Increases text size by 20% everywhere.</div>
                 </div>
                 <label class="dt-switch"><input type="checkbox" id="dt-large_fonts"><span class="dt-slider"></span></label>
               </div>
@@ -5454,32 +5902,32 @@ self.onmessage = async (e) => {
               <div class="dt-card-title">Optimizer</div>
               <div class="dt-setting-row">
                 <div>
-                  <div class="dt-setting-label">Append Results</div>
-                  <div class="dt-setting-desc">If on, new Optimizer runs append to Results instead of replacing.</div>
+                  <div class="dt-setting-label">Keep previous results</div>
+                  <div class="dt-setting-desc">Add new runs to the Results list instead of replacing them.</div>
                 </div>
                 <label class="dt-switch"><input type="checkbox" id="dt-keep_prev"><span class="dt-slider"></span></label>
               </div>
               <div class="dt-setting-row">
                 <div>
-                  <div class="dt-setting-label">Parallel Workers</div>
-                  <div class="dt-setting-desc">Number of Web Workers used.</div>
+                  <div class="dt-setting-label">Speed (CPU cores)</div>
+                  <div class="dt-setting-desc">More cores = faster runs. 1–8.</div>
                 </div>
                 <input type="number" min="1" max="8" class="dt-num-input" id="dt-worker_count">
               </div>
             </div>
             <div class="dt-card">
-              <div class="dt-card-title">Streak Counter</div>
+              <div class="dt-card-title">Live streak counter</div>
               <div class="dt-setting-row">
                 <div>
-                  <div class="dt-setting-label">Show Counter HUD</div>
-                  <div class="dt-setting-desc">Draggable floating widget tracking win/loss streaks from the live dice results.</div>
+                  <div class="dt-setting-label">Show the counter</div>
+                  <div class="dt-setting-desc">A small floating widget that tracks your live win/loss streaks.</div>
                 </div>
                 <label class="dt-switch"><input type="checkbox" id="dt-show_counter"><span class="dt-slider"></span></label>
               </div>
               <div class="dt-setting-row">
                 <div>
-                  <div class="dt-setting-label">Auto-Stop Autoplay</div>
-                  <div class="dt-setting-desc">Automatically click "Stop Autoplay" once win streak reaches the target.</div>
+                  <div class="dt-setting-label">Auto-stop on win streak</div>
+                  <div class="dt-setting-desc">Automatically stops autoplay once your win streak hits the target.</div>
                 </div>
                 <label class="dt-switch"><input type="checkbox" id="dt-counter_autostop"><span class="dt-slider"></span></label>
               </div>
@@ -5488,9 +5936,9 @@ self.onmessage = async (e) => {
               <div class="dt-card-title">About</div>
               <div class="dt-setting-row">
                 <div class="dt-setting-label">Version</div>
-                <div style="opacity:0.7;">AiO 2.0 (Desktop)</div>
+                <div style="opacity:0.7;">Dice &amp; Limbo Tools v2.42 (Desktop)</div>
               </div>
-              <button class="dt-btn dt-btn-block dt-btn-small" id="dt-reset_state">Reset All Saved Data</button>
+              <button class="dt-btn dt-btn-block dt-btn-small" id="dt-reset_state">Reset all saved data</button>
             </div>
           </section>
         `;
@@ -5501,6 +5949,7 @@ self.onmessage = async (e) => {
        CALCULATOR
        ========================================================= */
     function calcValues() {
+        const mark = (id, bad) => { const el = $(id); if (el) el.classList.toggle('dt-invalid', !!bad); };
         try {
             const balance = parseFloat($('balance').value);
             const w = parseFloat($('win_inc').value) / 100;
@@ -5508,7 +5957,13 @@ self.onmessage = async (e) => {
             const bet_div = parseFloat($('bet_div').value);
             const profit_mult = parseFloat($('profit_mult').value);
             const buffer = 1 + parseFloat($('buffer').value) / 100;
-            if (![balance, w, bet_div, profit_mult, buffer].every(isFinite) || !Number.isFinite(l)) throw 0;
+            mark('balance', !Number.isFinite(balance));
+            mark('win_inc', !Number.isFinite(w));
+            mark('loss_reset', !Number.isFinite(l));
+            mark('bet_div', !Number.isFinite(bet_div) || bet_div === 0);
+            mark('profit_mult', !Number.isFinite(profit_mult));
+            mark('buffer', !Number.isFinite(buffer));
+            if (![balance, w, bet_div, profit_mult, buffer].every(isFinite) || !Number.isFinite(l) || bet_div === 0) throw 0;
             const m = ((1 + w) * l) * buffer;
             const bet_size = balance / bet_div;
             const profit_stop = bet_size * profit_mult;
@@ -5751,24 +6206,47 @@ self.onmessage = async (e) => {
     function renderResults() {
         const head = $('res_head');
         const body = $('res_body');
+        const best = $('res_best');
         if (!head) return;
-        head.innerHTML = RES_COLS.map(c => `<th data-col="${c}">${c}${c === resultsSortCol ? (resultsSortAsc ? ' ▲' : ' ▼') : ''}</th>`).join('');
+        const cols = showAllCols ? RES_COLS : RES_COLS_PRIMARY;
+        head.innerHTML = cols.map(c => {
+            const help = (RES_COL_HELP[c] || '').replace(/"/g, '&quot;');
+            const arrow = c === resultsSortCol ? (resultsSortAsc ? ' ▲' : ' ▼') : '';
+            return `<th data-col="${c}" title="${help}">${RES_COL_LABELS[c] || c}${arrow}</th>`;
+        }).join('');
         if (!optResults.length) {
             body.innerHTML = '';
+            if (best) best.innerHTML = '';
             $('res_status').textContent = 'No results yet. Run the Optimizer.';
             return;
         }
-        $('res_status').textContent = optResults.length + ' result' + (optResults.length === 1 ? '' : 's');
-        const sorted = optResults.slice().sort((a, b) => {
+        if (best) {
+            best.innerHTML = renderBestCard();
+            const ab = $('res_best_apply');
+            if (ab) ab.onclick = applyBestPick;
+        }
+        let sorted = optResults.slice().sort((a, b) => {
             const av = a[resultsSortCol], bv = b[resultsSortCol];
             if (av == null && bv == null) return 0;
             const cmp = (typeof av === 'number' && typeof bv === 'number') ? av - bv : String(av).localeCompare(String(bv), undefined, { numeric: true });
             return resultsSortAsc ? cmp : -cmp;
         });
-        body.innerHTML = sorted.map((r, i) => {
-            const cells = RES_COLS.map(c => {
+        if (safeOnly) sorted = sorted.filter(r => (typeof r['Bust%'] === 'number' ? r['Bust%'] : 100) <= SAFE_BUST_MAX);
+        $('res_status').textContent = safeOnly
+            ? `${sorted.length} of ${optResults.length} result${optResults.length === 1 ? '' : 's'} (Bust% ≤ ${SAFE_BUST_MAX})`
+            : `${optResults.length} result${optResults.length === 1 ? '' : 's'}`;
+        body.innerHTML = sorted.map((r) => {
+            const cells = cols.map(c => {
                 const v = r[c];
-                return `<td>${typeof v === 'number' ? v.toFixed(2) : v}</td>`;
+                const cls = resCellClass(c, v);
+                let inner = typeof v === 'number' ? v.toFixed(2) : v;
+                // Color-coded risk bar in the Bust% column (bar width grows with risk).
+                if (c === 'Bust%' && typeof v === 'number') {
+                    const w = Math.max(3, Math.min(28, v * 1.4));
+                    const bcls = v <= 5 ? 'good' : (v >= 20 ? 'bad' : 'mid');
+                    inner = `<span class="dt-riskbar ${bcls}" style="width:${w}px"></span>${v.toFixed(1)}`;
+                }
+                return `<td class="${cls}">${inner}</td>`;
             }).join('');
             const origIdx = optResults.indexOf(r);
             return `<tr data-idx="${origIdx}" class="${origIdx === selectedRowIdx ? 'selected' : ''}">${cells}</tr>`;
@@ -5811,6 +6289,7 @@ self.onmessage = async (e) => {
         selectedRowIdx = -1;
         saveState();
         renderResults();
+        updateStepper();
     }
     function exportResultsCSV() {
         if (!optResults.length) { toast('No results to save.'); return; }
@@ -6020,6 +6499,7 @@ self.onmessage = async (e) => {
                 }
             } catch (e) { console.warn('[shuffle_importNew] Condition 5 cleanup skipped:', e); }
 
+            seedStatsFromCalc();
             toast(`"${multiplier}x" strategy created. Click "Save Strategy".`);
         } catch (err) { toast('Import failed: ' + err); console.error(err); }
     }
@@ -6171,6 +6651,7 @@ self.onmessage = async (e) => {
                 }
             } catch (e) { console.warn('[stake_importNew] Condition 5 cleanup skipped:', e); }
 
+            seedStatsFromCalc();
             toast(`"${multiplier}x" strategy created. Click "Save Strategy".`);
         } catch (err) { toast('Import failed: ' + err); console.error(err); }
     }
@@ -6183,6 +6664,20 @@ self.onmessage = async (e) => {
     function gameUpdate() {
         if (location.hostname.includes('shuffle.us')) return shuffle_updateExisting();
         return stake_updateExisting();
+    }
+    /* On a fresh-strategy import, seed the Stats-tab Balance Divisor / Profit
+       Multiplier from the Calculator so they match the values the new strategy
+       was just built from. Initial seed only — the user is free to change them
+       afterward (the Stats deck stays two-way bound to the Calculator). No-op
+       when the Stats tab isn't present (standalone, not stitched into the HUD). */
+    function seedStatsFromCalc() {
+        [['bet_div', 'dt-stats-bet-div'], ['profit_mult', 'dt-stats-profit-mult']].forEach(([calcId, statsId]) => {
+            const src = $(calcId), dst = document.getElementById(statsId);
+            if (src && dst && src.value !== '' && src.value !== 'Invalid') {
+                dst.value = src.value;
+                dst.dispatchEvent(new Event('input', { bubbles: true }));
+            }
+        });
     }
     function gameImport() {
         if (location.hostname.includes('shuffle.us')) return shuffle_importNew();
@@ -6507,9 +7002,27 @@ self.onmessage = async (e) => {
        ========================================================= */
     function switchTab(name) {
         const panel = document.getElementById(PANEL_ID);
+        panel.setAttribute('data-active-tab', name); // drives the extend-downward sizing
         panel.querySelectorAll('.dt-tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === name));
         panel.querySelectorAll('.dt-panel').forEach(p => p.classList.toggle('active', p.id === 'dt-panel-' + name));
         panel.querySelector('.dt-body').scrollTop = 0;
+        updateStepper();
+    }
+    /* Refresh the guided-workflow stepper from real engine state:
+       step 1 (Optimize) is "done" once results exist; step 2 (Review) once a row
+       is selected or a best pick exists. Also drives the Optimizer "next" button. */
+    function updateStepper() {
+        const panel = document.getElementById(PANEL_ID);
+        if (!panel) return;
+        const hasResults = Array.isArray(optResults) && optResults.length > 0;
+        const reviewed = hasResults && (selectedRowIdx >= 0 || bestResultIdx() >= 0);
+        panel.querySelectorAll('.dt-step[data-step="1"]').forEach(s => s.classList.toggle('done', hasResults));
+        panel.querySelectorAll('.dt-step[data-step="2"]').forEach(s => s.classList.toggle('done', reviewed));
+        const next = document.getElementById('dt-next_opt');
+        if (next) {
+            next.disabled = !hasResults;
+            next.textContent = hasResults ? 'See your results →' : 'Run a search to continue';
+        }
     }
 
     /* =========================================================
@@ -6553,21 +7066,187 @@ self.onmessage = async (e) => {
     /* =========================================================
        COPY TO CLIPBOARD
        ========================================================= */
-    async function copyById(id) {
+    async function copyById(id, btn) {
         const val = $(id).value;
         if (!val || val === 'Invalid') { toast('Nothing to copy.'); return; }
+        const done = () => { toast('Copied: ' + val); flashCopied(btn); };
         try {
             await navigator.clipboard.writeText(val);
-            toast('Copied: ' + val);
+            done();
         } catch {
             const el = $(id);
             el.removeAttribute('readonly');
             el.select();
-            try { document.execCommand('copy'); toast('Copied: ' + val); }
+            try { document.execCommand('copy'); done(); }
             catch { toast('Copy failed.'); }
             el.setAttribute('readonly', '');
             window.getSelection().removeAllRanges();
         }
+    }
+    function flashCopied(btn) {
+        if (!btn) return;
+        const prev = btn.dataset._lbl || btn.textContent;
+        btn.dataset._lbl = prev;
+        btn.classList.add('dt-copied');
+        btn.textContent = 'Copied ✓';
+        clearTimeout(btn._copT);
+        btn._copT = setTimeout(() => { btn.textContent = prev; btn.classList.remove('dt-copied'); }, 1100);
+    }
+
+    /* =========================================================
+       ADVANCED IOW — UX HELPERS (additive; no core logic changed)
+       ========================================================= */
+    const OPT_RANGE_FIELDS = [
+        { id: 'opt_betdiv', integer: false },
+        { id: 'opt_profit', integer: false },
+        { id: 'opt_w', integer: false },
+        { id: 'opt_l', integer: true },
+        { id: 'opt_buf', integer: false }
+    ];
+    function fmtRangeList(arr) {
+        if (arr.length <= 4) return arr.join(', ');
+        return arr[0] + ', ' + arr[1] + ' … ' + arr[arr.length - 1];
+    }
+    function mmsFmt(n) { return String(Math.round(n * 1e6) / 1e6); }
+    // Boxes → text field. Build canonical "min-max;step=N" and write it into the
+    // existing range field, then refresh the preview + persist. Never rewrites the
+    // boxes (so it can't clobber what the user is typing).
+    function syncStepperToField(id) {
+        const minEl = $('mms_' + id + '_min'), maxEl = $('mms_' + id + '_max'), stepEl = $('mms_' + id + '_step');
+        if (!minEl || !maxEl) return;
+        const min = minEl.value.trim(), max = maxEl.value.trim(), step = stepEl ? stepEl.value.trim() : '';
+        let str;
+        if (min !== '' && max !== '') { str = min + '-' + max; if (step !== '') str += ';step=' + step; }
+        else if (min !== '') str = min;
+        else if (max !== '') str = max;
+        else return; // nothing usable (e.g. only Step filled)
+        const field = $(id); if (!field) return;
+        field.value = str;
+        updateOptPreview(); saveState();
+    }
+    // Text field → boxes. Derive Min/Max from the parsed values; derive Step only when
+    // the values are evenly spaced (≥3 of them) so we don't misrepresent a list like 25,30,40.
+    function syncFieldToStepper(id) {
+        const field = $(id); if (!field) return;
+        const f = OPT_RANGE_FIELDS.find(x => x.id === id);
+        const minEl = $('mms_' + id + '_min'), maxEl = $('mms_' + id + '_max'), stepEl = $('mms_' + id + '_step');
+        if (!minEl || !maxEl || !stepEl) return;
+        const vals = parseRange(field.value, f ? f.integer : false);
+        if (!vals.length) return; // leave boxes as-is on unparseable input
+        minEl.value = mmsFmt(Math.min(...vals));
+        maxEl.value = mmsFmt(Math.max(...vals));
+        let step = '';
+        if (vals.length >= 3) {
+            const s = vals.slice().sort((a, b) => a - b);
+            const d = s[1] - s[0]; let even = true;
+            for (let i = 2; i < s.length; i++) { if (Math.abs((s[i] - s[i - 1]) - d) > 1e-9) { even = false; break; } }
+            if (even) step = mmsFmt(d);
+        }
+        stepEl.value = step;
+    }
+    function refreshAllSteppers() { OPT_RANGE_FIELDS.forEach(f => syncFieldToStepper(f.id)); }
+    function updateOptPreview() {
+        let combos = 1, anyBad = false;
+        for (const f of OPT_RANGE_FIELDS) {
+            const el = $(f.id); if (!el) continue;
+            const vals = parseRange(el.value, f.integer);
+            const prev = $('prev_' + f.id);
+            if (!vals.length) {
+                anyBad = true;
+                if (prev) { prev.textContent = '⚠ check this range'; prev.classList.add('bad'); }
+            } else {
+                combos *= vals.length;
+                if (prev) { prev.textContent = '→ ' + fmtRangeList(vals) + ' (' + vals.length + ' value' + (vals.length === 1 ? '' : 's') + ')'; prev.classList.remove('bad'); }
+            }
+        }
+        const est = $('opt_preview'); if (!est) return;
+        const trialsEl = $('opt_trials');
+        const trials = parseInt(trialsEl ? trialsEl.value : '', 10);
+        if (anyBad || !Number.isFinite(trials) || trials < 1) {
+            est.textContent = 'Fix the ranges above to size the run.';
+            est.classList.add('bad'); est.classList.remove('warn');
+            return;
+        }
+        const sims = combos * trials;
+        est.innerHTML = '<strong>' + combos.toLocaleString() + '</strong> combo' + (combos === 1 ? '' : 's') + ' × <strong>' + trials + '</strong> trials = <strong>' + sims.toLocaleString() + '</strong> sims';
+        est.classList.remove('bad');
+        est.classList.toggle('warn', combos > 50000);
+    }
+    const OPT_PRESETS = {
+        quick: { opt_betdiv: '256,500', opt_profit: '50,100', opt_w: '60-90;step=15', opt_l: '3-5;step=1', opt_buf: '25,40', opt_trials: '10' },
+        balanced: { opt_betdiv: '256-512;step=128', opt_profit: '50-150;step=50', opt_w: '50-100;step=10', opt_l: '3-6;step=1', opt_buf: '20-40;step=10', opt_trials: '20' },
+        thorough: { opt_betdiv: '256-512;step=64', opt_profit: '50-150;step=25', opt_w: '50-150;step=10', opt_l: '3-8;step=1', opt_buf: '20-40;step=5', opt_trials: '30' }
+    };
+    function applyOptPreset(name) {
+        if (name === 'center') { centerOptOnCalc(); return; }
+        const p = OPT_PRESETS[name]; if (!p) return;
+        for (const k in p) { const el = $(k); if (el) el.value = p[k]; }
+        updateOptPreview(); refreshAllSteppers(); saveState();
+        toast(name.charAt(0).toUpperCase() + name.slice(1) + ' preset loaded');
+    }
+    function centerOptOnCalc() {
+        const nv = id => { const el = $(id); const v = el ? parseFloat(el.value) : NaN; return Number.isFinite(v) ? v : null; };
+        const bal = nv('balance'), bd = nv('bet_div'), pm = nv('profit_mult'), wi = nv('win_inc'), bf = nv('buffer');
+        const lrEl = $('loss_reset'); const lr = lrEl ? parseInt(lrEl.value, 10) : NaN;
+        if ([bal, bd, pm, wi, bf].some(v => v == null) || !Number.isFinite(lr)) { toast('Enter valid Calculator values first.'); return; }
+        const set = (id, v) => { const el = $(id); if (el) el.value = v; };
+        const r = Math.round;
+        set('opt_balance', String(+bal.toFixed(2)));
+        set('opt_betdiv', Math.max(1, r(bd / 2)) + ',' + r(bd) + ',' + r(bd * 2));
+        set('opt_profit', Math.max(1, r(pm / 2)) + ',' + r(pm) + ',' + r(pm * 2));
+        set('opt_w', Math.max(0, r(wi - 20)) + '-' + r(wi + 20) + ';step=10');
+        set('opt_l', Math.max(1, lr - 1) + '-' + (lr + 1) + ';step=1');
+        set('opt_buf', Math.max(0, r(bf - 10)) + ',' + r(bf) + ',' + r(bf + 10));
+        updateOptPreview(); refreshAllSteppers(); saveState();
+        toast('Ranges centered on your Calculator values');
+    }
+    function resCellClass(col, v) {
+        if (typeof v !== 'number') return '';
+        if (col === 'Score') return v >= 1 ? 'dt-cell-good' : (v <= 0 ? 'dt-cell-bad' : 'dt-cell-mid');
+        if (col === 'Bust%') return v <= 5 ? 'dt-cell-good' : (v >= 20 ? 'dt-cell-bad' : 'dt-cell-mid');
+        if (col === 'CycleSuccess%') return v >= 60 ? 'dt-cell-good' : (v < 30 ? 'dt-cell-bad' : 'dt-cell-mid');
+        return '';
+    }
+    function bestResultIdx() {
+        if (!optResults.length) return -1;
+        let bi = 0;
+        for (let i = 1; i < optResults.length; i++) {
+            const s = optResults[i].Score, sb = optResults[bi].Score;
+            if ((s == null ? -Infinity : s) > (sb == null ? -Infinity : sb)) bi = i;
+        }
+        return bi;
+    }
+    function renderBestCard() {
+        const bi = bestResultIdx();
+        if (bi < 0) return '';
+        const r = optResults[bi];
+        // Plain-language verdict from the headline stats, then four focal metrics.
+        const bust = +r['Bust%'], succ = +r['CycleSuccess%'], avg = +r.AvgHigh, start = +r.StartingBalance;
+        const risk = bust <= 5 ? 'very safe' : (bust <= 12 ? 'fairly safe' : (bust <= 25 ? 'moderately risky' : 'high-risk'));
+        const grow = (start > 0 && avg > start)
+            ? ('grows your $' + start.toFixed(0) + ' to about $' + avg.toFixed(0) + ' on average')
+            : 'is roughly break-even on average';
+        const verdict = 'This setup is <b>' + risk + '</b> (only <b>' + bust.toFixed(0) + '% chance</b> of busting) and ' + grow + ', winning <b>' + succ.toFixed(0) + '%</b> of its cycles.';
+        const bustCls = bust <= 5 ? 'good' : (bust >= 20 ? 'bad' : '');
+        const scoreCls = (+r.Score) >= 1 ? 'good' : ((+r.Score) <= 0 ? 'bad' : '');
+        const st = (cls, val, lbl) => '<div class="dt-rb-stat ' + cls + '"><b>' + val + '</b><i>' + lbl + '</i></div>';
+        return '<div class="dt-res-best">' +
+            '<div class="dt-rb-tag">★ Recommended for you</div>' +
+            '<div class="dt-rb-verdict">' + verdict + '</div>' +
+            '<div class="dt-rb-stats">' +
+            st(bustCls, bust.toFixed(0) + '%', 'Bust risk') +
+            st('', '$' + avg.toFixed(0), 'Avg high') +
+            st('', succ.toFixed(0) + '%', 'Win rate') +
+            st(scoreCls, (+r.Score).toFixed(2), 'Score') +
+            '</div>' +
+            '<button class="dt-btn dt-btn-primary dt-go" id="dt-res_best_apply">Use this setup →</button>' +
+            '</div>';
+    }
+    function applyBestPick() {
+        const bi = bestResultIdx();
+        if (bi < 0) return;
+        selectedRowIdx = bi;
+        applySelectedToCalculator();
     }
 
     /* =========================================================
@@ -6708,10 +7387,36 @@ self.onmessage = async (e) => {
         });
         ['n_trials', 'opt_balance', 'opt_trials', 'opt_betdiv', 'opt_profit', 'opt_w', 'opt_l', 'opt_buf']
             .forEach(id => $(id).addEventListener('input', saveState));
+        // Advanced IOW UX: live combo-count + per-range previews, presets, results toggles
+        ['opt_trials', 'opt_betdiv', 'opt_profit', 'opt_w', 'opt_l', 'opt_buf']
+            .forEach(id => { const el = $(id); if (el) el.addEventListener('input', updateOptPreview); });
+        // Min/Max/Step boxes <-> text field two-way sync
+        OPT_RANGE_FIELDS.forEach(f => { const el = $(f.id); if (el) el.addEventListener('input', () => syncFieldToStepper(f.id)); });
+        OPT_RANGE_FIELDS.forEach(f => ['min', 'max', 'step'].forEach(part => {
+            const el = $('mms_' + f.id + '_' + part);
+            if (el) el.addEventListener('input', () => syncStepperToField(f.id));
+        }));
+        // ⌨ toggle: reveal/hide the per-range custom-syntax field
+        $$('.dt-rng-adv-btn').forEach(b => b.addEventListener('click', () => {
+            const adv = $('adv_' + b.dataset.advtoggle);
+            if (!adv) return;
+            const show = adv.hasAttribute('hidden');
+            adv.toggleAttribute('hidden', !show);
+            b.classList.toggle('active', show);
+        }));
+        $$('[data-preset]').forEach(b => b.addEventListener('click', () => {
+            $$('[data-preset]').forEach(x => x.classList.toggle('active', x === b));
+            applyOptPreset(b.dataset.preset);
+        }));
+        const _resSafe = $('res_safe'); if (_resSafe) _resSafe.addEventListener('change', () => { safeOnly = _resSafe.checked; renderResults(); });
+        const _resCols = $('res_allcols'); if (_resCols) _resCols.addEventListener('change', () => { showAllCols = _resCols.checked; renderResults(); });
+        refreshAllSteppers();
+        updateOptPreview();
+        updateStepper();
 
         // Copy buttons
         document.getElementById(PANEL_ID).querySelectorAll('[data-copy]').forEach(b => {
-            b.addEventListener('click', () => copyById(b.dataset.copy));
+            b.addEventListener('click', () => copyById(b.dataset.copy, b));
         });
 
         // Tab delegation
@@ -6721,6 +7426,14 @@ self.onmessage = async (e) => {
             if (!btn) return;
             ev.preventDefault();
             switchTab(btn.dataset.tab);
+        });
+
+        // Guided workflow: stepper pills + "next step" buttons jump between tabs.
+        document.getElementById(PANEL_ID).addEventListener('click', (ev) => {
+            const step = ev.target.closest('.dt-step');
+            if (step && step.dataset.step) { switchTab(STEP_TABS[step.dataset.step]); return; }
+            const next = ev.target.closest('.dt-next');
+            if (next && !next.disabled && next.dataset.goto) { switchTab(next.dataset.goto); }
         });
 
         // Tooltip helpers — direct listeners on each ? button for iOS reliability,
@@ -8939,8 +9652,11 @@ let isRunning = false;
             || null;
     }
     function findNativeElement(selector) {
-        const elements = Array.from(document.querySelectorAll(selector));
-        return elements.find(el => !el.closest('#ratchet-master-container')) || elements[0] || null;
+        // Skip our own HUD and any native modal/chat overlay (mirrors tool_stake_iow_smart)
+        // so opening chat/settings can't yank their DOM into the HUD.
+        const inOverlay = el => el.closest('[role="dialog"], [aria-modal="true"], [data-testid*="chat" i], [data-test*="chat" i], [class*="chat" i]');
+        const elements = Array.from(document.querySelectorAll(selector)).filter(el => !el.closest('#ratchet-master-container') && !inOverlay(el));
+        return elements[0] || null;
     }
     function mountSingleElement(slot, element) {
         if (!slot || !element) return;
@@ -8948,6 +9664,7 @@ let isRunning = false;
         slot.replaceChildren(element);
     }
     function syncNativeHudElements() {
+        if (nativeOverlayOpen()) return; // suspend while a native chat/settings/modal is open
         const nativeSidebar = findNativeElement('.sc-8d275cfe-1.eGfUZM') || findNativeElement('.sc-8d275cfe-1');
         const recentBets = findNativeElement('.sc-9b1418e2-1') || findNativeElement('.sc-9b1418e2-0');
         const sidebarSlot = document.getElementById('hud-native-sidebar-slot');
@@ -9617,6 +10334,7 @@ let isRunning = false;
         pulse();
     }
     function simulateKeyDown(keyCode, repeat = false) {
+        if (nativeOverlayOpen()) return; // don't inject space into native settings/chat/modals
         const downEvent = new KeyboardEvent('keydown', { key: ' ', code: 'Space', keyCode: keyCode, which: keyCode, bubbles: true, cancelable: true, repeat: repeat });
         document.dispatchEvent(downEvent);
         const pressEvent = new KeyboardEvent('keypress', { key: ' ', code: 'Space', keyCode: keyCode, which: keyCode, bubbles: true, cancelable: true, repeat: repeat });
@@ -9931,8 +10649,36 @@ let isRunning = false;
         if (isRapidFiring) startBetGuardian();
         else stopBetGuardian();
     }, 500);
+    // --- Native-UI guard (same purpose as the IOW/Smart copy above): suspend our
+    // hotkeys + synthetic-spacebar injection while a native overlay (Settings/Hotkeys,
+    // chat, any modal) is open or a text field is focused. ---
+    function nativeOverlayOpen() {
+        try {
+            const dialogs = document.querySelectorAll('[role="dialog"], [aria-modal="true"]');
+            for (let i = 0; i < dialogs.length; i++) {
+                const r = dialogs[i].getBoundingClientRect();
+                if (r.width > 1 && r.height > 1) return true;
+            }
+            // A plain focused <input> is intentionally NOT treated as an overlay:
+            // this gate also pauses the rapid-fire autoclicker, which must keep
+            // running while the user edits a game/HUD field. Only real native
+            // overlays (modal above, or focus inside chat/settings/hotkeys) count.
+            const ae = document.activeElement;
+            if (ae && ae.closest && ae.closest('[data-testid*="chat" i], [data-test*="chat" i], [class*="chat" i], [class*="settings" i], [class*="hotkey" i]')) return true;
+        } catch (e) {}
+        return false;
+    }
+    function shouldIgnoreHotkey(e) {
+        const t = e && e.target;
+        if (t) {
+            const tag = t.tagName;
+            if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || t.isContentEditable) return true;
+            if (t.closest && t.closest('[role="dialog"], [aria-modal="true"], [data-testid*="chat" i], [data-test*="chat" i], [class*="chat" i], [class*="settings" i], [class*="hotkey" i]')) return true;
+        }
+        return nativeOverlayOpen();
+    }
     document.addEventListener('keydown', e => {
-        if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+        if (shouldIgnoreHotkey(e)) return;
         if (e.key.toLowerCase() === 'r') resetStats();
         if (ACTIVE_MODE === 'smart') {
             if (e.key === ']' || e.key === '[') {
@@ -13061,7 +13807,7 @@ function tool_stake_7day_tracker() {
     }
 
     /* ----------------------------- net hooks ----------------------------- */
-    (function installHooks() {
+    (function installHooks(window) {   /* window = the REAL page window (unsafeWindow) so fetch/WS hooks reach the site */
         try {
             var of = window.fetch;
             if (of) {
@@ -13084,10 +13830,10 @@ function tool_stake_7day_tracker() {
         } catch (e) {}
 
         try {
-            var oOpen = XMLHttpRequest.prototype.open;
-            var oSend = XMLHttpRequest.prototype.send;
-            XMLHttpRequest.prototype.open = function (m, u) { this.__stk_url = u; return oOpen.apply(this, arguments); };
-            XMLHttpRequest.prototype.send = function () {
+            var oOpen = window.XMLHttpRequest.prototype.open;
+            var oSend = window.XMLHttpRequest.prototype.send;
+            window.XMLHttpRequest.prototype.open = function (m, u) { this.__stk_url = u; return oOpen.apply(this, arguments); };
+            window.XMLHttpRequest.prototype.send = function () {
                 try {
                     if (GQL_RE.test(this.__stk_url || '')) {
                         var self = this;
@@ -13117,7 +13863,7 @@ function tool_stake_7day_tracker() {
                 window.WebSocket = WS;
             }
         } catch (e) {}
-    })();
+    })(typeof unsafeWindow !== 'undefined' && unsafeWindow ? unsafeWindow : window);
 
     /* ------------------- cross-device baseline sync ---------------------- */
     // rolling = lifetime(now) - lifetime(7d ago). lifetime(now) is a server value
@@ -14855,7 +15601,7 @@ function tool_stake_7day_tracker() {
                 '#hud-content > #dt-aio-panel .dt-tab-btn { padding: 6px 4px !important; font-size: 0.78em !important; }',
                 '#hud-content > #dt-aio-panel .dt-tab-btn .dt-tab-icon { font-size: 0.95em !important; }',
                 /* Cards: tighter padding, smaller margin */
-                '#hud-content > #dt-aio-panel .dt-card { padding: 10px 10px 8px !important; margin-bottom: 8px !important; border-width: 1px !important; }',
+                '#hud-content > #dt-aio-panel .dt-card { padding: 9px 9px 7px !important; margin-bottom: 6px !important; border-width: 1px !important; }',
                 '#hud-content > #dt-aio-panel .dt-card-title { top: -9px !important; font-size: 0.82em !important; padding: 0 6px !important; }',
                 /* Fields: tighter rows + smaller inputs */
                 '#hud-content > #dt-aio-panel .dt-field { margin: 3px 0 !important; gap: 6px !important; }',
@@ -14863,6 +15609,12 @@ function tool_stake_7day_tracker() {
                 '#hud-content > #dt-aio-panel .dt-field input[type="text"], #hud-content > #dt-aio-panel .dt-field input[type="number"], #hud-content > #dt-aio-panel input.dt-text-input { padding: 5px 7px !important; min-width: 70px !important; width: 84px !important; font-size: 0.88em !important; border-radius: 5px !important; }',
                 '#hud-content > #dt-aio-panel .dt-help { width: 16px !important; height: 16px !important; font-size: 10px !important; }',
                 '#hud-content > #dt-aio-panel .dt-hint { font-size: 0.7em !important; margin: -1px 0 4px !important; }',
+                /* Optimizer range groups: keep compact in the HUD; boxes/syntax stay full-width
+                   (own classes, so the 84px .dt-field clamp above never touches them) */
+                '#hud-content > #dt-aio-panel .dt-rng-row input.dt-mms { padding: 4px 3px !important; font-size: 0.78em !important; }',
+                '#hud-content > #dt-aio-panel .dt-rng-adv-btn { width: 28px !important; }',
+                '#hud-content > #dt-aio-panel .dt-row input.dt-in { font-size: 0.85em !important; }',
+                '#hud-content > #dt-aio-panel .dt-est { padding: 6px !important; font-size: 0.8em !important; }',
                 /* Buttons: smaller chrome */
                 '#hud-content > #dt-aio-panel .dt-btn { padding: 6px 10px !important; min-height: 32px !important; font-size: 0.82em !important; border-radius: 5px !important; }',
                 '#hud-content > #dt-aio-panel .dt-btn-small { padding: 4px 8px !important; min-height: 26px !important; font-size: 0.75em !important; }',
@@ -15483,8 +16235,57 @@ function tool_stake_7day_tracker() {
             const termsPanel = document.createElement('section');
             termsPanel.className = 'dt-panel';
             termsPanel.id = 'dt-panel-terms';
-            termsPanel.innerHTML = '<div class="dt-terms-scroll">' + lines.join('') + '</div>';
+            termsPanel.innerHTML =
+                '<input type="text" class="dt-terms-search" id="dt-terms_search" placeholder="🔍  Search terms…" aria-label="Search terms">' +
+                '<div class="dt-terms-empty" id="dt-terms_empty" hidden>No terms match your search.</div>' +
+                '<div class="dt-terms-scroll" id="dt-terms_scroll">' + lines.join('') + '</div>';
             body.appendChild(termsPanel);
+
+            // Live filter: hide rows that don't match; hide section headers whose
+            // whole section was filtered out. Pure presentation — no data changes.
+            const searchEl = termsPanel.querySelector('#dt-terms_search');
+            const scrollEl = termsPanel.querySelector('#dt-terms_scroll');
+            const emptyEl = termsPanel.querySelector('#dt-terms_empty');
+            if (searchEl && scrollEl) {
+                searchEl.addEventListener('input', () => {
+                    const q = searchEl.value.trim().toLowerCase();
+                    const kids = Array.from(scrollEl.children);
+                    let anyVisible = false;
+                    if (!q) {
+                        kids.forEach(el => { el.style.display = ''; });
+                        emptyEl.hidden = true;
+                        return;
+                    }
+                    // First pass: show/hide individual term rows + text by match.
+                    kids.forEach(el => {
+                        if (el.classList.contains('dt-terms-heading') || el.classList.contains('dt-terms-subheading') || el.classList.contains('dt-terms-spacer')) {
+                            el.style.display = 'none';  // headers handled in 2nd pass
+                            return;
+                        }
+                        const hit = el.textContent.toLowerCase().includes(q);
+                        el.style.display = hit ? '' : 'none';
+                        if (hit) anyVisible = true;
+                    });
+                    // Second pass: reveal a heading only if its section has any visible
+                    // row; reveal a subheading only if ITS sub-section (up to the next
+                    // heading OR subheading) has a visible row.
+                    for (let i = 0; i < kids.length; i++) {
+                        const el = kids[i];
+                        const isHeading = el.classList.contains('dt-terms-heading');
+                        const isSub = el.classList.contains('dt-terms-subheading');
+                        if (isHeading || isSub) {
+                            let show = false;
+                            for (let j = i + 1; j < kids.length; j++) {
+                                if (kids[j].classList.contains('dt-terms-heading')) break;
+                                if (isSub && kids[j].classList.contains('dt-terms-subheading')) break;
+                                if (kids[j].style.display !== 'none' && !kids[j].classList.contains('dt-terms-subheading') && !kids[j].classList.contains('dt-terms-spacer')) { show = true; break; }
+                            }
+                            el.style.display = show ? '' : 'none';
+                        }
+                    }
+                    emptyEl.hidden = anyVisible;
+                });
+            }
 
             termsSetup = true;
             return true;

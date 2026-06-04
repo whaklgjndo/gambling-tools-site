@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mobile 
 // @namespace    https://whaklgjndo.github.io/gambling-tools/
-// @version      5.2
+// @version      5.4
 // @description  .
 // @author       .
 // @match        https://stake.com/*
@@ -26,7 +26,7 @@
 (function () {
     'use strict';
 
-    try { console.log('[unified-mobile] boot v5.0 — taller game-stage so limbo/dice HUD has room; Shuffle vault same-origin + currency-from-icon'); } catch (e) {}
+    try { console.log('[unified-mobile] boot v5.4 — blend redesign of dice/limbo calc/opt/results tabs (Coach + risk bars), taller stage on those tabs; native-overlay-safe element relocation; fresh import seeds Stats divisor/mult from Calculator'); } catch (e) {}
 
     /* ============================================================
        iOS USERSCRIPTS COMPATIBILITY
@@ -1462,28 +1462,33 @@
     }
 
     function findNativeElement(selector) {
+        // Skip our own HUD and any native modal/chat overlay so opening chat/settings
+        // can't pull their DOM into the HUD (mirrors the desktop fix).
+        const inOverlay = el => el.closest('[role="dialog"], [aria-modal="true"], [data-testid*="chat" i], [data-test*="chat" i], [class*="chat" i]');
+        const ok = el => !el.closest('#ratchet-master-container') && !inOverlay(el);
         const host = getHudHost();
         const scope = host || document;
-        const scoped = Array.from(scope.querySelectorAll(selector));
-        const pick = scoped.find(el => !el.closest('#ratchet-master-container')) || scoped[0];
-        if (pick) return pick;
-        const fallback = Array.from(document.querySelectorAll(selector));
-        return fallback.find(el => !el.closest('#ratchet-master-container')) || fallback[0] || null;
+        const scoped = Array.from(scope.querySelectorAll(selector)).filter(ok);
+        if (scoped.length) return scoped[0];
+        const fallback = Array.from(document.querySelectorAll(selector)).filter(ok);
+        return fallback[0] || null;
     }
 
     function findShuffleFooter() {
+        // Skip chat/modal overlays so we never grab their DOM (mirrors the desktop fix).
+        const inOverlay = el => el.closest('[role="dialog"], [aria-modal="true"], [data-testid*="chat" i], [data-test*="chat" i], [class*="chat" i]');
         const byClass = document.querySelector(
             '[class*="footer"][class*="dice"], [class*="Dice"][class*="footer"], ' +
             '[class*="TBYuRq__footer"], [class*="gameFooter"], [class*="GameFooter"], ' +
             '[class*="betControls"], [class*="BetControls"], [class*="gameControls"], [class*="GameControls"]'
         );
-        if (byClass) return byClass;
+        if (byClass && !inOverlay(byClass)) return byClass;
         for (const el of document.querySelectorAll('label, p, span, div')) {
-            if ((el.textContent || '').trim() === 'Multiplier') {
+            if ((el.textContent || '').trim() === 'Multiplier' && !inOverlay(el)) {
                 let p = el.parentElement;
                 for (let i = 0; i < 7; i++) {
                     if (!p || p === document.body) break;
-                    if (p.querySelectorAll('input').length >= 2) return p;
+                    if (!inOverlay(p) && p.querySelectorAll('input').length >= 2) return p;
                     p = p.parentElement;
                 }
             }
@@ -2007,7 +2012,13 @@
         // host's min-height so the HUD gets clean vertical room. The native bet
         // panel is a sibling BELOW the stage, so it just flows further down —
         // nothing is covered. (One knob to tune: the clamp() below.)
-        gameDisplay.style.minHeight = 'clamp(420px, 54dvh, 640px)';
+        // Extend further on the dice tool's content-heavy tabs (Calculator/Optimizer/
+        // Results) so they reach downward with less scrolling. Scoped to when our dice
+        // panel is actually mounted in the HUD, so IOW/Smart modes are unaffected.
+        const dtP = document.querySelector('#ratchet-master-container #dt-aio-panel');
+        const dtTab = dtP && dtP.getAttribute('data-active-tab');
+        const dtTall = !!dtP && (dtTab === 'calc' || dtTab === 'opt' || dtTab === 'results');
+        gameDisplay.style.minHeight = dtTall ? 'clamp(520px, 80dvh, 920px)' : 'clamp(420px, 54dvh, 640px)';
         if (hud && hud.parentElement !== gameDisplay) gameDisplay.appendChild(hud);
         if (!hud) {
             hud = document.createElement('div');
@@ -3019,6 +3030,22 @@
         'AvgHigh', 'StdDev', 'MaxHigh', 'AvgCycles', 'AvgRounds',
         'CycleSuccess%', 'Bust%', 'Score'
     ];
+    // Friendly headers + the compact default column set (rest behind "All columns").
+    const DT_RES_COL_LABELS = {
+        StartingBalance: 'Start $', Trials: 'Trials', BetDiv: 'Bet Divisor', ProfitMult: 'Profit Mult',
+        'W%': 'Win Inc %', L: 'Loss Reset', 'Buffer%': 'Buffer %', AvgHigh: 'Avg High $', StdDev: 'Std Dev',
+        MaxHigh: 'Max High $', AvgCycles: 'Avg Cycles', AvgRounds: 'Avg Rounds',
+        'CycleSuccess%': 'Win %', 'Bust%': 'Bust %', Score: 'Score'
+    };
+    const DT_RES_COLS_PRIMARY = ['BetDiv', 'ProfitMult', 'W%', 'CycleSuccess%', 'Bust%', 'Score'];
+    const DT_SAFE_BUST_MAX = 10;
+    let dt_safeOnly = false, dt_showAllCols = false;
+    // Optimizer presets: fill the range fields, then the existing engine runs.
+    const DT_OPT_PRESETS = {
+        quick: { opt_betdiv: '256,500', opt_profit: '50,100', opt_w: '60-90;step=15', opt_l: '3-5;step=1', opt_buf: '25,40', opt_trials: '10' },
+        balanced: { opt_betdiv: '256-512;step=128', opt_profit: '50-150;step=50', opt_w: '50-100;step=10', opt_l: '3-6;step=1', opt_buf: '20-40;step=10', opt_trials: '20' },
+        thorough: { opt_betdiv: '256-512;step=64', opt_profit: '50-150;step=25', opt_w: '50-150;step=10', opt_l: '3-8;step=1', opt_buf: '20-40;step=5', opt_trials: '30' }
+    };
 
     const dt_state = {
         balance: '20', win_inc: '78', loss_reset: '5',
@@ -3758,6 +3785,104 @@ self.onmessage = async (e) => {
     };
 
     /* ============================================================
+       BLEND REDESIGN CSS (mobile) — beginner-first "Coach" layout +
+       terminal risk bars for the calc/opt/results tabs. Injected after
+       DT_CSS; scoped to #${DT_PANEL_ID}; built on existing theme vars.
+       When stitched into the HUD, the bridge CSS (!important) wins on
+       container/tab sizing — these rules style our new elements only.
+       ============================================================ */
+    const DT_BLEND_CSS = `
+        #${DT_PANEL_ID} .dt-panel.active { display: flex; flex-direction: column; gap: 11px; }
+        #${DT_PANEL_ID} .dt-card { background: color-mix(in srgb, var(--dt-bg) 82%, white 4%); border: 1px solid color-mix(in srgb, var(--dt-border) 18%, transparent); border-radius: 12px; padding: 12px; }
+        #${DT_PANEL_ID} .dt-card-title { font-weight: 800; letter-spacing: .02em; font-size: 13px; margin: 0; display: flex; align-items: center; gap: 7px; }
+        #${DT_PANEL_ID} .dt-card-sub { font-size: 11px; color: color-mix(in srgb, var(--dt-fg) 55%, transparent); line-height: 1.4; margin: 3px 0 10px; }
+        #${DT_PANEL_ID} .dt-opt-tag { font-size: 9px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: color-mix(in srgb, var(--dt-fg) 50%, transparent); border: 1px solid color-mix(in srgb, var(--dt-border) 24%, transparent); border-radius: 20px; padding: 2px 7px; }
+        #${DT_PANEL_ID} .dt-steps { display: flex; align-items: center; margin: 0; }
+        #${DT_PANEL_ID} .dt-step { flex: 0 0 auto; display: flex; align-items: center; gap: 7px; background: none; border: none; color: var(--dt-fg); cursor: pointer; padding: 0; font-family: inherit; }
+        #${DT_PANEL_ID} .dt-step + .dt-step { flex: 1; }
+        #${DT_PANEL_ID} .dt-step::before { content: ""; flex: 1; height: 2px; background: color-mix(in srgb, var(--dt-border) 22%, transparent); border-radius: 2px; margin: 0 7px; }
+        #${DT_PANEL_ID} .dt-step:first-child::before { display: none; }
+        #${DT_PANEL_ID} .dt-step.done::before, #${DT_PANEL_ID} .dt-step.active::before { background: var(--dt-label-fg); }
+        #${DT_PANEL_ID} .dt-step-dot { width: 22px; height: 22px; border-radius: 50%; display: inline-grid; place-items: center; font-size: 10.5px; font-weight: 800; background: var(--dt-field-bg); border: 1.5px solid color-mix(in srgb, var(--dt-border) 30%, transparent); color: color-mix(in srgb, var(--dt-fg) 55%, transparent); }
+        #${DT_PANEL_ID} .dt-step-name { font-size: 10px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: color-mix(in srgb, var(--dt-fg) 38%, transparent); }
+        #${DT_PANEL_ID} .dt-step.done .dt-step-dot { background: color-mix(in srgb, var(--dt-label-fg) 22%, var(--dt-field-bg)); border-color: var(--dt-label-fg); color: var(--dt-label-fg); }
+        #${DT_PANEL_ID} .dt-step.done .dt-step-name { color: color-mix(in srgb, var(--dt-fg) 60%, transparent); }
+        #${DT_PANEL_ID} .dt-step.active .dt-step-dot { background: var(--dt-label-fg); border-color: var(--dt-label-fg); color: var(--dt-bg); box-shadow: 0 0 0 3px color-mix(in srgb, var(--dt-label-fg) 18%, transparent); }
+        #${DT_PANEL_ID} .dt-step.active .dt-step-name { color: var(--dt-label-fg); }
+        #${DT_PANEL_ID} .dt-coach { font-size: 11.5px; color: color-mix(in srgb, var(--dt-fg) 62%, transparent); line-height: 1.4; margin: -1px 1px 0; }
+        #${DT_PANEL_ID} .dt-coach b { color: var(--dt-fg); font-weight: 700; }
+        #${DT_PANEL_ID} .dt-heroes { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; }
+        #${DT_PANEL_ID} .dt-hero { position: relative; background: linear-gradient(160deg, color-mix(in srgb, var(--dt-label-fg) 14%, var(--dt-field-bg)), var(--dt-field-bg)); border: 1px solid color-mix(in srgb, var(--dt-label-fg) 32%, transparent); border-radius: 11px; padding: 11px 12px; }
+        #${DT_PANEL_ID} .dt-hero-k { font-size: 9.5px; letter-spacing: .08em; text-transform: uppercase; color: var(--dt-label-fg); font-weight: 700; display: flex; align-items: center; gap: 4px; }
+        #${DT_PANEL_ID} .dt-hero-row { display: flex; align-items: baseline; gap: 2px; margin-top: 4px; }
+        #${DT_PANEL_ID} .dt-hero-cur { font-family: ui-monospace, Consolas, monospace; font-size: 15px; font-weight: 700; color: color-mix(in srgb, var(--dt-fg) 70%, transparent); }
+        #${DT_PANEL_ID} .dt-hero .dt-out-val { font-family: ui-monospace, Consolas, monospace; font-size: 22px; font-weight: 700; color: var(--dt-fg); background: transparent; border: none; padding: 0; width: 100%; letter-spacing: -.02em; }
+        #${DT_PANEL_ID} .dt-hero .dt-copy { position: absolute; top: 9px; right: 9px; }
+        #${DT_PANEL_ID} .dt-subout { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; }
+        #${DT_PANEL_ID} .dt-so { position: relative; background: var(--dt-field-bg); border: 1px solid color-mix(in srgb, var(--dt-border) 18%, transparent); border-radius: 9px; padding: 8px 11px; }
+        #${DT_PANEL_ID} .dt-so-k { font-size: 9px; letter-spacing: .06em; text-transform: uppercase; color: color-mix(in srgb, var(--dt-fg) 52%, transparent); display: flex; align-items: center; gap: 4px; }
+        #${DT_PANEL_ID} .dt-so .dt-out-val { font-family: ui-monospace, Consolas, monospace; font-size: 15px; font-weight: 700; color: var(--dt-fg); background: transparent; border: none; padding: 0; width: 100%; margin-top: 2px; }
+        #${DT_PANEL_ID} .dt-so .dt-copy { position: absolute; top: 6px; right: 6px; }
+        #${DT_PANEL_ID} .dt-out-val:focus { outline: none; }
+        #${DT_PANEL_ID} .dt-copy { padding: 2px 7px; font-size: 10.5px; line-height: 1.4; min-height: 0; border-radius: 6px; background: color-mix(in srgb, var(--dt-bg) 60%, black 40%); border: 1px solid color-mix(in srgb, var(--dt-border) 28%, transparent); color: color-mix(in srgb, var(--dt-fg) 70%, transparent); cursor: pointer; }
+        #${DT_PANEL_ID} .dt-copied { background: var(--dt-progress) !important; color: #03171a !important; border-color: var(--dt-progress) !important; }
+        #${DT_PANEL_ID} .dt-go { width: 100%; font-weight: 800; }
+        #${DT_PANEL_ID} .dt-go-big { padding: 13px; font-size: 14px; }
+        #${DT_PANEL_ID} .dt-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 0; border-bottom: 1px solid color-mix(in srgb, var(--dt-border) 13%, transparent); }
+        #${DT_PANEL_ID} .dt-row:last-child { border-bottom: none; }
+        #${DT_PANEL_ID} .dt-row-label { flex: 1 1 auto; min-width: 0; font-size: 12px; font-weight: 600; color: color-mix(in srgb, var(--dt-fg) 92%, transparent); display: flex; flex-direction: column; gap: 1px; }
+        #${DT_PANEL_ID} .dt-rl-nm { display: flex; align-items: center; gap: 5px; }
+        #${DT_PANEL_ID} .dt-row-hint { font-size: 10px; font-weight: 500; color: color-mix(in srgb, var(--dt-fg) 38%, transparent); }
+        #${DT_PANEL_ID} .dt-row-ctrl { flex: 0 0 auto; }
+        #${DT_PANEL_ID} input.dt-in { width: 88px; text-align: right; background: var(--dt-field-bg); color: var(--dt-fg); border: 1px solid color-mix(in srgb, var(--dt-border) 26%, transparent); border-radius: 8px; padding: 8px 9px; font-family: ui-monospace, Consolas, monospace; font-size: 13px; }
+        #${DT_PANEL_ID} input.dt-in:focus { outline: none; border-color: var(--dt-label-fg); box-shadow: 0 0 0 3px color-mix(in srgb, var(--dt-label-fg) 22%, transparent); }
+        #${DT_PANEL_ID} input.dt-in.dt-invalid { border-color: var(--dt-danger) !important; }
+        #${DT_PANEL_ID} .dt-preset-grid { display: flex; flex-direction: column; gap: 8px; margin: 2px 0 4px; }
+        #${DT_PANEL_ID} .dt-preset { display: flex; align-items: center; gap: 11px; text-align: left; background: var(--dt-field-bg); border: 1px solid color-mix(in srgb, var(--dt-border) 20%, transparent); border-radius: 11px; padding: 10px 12px; cursor: pointer; position: relative; color: var(--dt-fg); font-family: inherit; }
+        #${DT_PANEL_ID} .dt-preset-ic { font-size: 19px; flex: 0 0 auto; width: 24px; text-align: center; }
+        #${DT_PANEL_ID} .dt-preset-name { font-size: 13px; font-weight: 800; display: block; }
+        #${DT_PANEL_ID} .dt-preset-desc { font-size: 10.5px; color: color-mix(in srgb, var(--dt-fg) 52%, transparent); display: block; margin-top: 1px; }
+        #${DT_PANEL_ID} .dt-preset.active { border-color: var(--dt-label-fg); background: color-mix(in srgb, var(--dt-label-fg) 12%, var(--dt-field-bg)); box-shadow: inset 0 0 0 1px var(--dt-label-fg); }
+        #${DT_PANEL_ID} .dt-preset-rec { position: absolute; top: -8px; right: 12px; font-size: 8.5px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; background: var(--dt-label-fg); color: var(--dt-bg); padding: 1px 7px; border-radius: 20px; }
+        #${DT_PANEL_ID} .dt-adv-ranges { margin-top: 5px; }
+        #${DT_PANEL_ID} .dt-adv-ranges > summary { list-style: none; cursor: pointer; padding: 8px 2px; font-size: 11.5px; font-weight: 600; color: var(--dt-label-fg); display: flex; align-items: center; gap: 6px; }
+        #${DT_PANEL_ID} .dt-adv-ranges > summary::-webkit-details-marker { display: none; }
+        #${DT_PANEL_ID} .dt-adv-ranges > summary::before { content: '▸'; opacity: .7; }
+        #${DT_PANEL_ID} .dt-adv-ranges[open] > summary::before { content: '▾'; }
+        #${DT_PANEL_ID} .dt-adv-hint { margin-left: auto; opacity: .5; font-weight: 400; }
+        #${DT_PANEL_ID} .dt-est { text-align: center; padding: 8px; border-radius: 8px; background: var(--dt-field-bg); border: 1px solid color-mix(in srgb, var(--dt-border) 18%, transparent); font-size: 11px; font-family: ui-monospace, monospace; margin-bottom: 9px; }
+        #${DT_PANEL_ID} .dt-est b { color: var(--dt-label-fg); }
+        #${DT_PANEL_ID} .dt-est.warn { border-color: #e0a23b; } #${DT_PANEL_ID} .dt-est.bad { color: var(--dt-danger); border-color: var(--dt-danger); }
+        #${DT_PANEL_ID} .dt-next { display: flex; align-items: center; justify-content: center; gap: 6px; width: 100%; margin-top: 10px; padding: 11px; border-radius: 9px; cursor: pointer; font-weight: 800; font-size: 13px; background: var(--dt-label-fg); color: var(--dt-bg); border: none; font-family: inherit; }
+        #${DT_PANEL_ID} .dt-next[disabled] { background: var(--dt-field-bg); color: color-mix(in srgb, var(--dt-fg) 55%, transparent); opacity: .6; border: 1px solid color-mix(in srgb, var(--dt-border) 18%, transparent); }
+        #${DT_PANEL_ID} .dt-res-toolbar { display: flex; flex-wrap: wrap; gap: 12px; margin: 2px 0 9px; }
+        #${DT_PANEL_ID} .dt-toggle { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; color: color-mix(in srgb, var(--dt-fg) 65%, transparent); }
+        #${DT_PANEL_ID} .dt-toggle input { accent-color: var(--dt-label-fg); }
+        #${DT_PANEL_ID} table.dt-results th { position: sticky; top: 0; background: color-mix(in srgb, var(--dt-bg) 92%, black 8%); font-size: 9px; letter-spacing: .03em; text-transform: uppercase; color: color-mix(in srgb, var(--dt-fg) 55%, transparent); cursor: pointer; }
+        #${DT_PANEL_ID} table.dt-results th, #${DT_PANEL_ID} table.dt-results td { text-align: right; white-space: nowrap; }
+        #${DT_PANEL_ID} table.dt-results th:first-child, #${DT_PANEL_ID} table.dt-results td:first-child { text-align: left; }
+        #${DT_PANEL_ID} table.dt-results tr.selected td { background: color-mix(in srgb, var(--dt-label-fg) 16%, transparent); box-shadow: inset 2px 0 0 var(--dt-label-fg); }
+        #${DT_PANEL_ID} td.dt-cell-good { color: var(--dt-progress) !important; } #${DT_PANEL_ID} td.dt-cell-mid { color: #e6c850 !important; } #${DT_PANEL_ID} td.dt-cell-bad { color: var(--dt-danger) !important; }
+        #${DT_PANEL_ID} .dt-riskbar { display: inline-block; height: 6px; border-radius: 2px; vertical-align: middle; margin-right: 5px; min-width: 3px; }
+        #${DT_PANEL_ID} .dt-riskbar.good { background: var(--dt-progress); } #${DT_PANEL_ID} .dt-riskbar.mid { background: #e6c850; } #${DT_PANEL_ID} .dt-riskbar.bad { background: var(--dt-danger); }
+        #${DT_PANEL_ID} .dt-res-best { background: linear-gradient(165deg, color-mix(in srgb, var(--dt-label-fg) 16%, var(--dt-bg)), var(--dt-bg)); border: 1px solid var(--dt-label-fg); border-radius: 13px; padding: 13px; }
+        #${DT_PANEL_ID} .dt-rb-tag { font-size: 10.5px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; color: var(--dt-label-fg); display: flex; align-items: center; gap: 6px; }
+        #${DT_PANEL_ID} .dt-rb-verdict { font-size: 12px; line-height: 1.45; color: color-mix(in srgb, var(--dt-fg) 92%, transparent); margin: 8px 0 11px; }
+        #${DT_PANEL_ID} .dt-rb-verdict b { color: var(--dt-fg); }
+        #${DT_PANEL_ID} .dt-rb-stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 7px; margin-bottom: 11px; }
+        #${DT_PANEL_ID} .dt-rb-stat { background: color-mix(in srgb, var(--dt-bg) 70%, black 30%); border: 1px solid color-mix(in srgb, var(--dt-border) 18%, transparent); border-radius: 8px; padding: 8px 3px; text-align: center; }
+        #${DT_PANEL_ID} .dt-rb-stat b { display: block; font-family: ui-monospace, monospace; font-size: 15px; font-weight: 700; color: var(--dt-fg); }
+        #${DT_PANEL_ID} .dt-rb-stat i { display: block; font-size: 8px; letter-spacing: .04em; text-transform: uppercase; color: color-mix(in srgb, var(--dt-fg) 52%, transparent); font-style: normal; margin-top: 2px; }
+        #${DT_PANEL_ID} .dt-rb-stat.good b { color: var(--dt-progress); } #${DT_PANEL_ID} .dt-rb-stat.bad b { color: var(--dt-danger); }
+        #${DT_PANEL_ID} .dt-setting-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 9px 0; border-bottom: 1px solid color-mix(in srgb, var(--dt-border) 13%, transparent); }
+        #${DT_PANEL_ID} .dt-setting-row:last-child { border-bottom: none; }
+        #${DT_PANEL_ID} .dt-setting-label { font-size: 12px; font-weight: 600; color: color-mix(in srgb, var(--dt-fg) 92%, transparent); }
+        #${DT_PANEL_ID} .dt-setting-desc { font-size: 10px; color: color-mix(in srgb, var(--dt-fg) 42%, transparent); margin-top: 1px; line-height: 1.35; }
+        #${DT_PANEL_ID} select.dt-theme-select, #${DT_PANEL_ID} input.dt-num-input { background: var(--dt-field-bg); color: var(--dt-fg); border: 1px solid color-mix(in srgb, var(--dt-border) 26%, transparent); border-radius: 8px; padding: 7px 9px; font-size: 12px; }
+        #${DT_PANEL_ID} input.dt-num-input { width: 64px; text-align: right; font-family: ui-monospace, Consolas, monospace; }
+    `;
+
+    /* ============================================================
        DOM BUILDER — slim mobile injectUI (no FAB, no backdrop,
        no draggable counter widget; bare counter divs included so
        the integration can re-parent them into the Stats tab).
@@ -3767,7 +3892,7 @@ self.onmessage = async (e) => {
         if (!document.getElementById('dt-aio-styles')) {
             const style = document.createElement('style');
             style.id = 'dt-aio-styles';
-            style.textContent = DT_CSS;
+            style.textContent = DT_CSS + DT_BLEND_CSS;
             document.head.appendChild(style);
         }
 
@@ -3789,6 +3914,7 @@ self.onmessage = async (e) => {
         if (!document.getElementById(DT_PANEL_ID)) {
             const panel = document.createElement('div');
             panel.id = DT_PANEL_ID;
+            panel.setAttribute('data-active-tab', 'calc'); // initial tab; drives extend-downward sizing
             panel.innerHTML = `
                 <div class="dt-head">
                   <h2 class="dt-title">Dice Tool</h2>
@@ -3823,76 +3949,92 @@ self.onmessage = async (e) => {
             <input type="${type}" inputmode="${inputmode}" id="dt-${id}" value="${value}">
           </div>`;
     }
-    function dt_fieldWideHTML(label, id, value, hint = '') {
+    function dt_fieldWideHTML(label, id, value, hint = '', term) {
         const hintHTML = hint ? `<div class="dt-hint">${hint}</div>` : '';
         return `
           <div class="dt-field dt-field-wide">
-            <span class="dt-label">${label}${dt_helpBtn(label)}</span>
+            <span class="dt-label">${label}${dt_helpBtn(term || label)}</span>
             <input type="text" id="dt-${id}" class="dt-text-input" value="${value}">
             ${hintHTML}
           </div>`;
+    }
+    /* === Blend helpers (mobile) — mirror the desktop builders === */
+    function dt_rowInputHTML(label, term, id, value, inputmode, hint) {
+        const hintHTML = hint ? `<span class="dt-row-hint">${hint}</span>` : '';
+        return `
+          <div class="dt-row">
+            <span class="dt-row-label"><span class="dt-rl-nm">${label}${dt_helpBtn(term || label)}</span>${hintHTML}</span>
+            <span class="dt-row-ctrl"><input type="text" inputmode="${inputmode || 'decimal'}" class="dt-in" id="dt-${id}" value="${value}"></span>
+          </div>`;
+    }
+    function dt_heroOutHTML(label, term, outId, cur) {
+        return `
+          <div class="dt-hero">
+            <button class="dt-copy" data-copy="${outId}" title="Copy ${label}">⧉</button>
+            <span class="dt-hero-k">${label}${dt_helpBtn(term || label)}</span>
+            <div class="dt-hero-row">${cur ? `<span class="dt-hero-cur">${cur}</span>` : ''}<input type="text" class="dt-out-val" id="dt-${outId}" readonly></div>
+          </div>`;
+    }
+    function dt_subOutHTML(label, term, outId) {
+        return `
+          <div class="dt-so">
+            <button class="dt-copy" data-copy="${outId}" title="Copy ${label}">⧉</button>
+            <span class="dt-so-k">${label}${dt_helpBtn(term || label)}</span>
+            <input type="text" class="dt-out-val" id="dt-${outId}" readonly>
+          </div>`;
+    }
+    /* Guided rail: Find (Optimizer) -> Pick (Results) -> Use (Calculator). */
+    const DT_STEP_TABS = { 1: 'opt', 2: 'results', 3: 'calc' };
+    function dt_stepperHTML(active) {
+        const steps = [[1, 'Find'], [2, 'Pick'], [3, 'Use']];
+        return `<div class="dt-steps">` + steps.map(([n, name]) =>
+            `<button type="button" class="dt-step${n === active ? ' active' : ''}" data-step="${n}"><span class="dt-step-dot">${n}</span><span class="dt-step-name">${name}</span></button>`).join('') + `</div>`;
     }
 
     function dt_buildCalcPanel() {
         return `
           <section class="dt-panel active" id="dt-panel-calc">
-            <div class="dt-card">
-              <div class="dt-card-title">Parameters</div>
-              ${dt_fieldHTML('Balance', 'balance', '20')}
-              ${dt_fieldHTML('Win Increase %', 'win_inc', '78')}
-              ${dt_fieldHTML('Loss Reset', 'loss_reset', '5', 'text', 'numeric')}
-              ${dt_fieldHTML('Balance Divisor', 'bet_div', '500')}
-              ${dt_fieldHTML('Profit Multiplier', 'profit_mult', '100')}
-              ${dt_fieldHTML('Buffer %', 'buffer', '25')}
+            ${dt_stepperHTML(3)}
+            <div class="dt-coach"><b>Use your strategy.</b> Put these two numbers into the game, then hit Send.</div>
+            <div class="dt-heroes">
+              ${dt_heroOutHTML('Starting bet', 'Bet Size', 'out_bet', '$')}
+              ${dt_heroOutHTML('Stop at profit', 'Profit Stop', 'out_profit', '$')}
             </div>
-            <div class="dt-card">
-              <div class="dt-card-title">Calculated Values</div>
-              <div class="dt-field">
-                <span class="dt-label">Multiplier${dt_helpBtn('Multiplier')}</span>
-                <input type="text" id="dt-out_mult" readonly>
-                <button class="dt-btn dt-btn-small" data-copy="out_mult">Copy</button>
-              </div>
-              <div class="dt-field">
-                <span class="dt-label">Bet Size${dt_helpBtn('Bet Size')}</span>
-                <input type="text" id="dt-out_bet" readonly>
-                <button class="dt-btn dt-btn-small" data-copy="out_bet">Copy</button>
-              </div>
-              <div class="dt-field">
-                <span class="dt-label">Profit Stop${dt_helpBtn('Profit Stop')}</span>
-                <input type="text" id="dt-out_profit" readonly>
-                <button class="dt-btn dt-btn-small" data-copy="out_profit">Copy</button>
-              </div>
-              <div class="dt-field">
-                <span class="dt-label">Balance Target${dt_helpBtn('Balance Target')}</span>
-                <input type="text" id="dt-out_target" readonly>
-                <button class="dt-btn dt-btn-small" data-copy="out_target">Copy</button>
-              </div>
+            <div class="dt-subout">
+              ${dt_subOutHTML('Multiplier', 'Multiplier', 'out_mult')}
+              ${dt_subOutHTML('Target balance', 'Balance Target', 'out_target')}
             </div>
+            <button class="dt-btn dt-btn-primary dt-go dt-go-big" id="dt-game_sync">Send to game →</button>
+            <button class="dt-btn dt-btn-block" id="dt-game_import">Create a fresh strategy</button>
+
             <div class="dt-card">
-              <div class="dt-card-title">Simulation Controls</div>
-              ${dt_fieldHTML('Trials', 'n_trials', '100', 'text', 'numeric')}
-              <div class="dt-btn-row">
-                <button class="dt-btn dt-btn-primary" id="dt-sim_run">Run Simulation</button>
+              <div class="dt-card-title">Your numbers</div>
+              <div class="dt-card-sub">Edit anything — the bet &amp; profit above update instantly. Tap any ? for help.</div>
+              ${dt_rowInputHTML('Bankroll', 'Balance', 'balance', '20', 'decimal', "Money you're playing with")}
+              ${dt_rowInputHTML('Bet increase on win %', 'Win Increase %', 'win_inc', '78', 'decimal', 'Grows your bet after a win')}
+              ${dt_rowInputHTML('Losses before reset', 'Loss Reset', 'loss_reset', '5', 'numeric', 'Back to base bet after N losses')}
+              ${dt_rowInputHTML('Bet size control', 'Balance Divisor', 'bet_div', '500', 'decimal', 'Higher = smaller, safer bets')}
+              ${dt_rowInputHTML('Profit target multiplier', 'Profit Multiplier', 'profit_mult', '100', 'decimal', 'Sets your profit stop')}
+              ${dt_rowInputHTML('Safety margin %', 'Buffer %', 'buffer', '25', 'decimal', 'Extra cushion on the multiplier')}
+            </div>
+
+            <div class="dt-card">
+              <div class="dt-card-title">Test it first <span class="dt-opt-tag">optional</span></div>
+              <div class="dt-card-sub">See how this strategy performs before betting real money.</div>
+              ${dt_rowInputHTML('Number of test runs', 'Trials', 'n_trials', '100', 'numeric')}
+              <div class="dt-btn-row" style="margin-top:9px;">
+                <button class="dt-btn dt-btn-primary" id="dt-sim_run">Run test</button>
                 <button class="dt-btn dt-btn-danger" id="dt-sim_stop" disabled>Stop</button>
               </div>
               <div class="dt-progress-wrap"><div class="dt-progress-bar" id="dt-sim_progress"></div></div>
               <div class="dt-status-line" id="dt-sim_status">Idle</div>
-            </div>
-            <div class="dt-card">
-              <div class="dt-card-title">Simulation Results</div>
-              <div class="dt-scroll">
+              <div class="dt-scroll" style="margin-top:8px;">
                 <table class="dt-stats" id="dt-sim_results">
                   <tbody>
-                    <tr><td colspan="2" style="text-align:center; opacity:0.5; padding:16px;">Run a simulation to see stats.</td></tr>
+                    <tr><td colspan="2" style="text-align:center; opacity:0.5; padding:16px;">Run a test to see how often this strategy wins.</td></tr>
                   </tbody>
                 </table>
               </div>
-            </div>
-            <div class="dt-card">
-              <div class="dt-card-title">Game Integration</div>
-              <button class="dt-btn dt-btn-primary dt-btn-block" id="dt-game_sync">Export Balance &amp; Update Strategy</button>
-              <button class="dt-btn dt-btn-block" id="dt-game_import">Import New Strategy</button>
-              <div class="dt-hint" style="margin-top:8px;">Sync reads your in-game balance, recalculates, then writes the new bet size + profit stop into your existing strategy. Import creates a fresh strategy from scratch.</div>
             </div>
           </section>
         `;
@@ -3901,25 +4043,38 @@ self.onmessage = async (e) => {
     function dt_buildOptPanel() {
         return `
           <section class="dt-panel" id="dt-panel-opt">
+            ${dt_stepperHTML(1)}
+            <div class="dt-coach"><b>Find a strategy.</b> The tool tests hundreds of setups and ranks the best for you.</div>
             <div class="dt-card">
-              <div class="dt-card-title">Parameter Ranges</div>
-              ${dt_fieldWideHTML('Starting Balance', 'opt_balance', '20')}
-              ${dt_fieldWideHTML('Trials per Combo', 'opt_trials', '10')}
-              ${dt_fieldWideHTML('Bet Divisor Range', 'opt_betdiv', '256,500', 'e.g. 256-512;step=1 or 25,30,40')}
-              ${dt_fieldWideHTML('Profit Multiplier Range', 'opt_profit', '50,100', 'e.g. 25-150;step=5')}
-              ${dt_fieldWideHTML('Win Increase % Range', 'opt_w', '50-100;step=5', 'e.g. 50-150;step=5')}
-              ${dt_fieldWideHTML('Loss Reset (whole)', 'opt_l', '3-5;step=1', 'e.g. 3-8 (integers only)')}
-              ${dt_fieldWideHTML('Buffer % Range', 'opt_buf', '25,30,40', 'e.g. 20-40;step=2')}
-              <button class="dt-btn dt-btn-primary dt-btn-block" id="dt-opt_run">Run Optimizer</button>
+              <div class="dt-card-title">How hard should it search?</div>
+              <div class="dt-card-sub">Just pick one and press Find. Fine-tune the ranges below if you want.</div>
+              <div class="dt-preset-grid">
+                <button type="button" class="dt-preset" data-preset="quick"><span class="dt-preset-ic">⚡</span><span><span class="dt-preset-name">Quick</span><span class="dt-preset-desc">~70 setups · a few seconds</span></span></button>
+                <button type="button" class="dt-preset" data-preset="balanced"><span class="dt-preset-rec">Recommended</span><span class="dt-preset-ic">⚖️</span><span><span class="dt-preset-name">Balanced</span><span class="dt-preset-desc">a few hundred · best for most</span></span></button>
+                <button type="button" class="dt-preset" data-preset="thorough"><span class="dt-preset-ic">🔬</span><span><span class="dt-preset-name">Thorough</span><span class="dt-preset-desc">thousands · slower</span></span></button>
+                <button type="button" class="dt-preset" data-preset="center"><span class="dt-preset-ic">🎯</span><span><span class="dt-preset-name">Around my setup</span><span class="dt-preset-desc">centers on your Calculator</span></span></button>
+              </div>
+              ${dt_rowInputHTML('Bankroll', 'Starting Balance', 'opt_balance', '20', 'decimal', "Money you're playing with")}
+              <details class="dt-adv-ranges">
+                <summary>Customize ranges<span class="dt-adv-hint">advanced</span></summary>
+                ${dt_fieldWideHTML('Tests per setup', 'opt_trials', '10', 'More = more accurate, slower', 'Trials per Combo')}
+                ${dt_fieldWideHTML('Bet size control', 'opt_betdiv', '256,500', 'e.g. 256-512;step=1 or 25,30,40', 'Bet Divisor Range')}
+                ${dt_fieldWideHTML('Profit target multiplier', 'opt_profit', '50,100', 'e.g. 25-150;step=5', 'Profit Multiplier Range')}
+                ${dt_fieldWideHTML('Bet increase on win %', 'opt_w', '50-100;step=5', 'e.g. 50-150;step=5', 'Win Increase % Range')}
+                ${dt_fieldWideHTML('Losses before reset', 'opt_l', '3-5;step=1', 'e.g. 3-8 (whole numbers)', 'Loss Reset (whole)')}
+                ${dt_fieldWideHTML('Safety margin %', 'opt_buf', '25,30,40', 'e.g. 20-40;step=2', 'Buffer % Range')}
+              </details>
             </div>
             <div class="dt-card">
-              <div class="dt-card-title">Progress</div>
+              <div class="dt-est" id="dt-opt_preview">&mdash;</div>
+              <button class="dt-btn dt-btn-primary dt-go dt-go-big" id="dt-opt_run">⚙️ Find strategies</button>
               <div class="dt-progress-wrap"><div class="dt-progress-bar" id="dt-opt_progress"></div></div>
-              <div class="dt-status-line" id="dt-opt_status">Idle</div>
-              <div class="dt-btn-row">
-                <button class="dt-btn" id="dt-opt_clear">Clear Results</button>
+              <div class="dt-status-line" id="dt-opt_status">Ready when you are.</div>
+              <div class="dt-btn-row" style="margin-top:9px;">
+                <button class="dt-btn" id="dt-opt_clear">Clear results</button>
                 <button class="dt-btn dt-btn-danger" id="dt-opt_stop" disabled>Stop</button>
               </div>
+              <button type="button" class="dt-next" id="dt-next_opt" data-goto="results" disabled>Run a search to continue</button>
             </div>
           </section>
         `;
@@ -3928,9 +4083,17 @@ self.onmessage = async (e) => {
     function dt_buildResultsPanel() {
         return `
           <section class="dt-panel" id="dt-panel-results">
+            ${dt_stepperHTML(2)}
+            <div class="dt-coach"><b>Pick a strategy.</b> We've highlighted the best one for you.</div>
+            <div id="dt-res_best"></div>
             <div class="dt-card">
-              <div class="dt-card-title">Optimizer Results</div>
-              <div class="dt-status-line" id="dt-res_status">No results yet. Run the Optimizer.</div>
+              <div class="dt-card-title">All results</div>
+              <div class="dt-card-sub">Ranked best-first. Tap a row to select it, then "Use selected".</div>
+              <div class="dt-res-toolbar">
+                <label class="dt-toggle"><input type="checkbox" id="dt-res_safe"> Hide risky</label>
+                <label class="dt-toggle"><input type="checkbox" id="dt-res_allcols"> All columns</label>
+              </div>
+              <div class="dt-status-line" id="dt-res_status">No results yet — run the Optimizer first.</div>
               <div class="dt-scroll">
                 <table class="dt-results" id="dt-res_table">
                   <thead><tr id="dt-res_head"></tr></thead>
@@ -3938,10 +4101,9 @@ self.onmessage = async (e) => {
                 </table>
               </div>
               <div class="dt-btn-row">
-                <button class="dt-btn" id="dt-res_apply">Apply Selected</button>
-                <button class="dt-btn" id="dt-res_csv">Save to CSV</button>
+                <button class="dt-btn dt-btn-primary" id="dt-res_apply">Use selected</button>
+                <button class="dt-btn" id="dt-res_csv">Export CSV</button>
               </div>
-              <div class="dt-hint" style="margin-top:8px;">Tap a row to select it, then "Apply Selected" to load those parameters into the Calculator.</div>
             </div>
           </section>
         `;
@@ -3950,6 +4112,7 @@ self.onmessage = async (e) => {
     function dt_buildSettingsPanel() {
         return `
           <section class="dt-panel" id="dt-panel-settings">
+            <div class="dt-coach"><b>All optional</b> — the defaults work fine.</div>
             <div class="dt-card">
               <div class="dt-card-title">Optimizer</div>
               <div class="dt-setting-row">
@@ -3971,7 +4134,7 @@ self.onmessage = async (e) => {
               <div class="dt-card-title">About</div>
               <div class="dt-setting-row">
                 <div class="dt-setting-label">Version</div>
-                <div style="opacity:0.7;">AiO 2.0 (Mobile)</div>
+                <div style="opacity:0.7;">Dice &amp; Limbo Tools v5.4 (Mobile)</div>
               </div>
               <button class="dt-btn dt-btn-block dt-btn-small" id="dt-reset_state">Reset All Saved Data</button>
             </div>
@@ -4233,28 +4396,157 @@ self.onmessage = async (e) => {
     function dt_renderResults() {
         const head = $dt('res_head');
         const body = $dt('res_body');
+        const best = $dt('res_best');
         if (!head) return;
-        head.innerHTML = DT_RES_COLS.map(c => `<th data-col="${c}">${c}${c === dt_resultsSortCol ? (dt_resultsSortAsc ? ' ▲' : ' ▼') : ''}</th>`).join('');
+        const cols = dt_showAllCols ? DT_RES_COLS : DT_RES_COLS_PRIMARY;
+        head.innerHTML = cols.map(c => {
+            const arrow = c === dt_resultsSortCol ? (dt_resultsSortAsc ? ' ▲' : ' ▼') : '';
+            return `<th data-col="${c}">${DT_RES_COL_LABELS[c] || c}${arrow}</th>`;
+        }).join('');
         if (!dt_optResults.length) {
             body.innerHTML = '';
-            $dt('res_status').textContent = 'No results yet. Run the Optimizer.';
+            if (best) best.innerHTML = '';
+            $dt('res_status').textContent = 'No results yet — run the Optimizer first.';
+            dt_updateStepper();
             return;
         }
-        $dt('res_status').textContent = dt_optResults.length + ' result' + (dt_optResults.length === 1 ? '' : 's');
-        const sorted = dt_optResults.slice().sort((a, b) => {
+        if (best) {
+            best.innerHTML = dt_renderBestCard();
+            const ab = $dt('res_best_apply');
+            if (ab) ab.onclick = dt_applyBestPick;
+        }
+        let sorted = dt_optResults.slice().sort((a, b) => {
             const av = a[dt_resultsSortCol], bv = b[dt_resultsSortCol];
             if (av == null && bv == null) return 0;
             const cmp = (typeof av === 'number' && typeof bv === 'number') ? av - bv : String(av).localeCompare(String(bv), undefined, { numeric: true });
             return dt_resultsSortAsc ? cmp : -cmp;
         });
+        if (dt_safeOnly) sorted = sorted.filter(r => (typeof r['Bust%'] === 'number' ? r['Bust%'] : 100) <= DT_SAFE_BUST_MAX);
+        $dt('res_status').textContent = dt_safeOnly
+            ? `${sorted.length} of ${dt_optResults.length} (Bust% ≤ ${DT_SAFE_BUST_MAX})`
+            : `${dt_optResults.length} result${dt_optResults.length === 1 ? '' : 's'}`;
         body.innerHTML = sorted.map(r => {
-            const cells = DT_RES_COLS.map(c => {
+            const cells = cols.map(c => {
                 const v = r[c];
-                return `<td>${typeof v === 'number' ? v.toFixed(2) : v}</td>`;
+                const cls = dt_resCellClass(c, v);
+                let inner = typeof v === 'number' ? v.toFixed(2) : v;
+                if (c === 'Bust%' && typeof v === 'number') {
+                    const w = Math.max(3, Math.min(24, v * 1.4));
+                    const bcls = v <= 5 ? 'good' : (v >= 20 ? 'bad' : 'mid');
+                    inner = `<span class="dt-riskbar ${bcls}" style="width:${w}px"></span>${v.toFixed(1)}`;
+                }
+                return `<td class="${cls}">${inner}</td>`;
             }).join('');
             const origIdx = dt_optResults.indexOf(r);
             return `<tr data-idx="${origIdx}" class="${origIdx === dt_selectedRowIdx ? 'selected' : ''}">${cells}</tr>`;
         }).join('');
+        dt_updateStepper();
+    }
+    function dt_resCellClass(col, v) {
+        if (typeof v !== 'number') return '';
+        if (col === 'Score') return v >= 1 ? 'dt-cell-good' : (v <= 0 ? 'dt-cell-bad' : 'dt-cell-mid');
+        if (col === 'Bust%') return v <= 5 ? 'dt-cell-good' : (v >= 20 ? 'dt-cell-bad' : 'dt-cell-mid');
+        if (col === 'CycleSuccess%') return v >= 60 ? 'dt-cell-good' : (v < 30 ? 'dt-cell-bad' : 'dt-cell-mid');
+        return '';
+    }
+    function dt_bestResultIdx() {
+        if (!dt_optResults.length) return -1;
+        let bi = 0;
+        for (let i = 1; i < dt_optResults.length; i++) {
+            const s = dt_optResults[i].Score, sb = dt_optResults[bi].Score;
+            if ((s == null ? -Infinity : s) > (sb == null ? -Infinity : sb)) bi = i;
+        }
+        return bi;
+    }
+    function dt_renderBestCard() {
+        const bi = dt_bestResultIdx();
+        if (bi < 0) return '';
+        const r = dt_optResults[bi];
+        const bust = +r['Bust%'], succ = +r['CycleSuccess%'], avg = +r.AvgHigh, start = +r.StartingBalance;
+        const risk = bust <= 5 ? 'very safe' : (bust <= 12 ? 'fairly safe' : (bust <= 25 ? 'moderately risky' : 'high-risk'));
+        const grow = (start > 0 && avg > start)
+            ? ('grows your $' + start.toFixed(0) + ' to about $' + avg.toFixed(0) + ' on average')
+            : 'is roughly break-even on average';
+        const verdict = 'This setup is <b>' + risk + '</b> (only <b>' + bust.toFixed(0) + '% chance</b> of busting) and ' + grow + ', winning <b>' + succ.toFixed(0) + '%</b> of its cycles.';
+        const bustCls = bust <= 5 ? 'good' : (bust >= 20 ? 'bad' : '');
+        const scoreCls = (+r.Score) >= 1 ? 'good' : ((+r.Score) <= 0 ? 'bad' : '');
+        const st = (cls, val, lbl) => '<div class="dt-rb-stat ' + cls + '"><b>' + val + '</b><i>' + lbl + '</i></div>';
+        return '<div class="dt-res-best">' +
+            '<div class="dt-rb-tag">★ Recommended for you</div>' +
+            '<div class="dt-rb-verdict">' + verdict + '</div>' +
+            '<div class="dt-rb-stats">' +
+            st(bustCls, bust.toFixed(0) + '%', 'Bust risk') +
+            st('', '$' + avg.toFixed(0), 'Avg high') +
+            st('', succ.toFixed(0) + '%', 'Win rate') +
+            st(scoreCls, (+r.Score).toFixed(2), 'Score') +
+            '</div>' +
+            '<button class="dt-btn dt-btn-primary dt-go" id="dt-res_best_apply">Use this setup →</button>' +
+            '</div>';
+    }
+    function dt_applyBestPick() {
+        const bi = dt_bestResultIdx();
+        if (bi < 0) return;
+        dt_selectedRowIdx = bi;
+        dt_applySelectedToCalculator();
+    }
+    /* Guided rail done-state + Optimizer "next" button (mirrors desktop updateStepper). */
+    function dt_updateStepper() {
+        const panel = document.getElementById(DT_PANEL_ID);
+        if (!panel) return;
+        const hasResults = Array.isArray(dt_optResults) && dt_optResults.length > 0;
+        const reviewed = hasResults && (dt_selectedRowIdx >= 0 || dt_bestResultIdx() >= 0);
+        panel.querySelectorAll('.dt-step[data-step="1"]').forEach(s => s.classList.toggle('done', hasResults));
+        panel.querySelectorAll('.dt-step[data-step="2"]').forEach(s => s.classList.toggle('done', reviewed));
+        const next = $dt('next_opt');
+        if (next) {
+            next.disabled = !hasResults;
+            next.textContent = hasResults ? 'See your results →' : 'Run a search to continue';
+        }
+    }
+    /* Optimizer presets — fill the range fields, then the existing engine runs. */
+    function dt_applyOptPreset(name) {
+        if (name === 'center') { dt_centerOptOnCalc(); return; }
+        const p = DT_OPT_PRESETS[name]; if (!p) return;
+        for (const k in p) { const el = $dt(k); if (el) el.value = p[k]; }
+        dt_updateOptPreview(); dt_saveState();
+        dt_toast(name.charAt(0).toUpperCase() + name.slice(1) + ' preset loaded');
+    }
+    function dt_centerOptOnCalc() {
+        const nv = id => { const el = $dt(id); const v = el ? parseFloat(el.value) : NaN; return Number.isFinite(v) ? v : null; };
+        const bal = nv('balance'), bd = nv('bet_div'), pm = nv('profit_mult'), wi = nv('win_inc'), bf = nv('buffer');
+        const lrEl = $dt('loss_reset'); const lr = lrEl ? parseInt(lrEl.value, 10) : NaN;
+        if ([bal, bd, pm, wi, bf].some(v => v == null) || !Number.isFinite(lr)) { dt_toast('Enter valid Calculator values first.'); return; }
+        const set = (id, v) => { const el = $dt(id); if (el) el.value = v; };
+        const r = Math.round;
+        set('opt_balance', String(+bal.toFixed(2)));
+        set('opt_betdiv', Math.max(1, r(bd / 2)) + ',' + r(bd) + ',' + r(bd * 2));
+        set('opt_profit', Math.max(1, r(pm / 2)) + ',' + r(pm) + ',' + r(pm * 2));
+        set('opt_w', Math.max(0, r(wi - 20)) + '-' + r(wi + 20) + ';step=10');
+        set('opt_l', Math.max(1, lr - 1) + '-' + (lr + 1) + ';step=1');
+        set('opt_buf', Math.max(0, r(bf - 10)) + ',' + r(bf) + ',' + r(bf + 10));
+        dt_updateOptPreview(); dt_saveState();
+        dt_toast('Ranges centered on your Calculator values');
+    }
+    function dt_updateOptPreview() {
+        const est = $dt('opt_preview'); if (!est) return;
+        const fields = [['opt_betdiv', false], ['opt_profit', false], ['opt_w', false], ['opt_l', true], ['opt_buf', false]];
+        let combos = 1, anyBad = false;
+        for (const [id, integer] of fields) {
+            const el = $dt(id); if (!el) continue;
+            const vals = dt_parseRange(el.value, integer);
+            if (!vals.length) anyBad = true; else combos *= vals.length;
+        }
+        const trialsEl = $dt('opt_trials');
+        const trials = parseInt(trialsEl ? trialsEl.value : '', 10);
+        if (anyBad || !Number.isFinite(trials) || trials < 1) {
+            est.textContent = 'Fix the ranges to size the run.';
+            est.classList.add('bad'); est.classList.remove('warn');
+            return;
+        }
+        const sims = combos * trials;
+        est.innerHTML = '<b>' + combos.toLocaleString() + '</b> setup' + (combos === 1 ? '' : 's') + ' × <b>' + trials + '</b> test' + (trials === 1 ? '' : 's') + ' = <b>' + sims.toLocaleString() + '</b> sims';
+        est.classList.remove('bad');
+        est.classList.toggle('warn', combos > 50000);
     }
     function dt_onResTableClick(e) {
         const th = e.target.closest('th');
@@ -4270,6 +4562,7 @@ self.onmessage = async (e) => {
             $$dt('#dt-res_body tr').forEach(r => r.classList.remove('selected'));
             tr.classList.add('selected');
             dt_selectedRowIdx = parseInt(tr.dataset.idx, 10);
+            dt_updateStepper();
         }
     }
     function dt_applySelectedToCalculator() {
@@ -4478,6 +4771,7 @@ self.onmessage = async (e) => {
                     if (del) { del.click(); await dt_sleep(400); }
                 }
             } catch (e) {}
+            dt_seedStatsFromCalc();
             dt_toast(`"${multiplier}x" strategy created. Click "Save Strategy".`);
         } catch (err) { dt_toast('Import failed: ' + err); console.error(err); }
     }
@@ -4607,6 +4901,7 @@ self.onmessage = async (e) => {
                 }
                 if (del5) { del5.click(); await dt_sleep(400); }
             } catch (e) {}
+            dt_seedStatsFromCalc();
             dt_toast(`"${multiplier}x" strategy created. Click "Save Strategy".`);
         } catch (err) { dt_toast('Import failed: ' + err); console.error(err); }
     }
@@ -4618,6 +4913,19 @@ self.onmessage = async (e) => {
     function dt_gameUpdate() {
         if (location.hostname.includes('shuffle.')) return dt_shuffle_updateExisting();
         return dt_stake_updateExisting();
+    }
+    /* On a fresh-strategy import, seed the Stats-tab Balance Divisor / Profit
+       Multiplier from the Calculator so they match the new strategy. Initial
+       seed only — the user can change them afterward (Stats stays two-way bound).
+       No-op when the Stats tab isn't present. */
+    function dt_seedStatsFromCalc() {
+        [['bet_div', 'dt-stats-bet-div'], ['profit_mult', 'dt-stats-profit-mult']].forEach(([calcId, statsId]) => {
+            const src = $dt(calcId), dst = document.getElementById(statsId);
+            if (src && dst && src.value !== '' && src.value !== 'Invalid') {
+                dst.value = src.value;
+                dst.dispatchEvent(new Event('input', { bubbles: true }));
+            }
+        });
     }
     function dt_gameImport() {
         if (location.hostname.includes('shuffle.')) return dt_shuffle_importNew();
@@ -4787,10 +5095,12 @@ self.onmessage = async (e) => {
     function dt_switchTab(name) {
         const panel = document.getElementById(DT_PANEL_ID);
         if (!panel) return;
+        panel.setAttribute('data-active-tab', name); // drives extend-downward sizing
         panel.querySelectorAll('.dt-tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === name));
         panel.querySelectorAll('.dt-panel').forEach(p => p.classList.toggle('active', p.id === 'dt-panel-' + name));
         const body = panel.querySelector('.dt-body');
         if (body) body.scrollTop = 0;
+        dt_updateStepper();
     }
 
     let _dt_ttCurrentTarget = null;
@@ -4902,6 +5212,22 @@ self.onmessage = async (e) => {
             dt_switchTab(btn.dataset.tab);
         });
 
+        // Guided rail (step pills) + Optimizer "next" button jump between tabs.
+        panelEl.addEventListener('click', (ev) => {
+            const step = ev.target.closest('.dt-step');
+            if (step && step.dataset.step) { dt_switchTab(DT_STEP_TABS[step.dataset.step]); return; }
+            const next = ev.target.closest('.dt-next');
+            if (next && !next.disabled && next.dataset.goto) dt_switchTab(next.dataset.goto);
+        });
+        // Optimizer presets fill the ranges; range edits re-estimate the run size.
+        panelEl.querySelectorAll('[data-preset]').forEach(b => b.addEventListener('click', () => {
+            panelEl.querySelectorAll('[data-preset]').forEach(x => x.classList.toggle('active', x === b));
+            dt_applyOptPreset(b.dataset.preset);
+        }));
+        ['opt_trials', 'opt_betdiv', 'opt_profit', 'opt_w', 'opt_l', 'opt_buf'].forEach(id => {
+            const el = $dt(id); if (el) el.addEventListener('input', dt_updateOptPreview);
+        });
+
         panelEl.querySelectorAll('.dt-help').forEach(btn => {
             const handle = (ev) => { ev.preventDefault(); ev.stopPropagation(); dt_showTooltip(btn); };
             btn.addEventListener('click', handle);
@@ -4923,6 +5249,8 @@ self.onmessage = async (e) => {
         $dt('res_apply').addEventListener('click', dt_applySelectedToCalculator);
         $dt('res_csv').addEventListener('click', dt_exportResultsCSV);
         document.getElementById('dt-res_table').addEventListener('click', dt_onResTableClick);
+        const _resSafe = $dt('res_safe'); if (_resSafe) _resSafe.addEventListener('change', () => { dt_safeOnly = _resSafe.checked; dt_renderResults(); });
+        const _resCols = $dt('res_allcols'); if (_resCols) _resCols.addEventListener('change', () => { dt_showAllCols = _resCols.checked; dt_renderResults(); });
 
         $dt('keep_prev').addEventListener('change', dt_saveState);
         $dt('worker_count').addEventListener('change', dt_saveState);
@@ -4937,6 +5265,8 @@ self.onmessage = async (e) => {
 
         dt_initStreakCounter();
         dt_renderResults();
+        dt_updateOptPreview();
+        dt_updateStepper();
     }
 
     /* ============================================================
@@ -6585,9 +6915,7 @@ self.onmessage = async (e) => {
        ===========================================================
        ============================================================ */
     const QUICK_TOGGLE_STYLE_ID = 'unified-tools-quick-toggle-css';
-    // Tools managed only from the control-panel gear — no bottom-left quick-toggle
-    // chip (the account-wide auto-vaults and the always-on 7-day wager tracker).
-    const NO_QUICK_TOGGLE_IDS = new Set(['stake-autovault', 'shuffle-autovault', 'nuts-autovault', 'stake-7day-tracker']);
+    const AUTOVAULT_TOOL_IDS = new Set(['stake-autovault', 'shuffle-autovault', 'nuts-autovault', 'stake-7day-tracker']);
 
     function injectQuickToggleCss() {
         if (document.getElementById(QUICK_TOGGLE_STYLE_ID)) return;
@@ -6674,7 +7002,7 @@ self.onmessage = async (e) => {
         injectQuickToggleCss();
         if (!document.body) return;
         const matching = TOOLS.filter(t =>
-            !NO_QUICK_TOGGLE_IDS.has(t.id) && urlMatches(t, location.href)
+            !AUTOVAULT_TOOL_IDS.has(t.id) && urlMatches(t, location.href)
         );
         const seen = new Set();
         matching.forEach((tool, idx) => {
@@ -9498,7 +9826,7 @@ function tool_stake_7day_tracker() {
     }
 
     /* ----------------------------- net hooks ----------------------------- */
-    (function installHooks() {
+    (function installHooks(window) {   /* window = the REAL page window (unsafeWindow) so fetch/WS hooks reach the site */
         try {
             var of = window.fetch;
             if (of) {
@@ -9521,10 +9849,10 @@ function tool_stake_7day_tracker() {
         } catch (e) {}
 
         try {
-            var oOpen = XMLHttpRequest.prototype.open;
-            var oSend = XMLHttpRequest.prototype.send;
-            XMLHttpRequest.prototype.open = function (m, u) { this.__stk_url = u; return oOpen.apply(this, arguments); };
-            XMLHttpRequest.prototype.send = function () {
+            var oOpen = window.XMLHttpRequest.prototype.open;
+            var oSend = window.XMLHttpRequest.prototype.send;
+            window.XMLHttpRequest.prototype.open = function (m, u) { this.__stk_url = u; return oOpen.apply(this, arguments); };
+            window.XMLHttpRequest.prototype.send = function () {
                 try {
                     if (GQL_RE.test(this.__stk_url || '')) {
                         var self = this;
@@ -9554,7 +9882,7 @@ function tool_stake_7day_tracker() {
                 window.WebSocket = WS;
             }
         } catch (e) {}
-    })();
+    })(typeof unsafeWindow !== 'undefined' && unsafeWindow ? unsafeWindow : window);
 
     /* ------------------- cross-device baseline sync ---------------------- */
     // rolling = lifetime(now) - lifetime(7d ago). lifetime(now) is a server value
@@ -11012,10 +11340,7 @@ function tool_stake_7day_tracker() {
                 const av = document.getElementById('autovault-floaty');
                 if (av) av.remove();
             }
-            // Stake-only: rolling 7-day wager tracker. URL-gated via the bundle's own
-            // matcher so it covers every Stake mirror (incl. staketr*.com) but never
-            // Shuffle/Nuts. No teardown on disable — CSS hides it when off; the tool's
-            // own __stk7wToolBooted guard prevents re-mount / re-patching fetch.
+            // 7-day wager tracker — account-wide on Stake; boots once (self-guards re-boot), CSS-hidden when off.
             const _trk = TOOLS.find(t => t.id === 'stake-7day-tracker');
             if (_trk && urlMatches(_trk, location.href) && isToolIdEnabled('stake-7day-tracker')) {
                 try { tool_stake_7day_tracker(); markToolRan('stake-7day-tracker'); }
