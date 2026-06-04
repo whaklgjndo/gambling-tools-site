@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Desktop
 // @namespace    http://tampermonkey.net/
-// @version      2.45
+// @version      2.46
 // @description  .
 // @author       .
 // @match        https://nuts.gg/*
@@ -28,7 +28,7 @@
 (function () {
     'use strict';
 
-    console.log('%c🎲 Dice & Limbo Tools — desktop v2.45 — FIX: Shuffle dice/limbo multiplier restored. The Stake/Shuffle overlay sync-guard false-positived on Shuffle\'s 5 persistent role=dialog popovers and suspended the native-element sync, so the bet footer never relocated into the HUD. Removed that early-return + narrowed modal detection to .game-modal (Stake/Shuffle path only). Nuts + mobile are unchanged from the working 2.44/5.6. Settings>Hotkeys + chat protection intact.', 'color:#17c7b8;font-weight:800;font-size:13px');
+    console.log('%c🎲 Dice & Limbo Tools — desktop v2.46 — FIX: Nuts (nuts.gg) dice + limbo HUD was squished into a narrow ~122px rail. getHudHost now climbs to the full-width game stage (>=600px) and stays there, so buildHUD no longer re-parents the HUD into the narrow grid cell (verified live on nuts.gg dice + target). Includes v2.45 Shuffle multiplier fix. Settings>Hotkeys + chat protection intact.', 'color:#17c7b8;font-weight:800;font-size:13px');
 
     /* =========================================================
        PRE-STITCH UI HIDER
@@ -5945,7 +5945,7 @@ self.onmessage = async (e) => {
               <div class="dt-card-title">About</div>
               <div class="dt-setting-row">
                 <div class="dt-setting-label">Version</div>
-                <div style="opacity:0.7;">Dice &amp; Limbo Tools v2.45 (Desktop)</div>
+                <div style="opacity:0.7;">Dice &amp; Limbo Tools v2.46 (Desktop)</div>
               </div>
               <button class="dt-btn dt-btn-block dt-btn-small" id="dt-reset_state">Reset all saved data</button>
             </div>
@@ -9644,21 +9644,33 @@ let isRunning = false;
         return null;
     }
     function getHudHost() {
-        const nativeSidebar = findNativeElement('.sc-8d275cfe-1.eGfUZM') || findNativeElement('.sc-8d275cfe-1');
-        const nativeStage = findNativeElement('.sc-8d275cfe-3.eertbI') || findNativeElement('.sc-8d275cfe-3');
-        const sharedHost = getLowestCommonAncestor(nativeSidebar, nativeStage);
-        if (sharedHost && sharedHost !== document.body && sharedHost !== document.documentElement) {
-            return sharedHost;
+        // Anchor on a native Nuts game element (the bet-controls rail or the sidebar).
+        // findNativeElement already skips anything inside our own HUD, so this anchor
+        // stays valid even after syncNativeHudElements() relocates the sidebar into a slot.
+        const anchor = findNativeElement('.sc-8d275cfe-3.eertbI') || findNativeElement('.sc-8d275cfe-3')
+                    || findNativeElement('.sc-8d275cfe-1.eGfUZM') || findNativeElement('.sc-8d275cfe-1');
+        if (!anchor) {
+            // No Nuts game container on the page (e.g. SPA-navigated to the lobby).
+            // Return null so buildHUD tears the HUD down instead of covering the page.
+            return null;
         }
-        // Returns null when no Nuts game container is on the page — buildHUD
-        // then tears the HUD down. Previously this fell back to document.body,
-        // which caused our absolute-positioned overlay to cover the home page
-        // / lobby after SPA navigation away from /dice or /target.
-        return nativeStage
-            || nativeSidebar
-            || document.querySelector('.sc-1d9445d-0.cCJWrI')
+        // nuts.gg lays the game out in a CSS grid whose game-control column is a NARROW
+        // rail (~122px on Dice, ~428px on Target/Limbo). The old code used the
+        // sidebar/stage lowest-common-ancestor, but once the sidebar is relocated into a
+        // HUD slot that calc collapsed to the narrow rail — buildHUD then re-parented the
+        // HUD into the ~122px cell and the entire UI was squished (verified live on
+        // nuts.gg dice + target). Instead, climb to the first ancestor that spans the full
+        // game stage (>= 600px). That stays STABLE across calls (it never collapses back
+        // to the rail), so buildHUD stops re-parenting and the layout holds at full width.
+        let el = anchor;
+        while (el && el !== document.body && el !== document.documentElement) {
+            if (el.getBoundingClientRect().width >= 600) return el;
+            el = el.parentElement;
+        }
+        // Last-ditch fallbacks (older lobby containers, then the anchor itself).
+        return document.querySelector('.sc-1d9445d-0.cCJWrI')
             || document.querySelector('.sc-1d9445d-0')
-            || null;
+            || anchor;
     }
     function findNativeElement(selector) {
         // Skip our own HUD, native modals (.game-modal/dialog), and the chat drawer
