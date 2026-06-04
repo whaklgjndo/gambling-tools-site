@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Desktop
 // @namespace    http://tampermonkey.net/
-// @version      2.47
+// @version      2.31
 // @description  .
 // @author       .
 // @match        https://nuts.gg/*
@@ -27,8 +27,6 @@
 
 (function () {
     'use strict';
-
-    console.log('%c🎲 Dice & Limbo Tools — desktop v2.47 — FIX: the session profit graph no longer renders as a dead black box when there are no bets yet — it now always draws a grid + zero baseline (and "waiting for first bet"), and plots your profit curve as soon as you bet. Includes v2.46 Nuts HUD layout fix + v2.45 Shuffle multiplier fix.', 'color:#17c7b8;font-weight:800;font-size:13px');
 
     /* =========================================================
        PRE-STITCH UI HIDER
@@ -463,9 +461,7 @@
        ========================================================= */
 
     const QUICK_TOGGLE_STYLE_ID = 'unified-tools-quick-toggle-css';
-    // Tools managed only from the control-panel gear — no bottom-left quick-toggle
-    // chip (the account-wide auto-vaults and the always-on 7-day wager tracker).
-    const NO_QUICK_TOGGLE_IDS = new Set(['stake-autovault', 'shuffle-autovault', 'nuts-autovault', 'stake-7day-tracker']);
+    const AUTOVAULT_TOOL_IDS = new Set(['stake-autovault', 'shuffle-autovault', 'nuts-autovault']);
 
     function injectQuickToggleCss() {
         if (document.getElementById(QUICK_TOGGLE_STYLE_ID)) return;
@@ -544,7 +540,7 @@
         injectQuickToggleCss();
         if (!document.body) return;
         const matching = TOOLS.filter(t =>
-            !NO_QUICK_TOGGLE_IDS.has(t.id) && urlMatches(t, location.href)
+            !AUTOVAULT_TOOL_IDS.has(t.id) && urlMatches(t, location.href)
         );
         const seen = new Set();
         matching.forEach((tool, idx) => {
@@ -2870,45 +2866,30 @@ let ACTIVE_MODE = 'smart';
         return bestBottom;
     }
     function findNativeElement(selector) {
-        // Never adopt elements inside our own HUD, a native modal (Stake's chat /
-        // Hotkeys / Game-Info render as .game-modal or a chat drawer, NOT [role=dialog]),
-        // or — crucially — any element that CONTAINS a chat subtree. Stake's chat
-        // wraps its input in a `.footer` whose only "chat" marker (.chat-input) is a
-        // DESCENDANT, so an ancestor-only closest() misses it and we'd yank the chat
-        // input into the game's footer slot. Verified live on stake.us.
-        // The descendant check is the SPECIFIC .chat-input ONLY — a broad [class*="chat"]
-        // descendant also matches a chat widget nested inside a legit game sidebar/footer,
-        // which wrongly excluded the real controls (that over-exclusion broke Shuffle & Nuts).
-        const inOverlay = el =>
-            el.closest('#ratchet-master-container, [role="dialog"], [aria-modal="true"], .game-modal, [class*="chat" i], [data-testid*="chat" i]') ||
-            el.querySelector('.chat-input');
-        const ok = el => !inOverlay(el);
         const host = getHudHost();
-        const scoped = host ? Array.from(host.querySelectorAll(selector)).filter(ok) : [];
-        if (scoped.length) return scoped[0];
-        const fallback = Array.from(document.querySelectorAll(selector)).filter(ok);
-        return fallback[0] || null;
+        const scope = host || document;
+        const scoped = Array.from(scope.querySelectorAll(selector));
+        const pick = scoped.find(el => !el.closest('#ratchet-master-container')) || scoped[0];
+        if (pick) return pick;
+        const fallback = Array.from(document.querySelectorAll(selector));
+        return fallback.find(el => !el.closest('#ratchet-master-container')) || fallback[0] || null;
     }
     function findShuffleFooter() {
         // Shuffle's CSS module hashes change on every deploy — use broad
         // selectors that catch most variants, with a label-based fallback.
-        // Skip the chat drawer or a modal (ancestor check only). NOTE: no descendant
-        // chat check here — a broad one wrongly excluded Shuffle's own bet-controls
-        // footer when the page also has a chat widget. Shuffle had no chat-grab bug.
-        const inOverlay = el => el.closest('[role="dialog"], [aria-modal="true"], .game-modal, [class*="chat" i], [data-testid*="chat" i]');
         const byClass = document.querySelector(
             '[class*="footer"][class*="dice"], [class*="Dice"][class*="footer"], ' +
             '[class*="TBYuRq__footer"], [class*="gameFooter"], [class*="GameFooter"], ' +
             '[class*="betControls"], [class*="BetControls"], [class*="gameControls"], [class*="GameControls"]'
         );
-        if (byClass && !inOverlay(byClass)) return byClass;
+        if (byClass) return byClass;
         // Fallback: find the element containing a "Multiplier" label + ≥2 inputs
         for (const el of document.querySelectorAll('label, p, span, div')) {
-            if ((el.textContent || '').trim() === 'Multiplier' && !inOverlay(el)) {
+            if ((el.textContent || '').trim() === 'Multiplier') {
                 let p = el.parentElement;
                 for (let i = 0; i < 7; i++) {
                     if (!p || p === document.body) break;
-                    if (!inOverlay(p) && p.querySelectorAll('input').length >= 2) return p;
+                    if (p.querySelectorAll('input').length >= 2) return p;
                     p = p.parentElement;
                 }
             }
@@ -2921,11 +2902,6 @@ let ACTIVE_MODE = 'smart';
         slot.replaceChildren(element);
     }
     function syncNativeHudElements() {
-        // NOTE: deliberately NO "overlay open -> return" early-exit here. Shuffle keeps
-        // persistent visible role=dialog popovers in the DOM, which made that check
-        // false-positive and permanently suspend the sync (the Shuffle multiplier never
-        // relocated). Chat/modal protection lives per-element in findNativeElement /
-        // findShuffleFooter, which exclude chat/overlay matches as they search.
         if (isShuffle()) {
             // Shuffle has no .game-sidebar / .past-bets / .footer in the
             // Stake sense — instead we move its bet-controls footer (which
@@ -3918,9 +3894,9 @@ Bets</span><span id="h-total-bets" class="hud-val">0</span></div>
             return;
         }
         const keyDown = new KeyboardEvent('keydown', { key: ' ', code: 'Space', keyCode: 32, which: 32, bubbles: true, cancelable: true });
-        if (!nativeOverlayOpen()) document.dispatchEvent(keyDown);
+        document.dispatchEvent(keyDown);
         spacePressInterval = setInterval(() => {
-            if (isRapidFiring && !nativeOverlayOpen()) {
+            if (isRapidFiring) {
                 const repeat = new KeyboardEvent('keydown', { key: ' ', code: 'Space', keyCode: 32, which: 32, bubbles: true });
                 document.dispatchEvent(repeat);
             }
@@ -3972,21 +3948,7 @@ Bets</span><span id="h-total-bets" class="hud-val">0</span></div>
         const width = canvas.width = canvas.offsetWidth;
         const height = canvas.height = canvas.offsetHeight;
         ctx.clearRect(0, 0, width, height);
-        if (!width || !height) return;
-        // Always paint a faint grid + zero baseline so the panel reads as a live chart
-        // even before any bets. (It used to bail to a dead black box when empty, which
-        // looked like the graph was broken.)
-        ctx.strokeStyle = 'rgba(255,255,255,0.05)'; ctx.lineWidth = 1;
-        for (let gi = 1; gi < 5; gi++) { const gy = Math.round(height * gi / 5) + 0.5; ctx.beginPath(); ctx.moveTo(0, gy); ctx.lineTo(width, gy); ctx.stroke(); }
-        for (let gi = 1; gi < 6; gi++) { const gx = Math.round(width * gi / 6) + 0.5; ctx.beginPath(); ctx.moveTo(gx, 0); ctx.lineTo(gx, height); ctx.stroke(); }
-        if (profitHistory.length < 2) {
-            const zY = Math.round(height / 2) + 0.5;
-            ctx.strokeStyle = 'rgba(255,255,255,0.18)'; ctx.setLineDash([4, 4]);
-            ctx.beginPath(); ctx.moveTo(0, zY); ctx.lineTo(width, zY); ctx.stroke(); ctx.setLineDash([]);
-            ctx.fillStyle = 'rgba(255,255,255,0.30)'; ctx.font = '12px system-ui, sans-serif'; ctx.textAlign = 'center';
-            ctx.fillText('Waiting for first bet…', width / 2, zY - 8);
-            return;
-        }
+        if (profitHistory.length < 2) return;
         let maxVal = Math.max(...profitHistory, 0);
         let minVal = Math.min(...profitHistory, 0);
         const range = (maxVal - minVal) || 1;
@@ -4270,38 +4232,8 @@ Bets</span><span id="h-total-bets" class="hud-val">0</span></div>
         monitorRapidFireHealth();
         if (ACTIVE_MODE === 'smart') updateBetAmount();
     }, 500);
-    // --- Native-UI guard: true while a native Stake/Shuffle overlay is open — a
-    // visible modal/dialog (Settings, incl. the Hotkeys panel), the chat drawer,
-    // or focus sitting in a text field/contenteditable. Used to suspend our global
-    // hotkeys AND the synthetic-spacebar autoclicker so they never leak into those
-    // UIs (fixes the Settings>Hotkeys and chat malfunctions). ---
-    function nativeOverlayOpen() {
-        try {
-            const dialogs = document.querySelectorAll('.game-modal'); // ONLY Stake's in-game modals (Hotkeys/Game-Info). Intentionally NOT [role=dialog]/[aria-modal] — Shuffle keeps several persistent VISIBLE role=dialog popovers that would false-positive and wrongly pause the tool.
-            for (let i = 0; i < dialogs.length; i++) {
-                const r = dialogs[i].getBoundingClientRect();
-                if (r.width > 1 && r.height > 1) return true; // a visible modal is open
-            }
-            // A plain focused <input> is intentionally NOT treated as an overlay:
-            // this gate also pauses the rapid-fire autoclicker, which must keep
-            // running while the user edits a game/HUD field. Only real native
-            // overlays (modal above, or focus inside chat/settings/hotkeys) count.
-            const ae = document.activeElement;
-            if (ae && ae.closest && ae.closest('[data-testid*="chat" i], [data-test*="chat" i], [class*="chat" i], [class*="settings" i], [class*="hotkey" i]')) return true;
-        } catch (e) {}
-        return false;
-    }
-    function shouldIgnoreHotkey(e) {
-        const t = e && e.target;
-        if (t) {
-            const tag = t.tagName;
-            if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || t.isContentEditable) return true;
-            if (t.closest && t.closest('[role="dialog"], [aria-modal="true"], .game-modal, [data-testid*="chat" i], [data-test*="chat" i], [class*="chat" i], [class*="settings" i], [class*="hotkey" i]')) return true;
-        }
-        return nativeOverlayOpen();
-    }
     document.addEventListener('keydown', e => {
-        if (shouldIgnoreHotkey(e)) return;
+        if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
         if (e.key.toLowerCase() === 'r') resetStats();
         if (ACTIVE_MODE === 'smart') {
             if (e.key === ']' || e.key === '[') {
@@ -4349,33 +4281,6 @@ Bets</span><span id="h-total-bets" class="hud-val">0</span></div>
         'AvgHigh', 'StdDev', 'MaxHigh', 'AvgCycles', 'AvgRounds',
         'CycleSuccess%', 'Bust%', 'Score'
     ];
-    // Friendlier results headers + per-column help (sort still keys off raw RES_COLS).
-    const RES_COL_LABELS = {
-        StartingBalance: 'Start $', Trials: 'Trials', BetDiv: 'Bet Divisor', ProfitMult: 'Profit Mult',
-        'W%': 'Win Inc %', L: 'Loss Reset', 'Buffer%': 'Buffer %', AvgHigh: 'Avg High $', StdDev: 'Std Dev',
-        MaxHigh: 'Max High $', AvgCycles: 'Avg Cycles', AvgRounds: 'Avg Rounds',
-        'CycleSuccess%': 'Success %', 'Bust%': 'Bust %', Score: 'Score'
-    };
-    const RES_COL_HELP = {
-        StartingBalance: 'Starting bankroll used for the simulations.',
-        Trials: 'Number of simulated runs per combo.',
-        BetDiv: 'Balance divided by this = starting bet (higher = smaller bets).',
-        ProfitMult: 'Multiplier that sets the profit stop.',
-        'W%': 'Bet increase after each win.',
-        L: 'Consecutive losses before the bet resets.',
-        'Buffer%': 'Extra safety margin added to the multiplier.',
-        AvgHigh: 'Median highest balance reached.',
-        StdDev: 'Variation in the highest balance (lower = steadier).',
-        MaxHigh: 'Best single highest balance seen.',
-        AvgCycles: 'Average completed profit cycles.',
-        AvgRounds: 'Average bets placed per run.',
-        'CycleSuccess%': 'Share of cycles that hit their profit goal.',
-        'Bust%': 'Share of runs that busted (lower is safer).',
-        Score: 'Risk-adjusted score = (Avg High - Start) / Std Dev. Higher is better.'
-    };
-    // Default-visible columns; the rest sit behind the "More columns" toggle.
-    const RES_COLS_PRIMARY = ['BetDiv', 'ProfitMult', 'W%', 'L', 'Buffer%', 'AvgHigh', 'Bust%', 'Score'];
-    const SAFE_BUST_MAX = 10;
 
     const state = {
         balance: '20', win_inc: '78', loss_reset: '5',
@@ -4401,8 +4306,6 @@ Bets</span><span id="h-total-bets" class="hud-val">0</span></div>
     let selectedRowIdx = -1;
     let resultsSortCol = 'Score';
     let resultsSortAsc = false;
-    let showAllCols = false;   // Results: show all columns vs RES_COLS_PRIMARY only
-    let safeOnly = false;      // Results: hide rows with Bust% above SAFE_BUST_MAX
 
     /* =========================================================
        STATE PERSISTENCE
@@ -5322,295 +5225,6 @@ self.onmessage = async (e) => {
         'Buffer % Range': 'Range or list of buffer percentages. Syntax: 20-40;step=2'
     };
 
-    /* Extra CSS for the Advanced IOW UX upgrades. Injected on init (see injectUxStyles).
-       Built entirely on existing theme vars so all three themes keep working. */
-    const DT_EXTRA_CSS = `
-        /* ============================================================
-           CLEAN LAYOUT — consistent settings-style rows, left-aligned,
-           one card per group, minimal decoration.
-           ============================================================ */
-        /* Section card title: plain, no serif/underline/italic. */
-        #${PANEL_ID} .dt-card-title { font-family: inherit !important; font-style: normal !important; font-weight: 800 !important;
-            text-decoration: none !important; letter-spacing: 0.02em; }
-        /* One brief helper line under a card title. */
-        .dt-card-sub { font-size: 0.74em; opacity: 0.6; margin: -2px 0 9px; line-height: 1.35; }
-        /* THE row primitive: "Label ............ [control]". Used everywhere. */
-        .dt-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 7px 0;
-            border-bottom: 1px solid color-mix(in srgb, var(--dt-border) 22%, transparent); }
-        .dt-row:last-child { border-bottom: none; }
-        .dt-row-label { flex: 1 1 auto; min-width: 0; font-size: 0.86em; font-weight: 600; color: var(--dt-fg); display: flex; align-items: center; gap: 5px; }
-        .dt-row-ctrl { flex: 0 0 auto; display: flex; align-items: center; gap: 6px; }
-        /* Inputs inside a row — fixed, right-aligned, consistent width. Own class so the
-           in-HUD .dt-field width clamp never touches them. */
-        .dt-row input.dt-in { width: 92px; box-sizing: border-box; padding: 6px 9px; text-align: right;
-            background: var(--dt-field-bg); color: var(--dt-fg); border: 1px solid var(--dt-border); border-radius: 7px;
-            font-size: 0.9em; font-variant-numeric: tabular-nums; }
-        .dt-row input.dt-in:focus { outline: none; box-shadow: 0 0 0 2px color-mix(in srgb, var(--dt-label-fg) 35%, transparent); }
-        .dt-row input.dt-in.dt-invalid { border-color: var(--dt-danger) !important; box-shadow: 0 0 0 1px var(--dt-danger); }
-        /* Read-only result rows: big value + copy, still aligned right. */
-        .dt-row.dt-row-out .dt-out-val { font-size: 1.05em; font-weight: 800; font-variant-numeric: tabular-nums; color: var(--dt-fg);
-            border: none; background: transparent; padding: 0; width: auto; text-align: right; min-width: 64px; }
-        .dt-row.dt-row-key .dt-out-val { color: var(--dt-label-fg); font-size: 1.2em; }
-        .dt-row.dt-row-key .dt-row-label { color: var(--dt-label-fg); }
-        .dt-copy { flex: 0 0 auto; padding: 3px 9px !important; min-height: 0 !important; font-size: 0.9em; line-height: 1.4; }
-        .dt-copied { background: var(--dt-progress) !important; color: #0b1216 !important; border-color: var(--dt-progress) !important; }
-        /* Full-width primary button. */
-        .dt-go { width: 100%; padding: 10px !important; font-weight: 800; }
-        /* ===== Guided workflow stepper: Optimize -> Review -> Use ===== */
-        .dt-steps { display: flex; align-items: stretch; gap: 0; margin: 0 0 11px; }
-        .dt-step { flex: 1 1 0; display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 7px 2px;
-            position: relative; cursor: pointer; background: none; border: none; color: var(--dt-fg); }
-        .dt-step:not(:last-child)::after { content: ''; position: absolute; top: 17px; left: 60%; right: -40%; height: 2px;
-            background: color-mix(in srgb, var(--dt-border) 55%, transparent); z-index: 0; }
-        .dt-step.done::after { background: var(--dt-label-fg); }
-        .dt-step-dot { z-index: 1; width: 22px; height: 22px; border-radius: 50%; display: inline-flex; align-items: center;
-            justify-content: center; font-size: 0.72em; font-weight: 800; background: var(--dt-field-bg);
-            border: 1.5px solid var(--dt-border); color: var(--dt-fg); transition: all .12s; }
-        .dt-step-name { font-size: 0.66em; font-weight: 700; letter-spacing: 0.03em; opacity: 0.6; text-transform: uppercase; }
-        .dt-step.active .dt-step-dot { background: var(--dt-label-fg); border-color: var(--dt-label-fg); color: var(--dt-bg);
-            box-shadow: 0 0 0 3px color-mix(in srgb, var(--dt-label-fg) 22%, transparent); }
-        .dt-step.active .dt-step-name { opacity: 1; color: var(--dt-label-fg); }
-        .dt-step.done .dt-step-dot { background: color-mix(in srgb, var(--dt-label-fg) 22%, var(--dt-field-bg));
-            border-color: var(--dt-label-fg); color: var(--dt-label-fg); }
-        .dt-step.done .dt-step-name { opacity: 0.85; }
-        /* "Next step" CTA that pulls the user forward through the flow. */
-        .dt-next { display: flex; align-items: center; justify-content: center; gap: 7px; width: 100%; margin-top: 11px;
-            padding: 11px; border-radius: 9px; cursor: pointer; font-weight: 800; font-size: 0.92em;
-            background: var(--dt-label-fg); color: var(--dt-bg); border: none; }
-        .dt-next[disabled] { background: var(--dt-field-bg); color: var(--dt-fg); opacity: 0.5; cursor: default;
-            border: 1px solid var(--dt-border); }
-        .dt-next-sub { font-size: 0.7em; font-weight: 600; opacity: 0.8; }
-        /* Optimizer presets — big tappable cards (2x2), the primary way to use this tab. */
-        .dt-preset-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 4px 0 2px; }
-        .dt-preset { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; text-align: left;
-            padding: 10px 11px; border-radius: 9px; cursor: pointer; background: var(--dt-field-bg);
-            border: 1px solid var(--dt-border); color: var(--dt-fg); transition: border-color .12s, background .12s; }
-        .dt-preset:hover { border-color: var(--dt-label-fg); background: color-mix(in srgb, var(--dt-label-fg) 8%, var(--dt-field-bg)); }
-        .dt-preset.active { border-color: var(--dt-label-fg); box-shadow: inset 0 0 0 1px var(--dt-label-fg); }
-        .dt-preset-name { font-weight: 800; font-size: 0.92em; }
-        .dt-preset-desc { font-size: 0.68em; opacity: 0.62; line-height: 1.25; }
-        /* Legacy inline presets row (still used if referenced). */
-        .dt-opt-presets { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 4px; }
-        .dt-opt-presets .dt-btn { flex: 1 1 0; padding: 6px 6px; font-size: 0.82em; }
-        /* Collapsible "advanced ranges" disclosure — collapsed by default. */
-        .dt-adv-ranges { margin-top: 4px; }
-        .dt-adv-ranges > summary { list-style: none; cursor: pointer; user-select: none; padding: 9px 2px;
-            font-size: 0.82em; font-weight: 600; color: var(--dt-label-fg); display: flex; align-items: center; gap: 6px; }
-        .dt-adv-ranges > summary::-webkit-details-marker { display: none; }
-        .dt-adv-ranges > summary::before { content: '▸'; font-size: 0.9em; opacity: 0.7; }
-        .dt-adv-ranges[open] > summary::before { content: '▾'; }
-        .dt-adv-ranges > summary .dt-adv-hint { margin-left: auto; font-weight: 400; opacity: 0.55; font-size: 0.85em; }
-        /* Range row: label on its own line, then min/max/step + advanced toggle. */
-        .dt-rng { padding: 8px 0; border-bottom: 1px solid color-mix(in srgb, var(--dt-border) 22%, transparent); }
-        .dt-rng:last-child { border-bottom: none; }
-        .dt-rng-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 5px; }
-        .dt-rng-name { font-size: 0.86em; font-weight: 600; }
-        .dt-rng-prev { font-size: 0.7em; opacity: 0.7; font-variant-numeric: tabular-nums; text-align: right; }
-        .dt-rng-prev.bad { color: var(--dt-danger); opacity: 0.95; font-style: italic; }
-        .dt-rng-row { display: flex; gap: 6px; align-items: stretch; }
-        .dt-rng-row input.dt-mms { flex: 1 1 0; width: 100% !important; min-width: 0 !important; box-sizing: border-box; padding: 6px 4px;
-            text-align: center; font-size: 0.84em; background: var(--dt-field-bg); color: var(--dt-fg); border: 1px solid var(--dt-border);
-            border-radius: 6px; font-variant-numeric: tabular-nums; }
-        .dt-rng-row input.dt-mms::placeholder { opacity: 0.4; font-variant-numeric: normal; }
-        .dt-rng-row input.dt-mms:focus { outline: none; box-shadow: 0 0 0 2px color-mix(in srgb, var(--dt-label-fg) 35%, transparent); }
-        .dt-rng-adv-btn { flex: 0 0 auto; width: 30px; padding: 0; font-size: 0.9em; background: var(--dt-button-bg); color: var(--dt-fg);
-            border: 1px solid var(--dt-border); border-radius: 6px; cursor: pointer; opacity: 0.65; }
-        .dt-rng-adv-btn:hover, .dt-rng-adv-btn.active { opacity: 1; color: var(--dt-label-fg); border-color: var(--dt-label-fg); }
-        .dt-rng-adv { margin-top: 6px; }
-        .dt-rng-adv[hidden] { display: none; }
-        .dt-rng-adv input { width: 100% !important; box-sizing: border-box; padding: 6px 8px; font-size: 0.82em;
-            background: var(--dt-field-bg); color: var(--dt-fg); border: 1px solid var(--dt-border); border-radius: 6px; }
-        /* Combo-count estimate line. */
-        .dt-est { text-align: center; padding: 7px; margin: 8px 0; border-radius: 8px; background: var(--dt-field-bg);
-            border: 1px solid var(--dt-border); font-size: 0.84em; }
-        .dt-est strong { color: var(--dt-label-fg); }
-        .dt-est.warn { border-color: #e0a23b; } .dt-est.warn::after { content: ' — large run'; color: #e0a23b; }
-        .dt-est.bad { color: var(--dt-danger); border-color: var(--dt-danger); }
-        /* Results: toolbar + best card. */
-        .dt-res-toolbar { display: flex; flex-wrap: wrap; gap: 14px; margin: 4px 0 10px; }
-        .dt-toggle { display: inline-flex; align-items: center; gap: 6px; font-size: 0.82em; cursor: pointer; user-select: none; }
-        .dt-toggle input { accent-color: var(--dt-label-fg); cursor: pointer; }
-        .dt-res-best { border: 1px solid var(--dt-label-fg); border-radius: 10px; padding: 11px 12px; margin-bottom: 12px;
-            background: var(--dt-field-bg); }
-        .dt-res-best-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 7px; }
-        .dt-res-best-tag { font-weight: 800; color: var(--dt-label-fg); font-size: 0.92em; }
-        .dt-res-best-score { font-weight: 800; font-variant-numeric: tabular-nums; opacity: 0.85; }
-        .dt-res-verdict { font-size: 0.8em; line-height: 1.45; opacity: 0.9; margin-bottom: 10px; }
-        .dt-res-best-stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 7px; margin-bottom: 10px; }
-        .dt-res-best-stats span { display: flex; flex-direction: column; align-items: center; gap: 2px; background: var(--dt-bg);
-            border-radius: 7px; padding: 6px 2px; }
-        .dt-res-best-stats b { font-size: 0.95em; font-weight: 800; font-variant-numeric: tabular-nums; }
-        .dt-res-best-stats i { font-size: 0.6em; opacity: 0.6; font-style: normal; text-transform: uppercase; letter-spacing: 0.03em; }
-        .dt-results td.dt-cell-good { background: rgba(46, 204, 113, 0.22); }
-        .dt-results td.dt-cell-mid { background: rgba(230, 200, 80, 0.16); }
-        .dt-results td.dt-cell-bad { background: rgba(225, 70, 80, 0.22); }
-        /* Terms search. */
-        .dt-terms-search { width: 100% !important; box-sizing: border-box; margin: 0 0 10px; padding: 8px 11px; border-radius: 8px;
-            background: var(--dt-field-bg); color: var(--dt-fg); border: 1px solid var(--dt-border); font-size: 0.85em; }
-        .dt-terms-search:focus { outline: none; box-shadow: 0 0 0 2px color-mix(in srgb, var(--dt-label-fg) 35%, transparent); }
-        .dt-terms-empty { opacity: 0.55; font-style: italic; font-size: 0.8em; padding: 10px 2px; }
-    `;
-
-    /* ============================================================
-       BLEND REDESIGN CSS — beginner-first "Coach" layout + terminal
-       risk bars, for the dice/limbo Advanced-IOW tabs (calc/opt/results).
-       Injected LAST (see injectUI) so it layers cleanly over base CSS +
-       DT_EXTRA_CSS. Everything is scoped to #${PANEL_ID} and built on the
-       existing theme vars, so all three themes keep working.
-       ============================================================ */
-    const DT_BLEND_CSS = `
-        /* Layout: even spacing between a tab's blocks; comfortable body padding. */
-        #${PANEL_ID} .dt-body { padding: 15px; }
-        #${PANEL_ID} .dt-panel.active { display: flex; flex-direction: column; gap: 13px; }
-        #${PANEL_ID} .dt-title { font-family: inherit; font-style: normal; font-weight: 800; text-decoration: none; letter-spacing: .02em; font-size: 15px; color: var(--dt-fg); }
-
-        /* Card primitive */
-        #${PANEL_ID} .dt-card { background: color-mix(in srgb, var(--dt-bg) 82%, white 4%); border: 1px solid color-mix(in srgb, var(--dt-border) 18%, transparent); border-radius: 13px; padding: 14px; }
-        #${PANEL_ID} .dt-card-title { font-family: inherit; font-style: normal; font-weight: 800; text-decoration: none; letter-spacing: .02em; font-size: 13.5px; margin: 0; display: flex; align-items: center; gap: 8px; }
-        #${PANEL_ID} .dt-card-sub { font-size: 11.5px; color: color-mix(in srgb, var(--dt-fg) 55%, transparent); line-height: 1.45; margin: 3px 0 11px; }
-        #${PANEL_ID} .dt-opt-tag { font-size: 9.5px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: color-mix(in srgb, var(--dt-fg) 50%, transparent); border: 1px solid color-mix(in srgb, var(--dt-border) 24%, transparent); border-radius: 20px; padding: 2px 8px; }
-
-        /* Guided step rail: Find -> Pick -> Use (reuses .dt-step[data-step]) */
-        #${PANEL_ID} .dt-steps { display: flex; align-items: center; gap: 0; margin: 0; }
-        #${PANEL_ID} .dt-step { flex: 0 0 auto; display: flex; align-items: center; gap: 8px; padding: 0; background: none; border: none; color: var(--dt-fg); cursor: pointer; font-family: inherit; }
-        #${PANEL_ID} .dt-step + .dt-step { flex: 1; }
-        #${PANEL_ID} .dt-step::before { content: ""; flex: 1; height: 2px; background: color-mix(in srgb, var(--dt-border) 22%, transparent); border-radius: 2px; margin: 0 9px; }
-        #${PANEL_ID} .dt-step:first-child::before { display: none; }
-        #${PANEL_ID} .dt-step::after { content: none; } /* neutralize the legacy DT_EXTRA_CSS absolute connector line */
-        #${PANEL_ID} .dt-step.done::before, #${PANEL_ID} .dt-step.active::before { background: var(--dt-label-fg); }
-        #${PANEL_ID} .dt-step-dot { width: 24px; height: 24px; border-radius: 50%; display: inline-grid; place-items: center; font-size: 11px; font-weight: 800; background: var(--dt-field-bg); border: 1.5px solid color-mix(in srgb, var(--dt-border) 30%, transparent); color: color-mix(in srgb, var(--dt-fg) 55%, transparent); transition: all .14s; }
-        #${PANEL_ID} .dt-step-name { font-size: 11px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: color-mix(in srgb, var(--dt-fg) 38%, transparent); }
-        #${PANEL_ID} .dt-step.done .dt-step-dot { background: color-mix(in srgb, var(--dt-label-fg) 22%, var(--dt-field-bg)); border-color: var(--dt-label-fg); color: var(--dt-label-fg); }
-        #${PANEL_ID} .dt-step.done .dt-step-name { color: color-mix(in srgb, var(--dt-fg) 60%, transparent); }
-        #${PANEL_ID} .dt-step.active .dt-step-dot { background: var(--dt-label-fg); border-color: var(--dt-label-fg); color: var(--dt-bg); box-shadow: 0 0 0 4px color-mix(in srgb, var(--dt-label-fg) 18%, transparent); }
-        #${PANEL_ID} .dt-step.active .dt-step-name { color: var(--dt-label-fg); }
-
-        /* One-line "what to do now" coach line */
-        #${PANEL_ID} .dt-coach { font-size: 12.5px; color: color-mix(in srgb, var(--dt-fg) 62%, transparent); line-height: 1.45; margin: -2px 2px 0; }
-        #${PANEL_ID} .dt-coach b { color: var(--dt-fg); font-weight: 700; }
-
-        /* Hero output tiles — the numbers you paste into the game */
-        #${PANEL_ID} .dt-heroes { display: grid; grid-template-columns: 1fr 1fr; gap: 11px; }
-        #${PANEL_ID} .dt-hero { position: relative; background: linear-gradient(160deg, color-mix(in srgb, var(--dt-label-fg) 14%, var(--dt-field-bg)), var(--dt-field-bg)); border: 1px solid color-mix(in srgb, var(--dt-label-fg) 32%, transparent); border-radius: 12px; padding: 13px 14px; }
-        #${PANEL_ID} .dt-hero-k { font-size: 10.5px; letter-spacing: .1em; text-transform: uppercase; color: var(--dt-label-fg); font-weight: 700; display: flex; align-items: center; gap: 5px; }
-        #${PANEL_ID} .dt-hero-row { display: flex; align-items: baseline; gap: 2px; margin-top: 5px; }
-        #${PANEL_ID} .dt-hero-cur { font-family: ui-monospace, "SF Mono", "Cascadia Code", Consolas, monospace; font-size: 18px; font-weight: 700; color: color-mix(in srgb, var(--dt-fg) 70%, transparent); }
-        #${PANEL_ID} .dt-hero .dt-out-val { font-family: ui-monospace, "SF Mono", "Cascadia Code", Consolas, monospace; font-size: 26px; font-weight: 700; color: var(--dt-fg); background: transparent; border: none; padding: 0; width: 100%; letter-spacing: -.02em; }
-        #${PANEL_ID} .dt-hero .dt-copy { position: absolute; top: 10px; right: 10px; }
-        #${PANEL_ID} .dt-subout { display: grid; grid-template-columns: 1fr 1fr; gap: 11px; }
-        #${PANEL_ID} .dt-so { position: relative; background: var(--dt-field-bg); border: 1px solid color-mix(in srgb, var(--dt-border) 18%, transparent); border-radius: 10px; padding: 9px 12px; }
-        #${PANEL_ID} .dt-so-k { font-size: 9.5px; letter-spacing: .07em; text-transform: uppercase; color: color-mix(in srgb, var(--dt-fg) 52%, transparent); display: flex; align-items: center; gap: 5px; }
-        #${PANEL_ID} .dt-so .dt-out-val { font-family: ui-monospace, "SF Mono", "Cascadia Code", Consolas, monospace; font-size: 16px; font-weight: 700; color: var(--dt-fg); background: transparent; border: none; padding: 0; width: 100%; margin-top: 2px; }
-        #${PANEL_ID} .dt-so .dt-copy { position: absolute; top: 7px; right: 7px; }
-        #${PANEL_ID} .dt-out-val:focus { outline: none; }
-
-        /* Copy buttons */
-        #${PANEL_ID} .dt-copy { padding: 3px 8px; font-size: 11px; line-height: 1.4; min-height: 0; border-radius: 7px; background: color-mix(in srgb, var(--dt-bg) 60%, black 40%); border: 1px solid color-mix(in srgb, var(--dt-border) 28%, transparent); color: color-mix(in srgb, var(--dt-fg) 70%, transparent); cursor: pointer; }
-        #${PANEL_ID} .dt-copy:hover { color: var(--dt-label-fg); border-color: var(--dt-label-fg); }
-        #${PANEL_ID} .dt-copied { background: var(--dt-progress) !important; color: #03171a !important; border-color: var(--dt-progress) !important; }
-
-        /* Big primary action buttons */
-        #${PANEL_ID} .dt-go { width: 100%; font-weight: 800; }
-        #${PANEL_ID} .dt-go-big { padding: 14px !important; font-size: 15px; } /* !important beats legacy .dt-go padding:10px!important */
-
-        /* Input rows: label (+ optional hint) on the left, control on the right */
-        #${PANEL_ID} .dt-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 9px 0; border-bottom: 1px solid color-mix(in srgb, var(--dt-border) 13%, transparent); }
-        #${PANEL_ID} .dt-row:last-child { border-bottom: none; }
-        #${PANEL_ID} .dt-row-label { flex: 1 1 auto; min-width: 0; font-size: 12.5px; font-weight: 600; color: color-mix(in srgb, var(--dt-fg) 92%, transparent); display: flex; flex-direction: column; align-items: flex-start; gap: 1px; }
-        #${PANEL_ID} .dt-rl-nm { display: flex; align-items: center; gap: 6px; }
-        #${PANEL_ID} .dt-row-hint { font-size: 10.5px; font-weight: 500; color: color-mix(in srgb, var(--dt-fg) 38%, transparent); }
-        #${PANEL_ID} .dt-row-ctrl { flex: 0 0 auto; display: flex; align-items: center; gap: 6px; }
-        #${PANEL_ID} input.dt-in { width: 104px; text-align: right; background: var(--dt-field-bg); color: var(--dt-fg); border: 1px solid color-mix(in srgb, var(--dt-border) 26%, transparent); border-radius: 8px; padding: 8px 10px; font-family: ui-monospace, "SF Mono", "Cascadia Code", Consolas, monospace; font-size: 13px; }
-        #${PANEL_ID} input.dt-in:focus { outline: none; border-color: var(--dt-label-fg); box-shadow: 0 0 0 3px color-mix(in srgb, var(--dt-label-fg) 22%, transparent); }
-        #${PANEL_ID} input.dt-in.dt-invalid { border-color: var(--dt-danger) !important; box-shadow: 0 0 0 1px var(--dt-danger); }
-
-        /* Optimizer preset cards — wide, tappable, vertical list */
-        #${PANEL_ID} .dt-preset-grid { display: flex; flex-direction: column; gap: 9px; margin: 2px 0 4px; }
-        #${PANEL_ID} .dt-preset { display: flex; align-items: center; gap: 13px; text-align: left; background: var(--dt-field-bg); border: 1px solid color-mix(in srgb, var(--dt-border) 20%, transparent); border-radius: 12px; padding: 12px 14px; cursor: pointer; position: relative; color: var(--dt-fg); font-family: inherit; }
-        #${PANEL_ID} .dt-preset:hover { border-color: var(--dt-label-fg); }
-        #${PANEL_ID} .dt-preset-ic { font-size: 21px; flex: 0 0 auto; width: 28px; text-align: center; }
-        #${PANEL_ID} .dt-preset-name { font-size: 14px; font-weight: 800; display: block; }
-        #${PANEL_ID} .dt-preset-desc { font-size: 11.5px; color: color-mix(in srgb, var(--dt-fg) 52%, transparent); display: block; margin-top: 1px; }
-        #${PANEL_ID} .dt-preset.active { border-color: var(--dt-label-fg); background: color-mix(in srgb, var(--dt-label-fg) 12%, var(--dt-field-bg)); box-shadow: inset 0 0 0 1px var(--dt-label-fg); }
-        #${PANEL_ID} .dt-preset-rec { position: absolute; top: -9px; right: 14px; font-size: 9px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; background: var(--dt-label-fg); color: var(--dt-bg); padding: 2px 8px; border-radius: 20px; }
-
-        /* Combo estimate */
-        #${PANEL_ID} .dt-est { text-align: center; padding: 9px; border-radius: 8px; background: var(--dt-field-bg); border: 1px solid color-mix(in srgb, var(--dt-border) 18%, transparent); font-size: 12px; font-family: ui-monospace, monospace; margin-bottom: 10px; }
-        #${PANEL_ID} .dt-est b { color: var(--dt-label-fg); }
-        #${PANEL_ID} .dt-est.warn { border-color: #e0a23b; } #${PANEL_ID} .dt-est.bad { color: var(--dt-danger); border-color: var(--dt-danger); }
-
-        /* Progress + status */
-        #${PANEL_ID} .dt-progress-wrap { height: 7px; border-radius: 6px; background: var(--dt-field-bg); border: 1px solid color-mix(in srgb, var(--dt-border) 18%, transparent); overflow: hidden; margin: 10px 0 7px; }
-        #${PANEL_ID} .dt-progress-bar { height: 100%; width: 0; background: linear-gradient(90deg, var(--dt-label-fg), var(--dt-progress)); transition: width .2s; }
-        #${PANEL_ID} .dt-status-line { font-size: 11px; color: color-mix(in srgb, var(--dt-fg) 55%, transparent); text-align: center; font-family: ui-monospace, monospace; }
-
-        /* Next-step CTA */
-        #${PANEL_ID} .dt-next { display: flex; align-items: center; justify-content: center; gap: 7px; width: 100%; margin-top: 11px; padding: 12px; border-radius: 9px; cursor: pointer; font-weight: 800; font-size: 13px; background: var(--dt-label-fg); color: var(--dt-bg); border: none; font-family: inherit; }
-        #${PANEL_ID} .dt-next[disabled] { background: var(--dt-field-bg); color: color-mix(in srgb, var(--dt-fg) 55%, transparent); opacity: .6; cursor: default; border: 1px solid color-mix(in srgb, var(--dt-border) 18%, transparent); }
-
-        /* Scroll regions + sim stats table */
-        #${PANEL_ID} .dt-scroll { max-height: 42vh; overflow-y: auto; border: 1px solid color-mix(in srgb, var(--dt-border) 14%, transparent); border-radius: 9px; }
-        #${PANEL_ID} table.dt-stats { width: 100%; border-collapse: collapse; font-size: 12px; }
-        #${PANEL_ID} table.dt-stats td { padding: 8px 11px; border-bottom: 1px solid color-mix(in srgb, var(--dt-border) 11%, transparent); }
-        #${PANEL_ID} table.dt-stats td:last-child { text-align: right; font-family: ui-monospace, monospace; font-weight: 700; color: var(--dt-fg); }
-        #${PANEL_ID} table.dt-stats td:first-child { color: color-mix(in srgb, var(--dt-fg) 65%, transparent); }
-        #${PANEL_ID} table.dt-stats tr:last-child td { border-bottom: none; }
-
-        /* Results: toolbar + table + risk bars */
-        #${PANEL_ID} .dt-res-toolbar { display: flex; flex-wrap: wrap; gap: 14px; margin: 2px 0 10px; }
-        #${PANEL_ID} .dt-toggle { display: inline-flex; align-items: center; gap: 6px; font-size: 11.5px; color: color-mix(in srgb, var(--dt-fg) 65%, transparent); cursor: pointer; user-select: none; }
-        #${PANEL_ID} .dt-toggle input { accent-color: var(--dt-label-fg); cursor: pointer; }
-        #${PANEL_ID} table.dt-results { width: 100%; border-collapse: collapse; font-size: 11.5px; }
-        #${PANEL_ID} table.dt-results th { position: sticky; top: 0; background: color-mix(in srgb, var(--dt-bg) 92%, black 8%); font-size: 9.5px; letter-spacing: .04em; text-transform: uppercase; color: color-mix(in srgb, var(--dt-fg) 55%, transparent); text-align: right; padding: 8px; border-bottom: 1px solid color-mix(in srgb, var(--dt-border) 24%, transparent); font-weight: 700; cursor: pointer; white-space: nowrap; }
-        #${PANEL_ID} table.dt-results th:first-child, #${PANEL_ID} table.dt-results td:first-child { text-align: left; }
-        #${PANEL_ID} table.dt-results td { padding: 7px 8px; border-bottom: 1px solid color-mix(in srgb, var(--dt-border) 10%, transparent); font-family: ui-monospace, monospace; text-align: right; color: color-mix(in srgb, var(--dt-fg) 88%, transparent); white-space: nowrap; }
-        #${PANEL_ID} table.dt-results tr { cursor: pointer; }
-        #${PANEL_ID} table.dt-results tr:hover td { background: color-mix(in srgb, var(--dt-label-fg) 6%, transparent); }
-        #${PANEL_ID} table.dt-results tr.selected td { background: color-mix(in srgb, var(--dt-label-fg) 16%, transparent); box-shadow: inset 2px 0 0 var(--dt-label-fg); }
-        #${PANEL_ID} td.dt-cell-good { color: var(--dt-progress) !important; background: transparent !important; }
-        #${PANEL_ID} td.dt-cell-mid { color: #e6c850 !important; background: transparent !important; }
-        #${PANEL_ID} td.dt-cell-bad { color: var(--dt-danger) !important; background: transparent !important; }
-        #${PANEL_ID} .dt-riskbar { display: inline-block; height: 7px; border-radius: 2px; vertical-align: middle; margin-right: 6px; min-width: 3px; }
-        #${PANEL_ID} .dt-riskbar.good { background: var(--dt-progress); } #${PANEL_ID} .dt-riskbar.mid { background: #e6c850; } #${PANEL_ID} .dt-riskbar.bad { background: var(--dt-danger); }
-
-        /* Recommended-setup card (built by renderBestCard) */
-        #${PANEL_ID} .dt-res-best { background: linear-gradient(165deg, color-mix(in srgb, var(--dt-label-fg) 16%, var(--dt-bg)), var(--dt-bg)); border: 1px solid var(--dt-label-fg); border-radius: 14px; padding: 15px; }
-        #${PANEL_ID} .dt-rb-tag { font-size: 11px; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; color: var(--dt-label-fg); display: flex; align-items: center; gap: 7px; }
-        #${PANEL_ID} .dt-rb-verdict { font-size: 13px; line-height: 1.5; color: color-mix(in srgb, var(--dt-fg) 92%, transparent); margin: 9px 0 13px; }
-        #${PANEL_ID} .dt-rb-verdict b { color: var(--dt-fg); }
-        #${PANEL_ID} .dt-rb-stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 9px; margin-bottom: 13px; }
-        #${PANEL_ID} .dt-rb-stat { background: color-mix(in srgb, var(--dt-bg) 70%, black 30%); border: 1px solid color-mix(in srgb, var(--dt-border) 18%, transparent); border-radius: 9px; padding: 9px 4px; text-align: center; }
-        #${PANEL_ID} .dt-rb-stat b { display: block; font-family: ui-monospace, monospace; font-size: 17px; font-weight: 700; color: var(--dt-fg); }
-        #${PANEL_ID} .dt-rb-stat i { display: block; font-size: 8.5px; letter-spacing: .05em; text-transform: uppercase; color: color-mix(in srgb, var(--dt-fg) 52%, transparent); font-style: normal; margin-top: 3px; }
-        #${PANEL_ID} .dt-rb-stat.good b { color: var(--dt-progress); }
-        #${PANEL_ID} .dt-rb-stat.bad b { color: var(--dt-danger); }
-
-        /* Settings tab — clean rows + themed controls, consistent with the blend. */
-        #${PANEL_ID} .dt-setting-row { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 10px 0; border-bottom: 1px solid color-mix(in srgb, var(--dt-border) 13%, transparent); }
-        #${PANEL_ID} .dt-setting-row:last-child { border-bottom: none; }
-        #${PANEL_ID} .dt-setting-label { font-size: 12.5px; font-weight: 600; color: color-mix(in srgb, var(--dt-fg) 92%, transparent); }
-        #${PANEL_ID} .dt-setting-desc { font-size: 10.5px; color: color-mix(in srgb, var(--dt-fg) 42%, transparent); margin-top: 1px; line-height: 1.35; }
-        #${PANEL_ID} select.dt-theme-select, #${PANEL_ID} input.dt-num-input { background: var(--dt-field-bg); color: var(--dt-fg); border: 1px solid color-mix(in srgb, var(--dt-border) 26%, transparent); border-radius: 8px; padding: 7px 9px; font-size: 12.5px; font-family: inherit; }
-        #${PANEL_ID} input.dt-num-input { width: 72px; text-align: right; font-family: ui-monospace, "SF Mono", Consolas, monospace; }
-        #${PANEL_ID} select.dt-theme-select:focus, #${PANEL_ID} input.dt-num-input:focus { outline: none; border-color: var(--dt-label-fg); box-shadow: 0 0 0 3px color-mix(in srgb, var(--dt-label-fg) 22%, transparent); }
-
-        /* ===== Extend downward: on the three working tabs, the STANDALONE floating
-           panel anchors near the top and uses more vertical space (less scrolling).
-           Settings keeps the original centered size. No effect when the panel is
-           stitched into the IOW HUD (there it is position:static and the HUD's own
-           height governs — see the stitched-height rule below). ===== */
-        #${PANEL_ID}[data-active-tab="calc"],
-        #${PANEL_ID}[data-active-tab="opt"],
-        #${PANEL_ID}[data-active-tab="results"] {
-            top: 4vh; height: 92vh; max-height: none; transform: translate(120%, 0);
-        }
-        #${PANEL_ID}.show[data-active-tab="calc"],
-        #${PANEL_ID}.show[data-active-tab="opt"],
-        #${PANEL_ID}.show[data-active-tab="results"] {
-            transform: translate(0, 0);
-        }
-    `;
-
     /* =========================================================
        DOM BUILDER — inject button + panel into page body
        ========================================================= */
@@ -5618,7 +5232,7 @@ self.onmessage = async (e) => {
         // Inject styles
         const style = document.createElement('style');
         style.id = 'dt-aio-styles';
-        style.textContent = CSS + DT_EXTRA_CSS + DT_BLEND_CSS;
+        style.textContent = CSS;
         document.head.appendChild(style);
 
         // Toggle button
@@ -5650,10 +5264,9 @@ self.onmessage = async (e) => {
         // Panel
         const panel = document.createElement('div');
         panel.id = PANEL_ID;
-        panel.setAttribute('data-active-tab', 'calc'); // initial tab; drives extend-downward sizing
         panel.innerHTML = `
             <div class="dt-head" data-drag-handle="true">
-              <h2 class="dt-title">🎲 Dice &amp; Limbo</h2>
+              <h2 class="dt-title">Dice Tool</h2>
               <button class="dt-close" id="dt-close-btn" aria-label="Close">×</button>
             </div>
             <nav class="dt-tabs" role="tablist">
@@ -5679,7 +5292,6 @@ self.onmessage = async (e) => {
         const gl = GLOSSARY[label];
         return gl ? `<button type="button" class="dt-help" data-tooltip="${label}" aria-label="Help about ${label}">?</button>` : '';
     }
-    /* Legacy field helpers (kept for any other callers). */
     function fieldHTML(label, id, value, type = 'text', inputmode = 'decimal') {
         return `
           <div class="dt-field">
@@ -5687,135 +5299,77 @@ self.onmessage = async (e) => {
             <input type="${type}" inputmode="${inputmode}" id="dt-${id}" value="${value}">
           </div>`;
     }
-    function fieldWideHTML(label, id, value) {
+    function fieldWideHTML(label, id, value, hint = '') {
+        const hintHTML = hint ? `<div class="dt-hint">${hint}</div>` : '';
         return `
           <div class="dt-field dt-field-wide">
             <span class="dt-label">${label}${helpBtn(label)}</span>
             <input type="text" id="dt-${id}" class="dt-text-input" value="${value}">
+            ${hintHTML}
           </div>`;
     }
 
-    /* === CLEAN ROW PRIMITIVES ===
-       One consistent "Label .......... [control]" row, used across every tab.
-       Help (?) keys off `term` so glossary tooltips still resolve. */
-    function rowInputHTML(label, term, id, value, inputmode, hint) {
-        const hintHTML = hint ? `<span class="dt-row-hint">${hint}</span>` : '';
-        return `
-          <div class="dt-row">
-            <span class="dt-row-label"><span class="dt-rl-nm">${label}${helpBtn(term || label)}</span>${hintHTML}</span>
-            <span class="dt-row-ctrl"><input type="text" inputmode="${inputmode || 'decimal'}" class="dt-in" id="dt-${id}" value="${value}"></span>
-          </div>`;
-    }
-    /* Read-only result row: label on the left, big value + copy on the right.
-       `key` = the headline numbers you paste into the game (accent colored). */
-    function rowOutHTML(label, term, outId, key) {
-        return `
-          <div class="dt-row dt-row-out${key ? ' dt-row-key' : ''}">
-            <span class="dt-row-label">${label}${helpBtn(term || label)}</span>
-            <span class="dt-row-ctrl">
-              <input type="text" class="dt-out-val" id="dt-${outId}" readonly>
-              <button class="dt-btn dt-btn-small dt-copy" data-copy="${outId}" title="Copy ${label}">⧉</button>
-            </span>
-          </div>`;
-    }
-    /* Hero output tile — the headline numbers you paste into the game (big, mono).
-       `cur` is an optional currency prefix shown before the value (display only;
-       the copy button still copies the raw value). */
-    function heroOutHTML(label, term, outId, cur) {
-        return `
-          <div class="dt-hero">
-            <button class="dt-copy" data-copy="${outId}" title="Copy ${label}">⧉</button>
-            <span class="dt-hero-k">${label}${helpBtn(term || label)}</span>
-            <div class="dt-hero-row">${cur ? `<span class="dt-hero-cur">${cur}</span>` : ''}<input type="text" class="dt-out-val" id="dt-${outId}" readonly></div>
-          </div>`;
-    }
-    /* Secondary output tile — smaller supporting values. */
-    function subOutHTML(label, term, outId) {
-        return `
-          <div class="dt-so">
-            <button class="dt-copy" data-copy="${outId}" title="Copy ${label}">⧉</button>
-            <span class="dt-so-k">${label}${helpBtn(term || label)}</span>
-            <input type="text" class="dt-out-val" id="dt-${outId}" readonly>
-          </div>`;
-    }
-    /* Optimizer range row: name + live "expands to" preview, then min/max/step
-       + a ⌨ toggle that reveals the raw range-syntax field. The syntax field stays
-       the source of truth (still accepts lists like 25,30,40). */
-    function rangeGroupHTML(label, id, value, hint, term) {
-        const hintHTML = hint ? `<div class="dt-hint" style="margin-top:4px;">${hint}</div>` : '';
-        return `
-          <div class="dt-rng">
-            <div class="dt-rng-head">
-              <span class="dt-rng-name">${label}${helpBtn(term || label)}</span>
-              <span class="dt-rng-prev" id="dt-prev_${id}"></span>
-            </div>
-            <div class="dt-rng-row">
-              <input type="text" inputmode="decimal" class="dt-mms" id="dt-mms_${id}_min" placeholder="min" aria-label="${label} minimum">
-              <input type="text" inputmode="decimal" class="dt-mms" id="dt-mms_${id}_max" placeholder="max" aria-label="${label} maximum">
-              <input type="text" inputmode="decimal" class="dt-mms" id="dt-mms_${id}_step" placeholder="step" aria-label="${label} step">
-              <button type="button" class="dt-rng-adv-btn" data-advtoggle="${id}" title="Type a custom range or list (e.g. 25,30,40)" aria-label="Custom entry">⌨</button>
-            </div>
-            <div class="dt-rng-adv" id="dt-adv_${id}" hidden>
-              <input type="text" id="dt-${id}" value="${value}">
-              ${hintHTML}
-            </div>
-          </div>`;
-    }
-    /* Guided workflow rail. `active` = 1 (Find) | 2 (Pick) | 3 (Use), mapping to
-       Optimizer -> Results -> Calculator. Each step jumps to its tab via switchTab;
-       done-state is refreshed by updateStepper() from real engine state. */
-    const STEP_TABS = { 1: 'opt', 2: 'results', 3: 'calc' };
-    function stepperHTML(active) {
-        const steps = [[1, 'Find'], [2, 'Pick'], [3, 'Use']];
-        return `<div class="dt-steps">` + steps.map(([n, name]) =>
-            `<button type="button" class="dt-step${n === active ? ' active' : ''}" data-step="${n}">
-               <span class="dt-step-dot">${n}</span><span class="dt-step-name">${name}</span>
-             </button>`).join('') + `</div>`;
-    }
+    /* ---- Tab: Calculator / Simulator ---- */
     function buildCalcPanel() {
         return `
           <section class="dt-panel active" id="dt-panel-calc">
-            ${stepperHTML(3)}
-            <div class="dt-coach"><b>Use your strategy.</b> Put these two numbers into the game, then hit Send.</div>
-            <div class="dt-heroes">
-              ${heroOutHTML('Starting bet', 'Bet Size', 'out_bet', '$')}
-              ${heroOutHTML('Stop at profit', 'Profit Stop', 'out_profit', '$')}
-            </div>
-            <div class="dt-subout">
-              ${subOutHTML('Payout multiplier', 'Multiplier', 'out_mult')}
-              ${subOutHTML('Target balance', 'Balance Target', 'out_target')}
-            </div>
-            <button class="dt-btn dt-btn-primary dt-go dt-go-big" id="dt-game_sync">Send to game →</button>
-            <button class="dt-btn dt-btn-block" id="dt-game_import">Create a fresh strategy</button>
-
             <div class="dt-card">
-              <div class="dt-card-title">Your numbers</div>
-              <div class="dt-card-sub">Edit anything — the bet &amp; profit above update instantly. Tap any ? for help.</div>
-              ${rowInputHTML('Bankroll', 'Balance', 'balance', '20', 'decimal', "Money you're playing with")}
-              ${rowInputHTML('Bet increase on win %', 'Win Increase %', 'win_inc', '78', 'decimal', 'Grows your bet after a win')}
-              ${rowInputHTML('Losses before reset', 'Loss Reset', 'loss_reset', '5', 'numeric', 'Back to base bet after N losses')}
-              ${rowInputHTML('Bet size control', 'Balance Divisor', 'bet_div', '500', 'decimal', 'Higher = smaller, safer bets')}
-              ${rowInputHTML('Profit target multiplier', 'Profit Multiplier', 'profit_mult', '100', 'decimal', 'Sets your profit stop')}
-              ${rowInputHTML('Safety margin %', 'Buffer %', 'buffer', '25', 'decimal', 'Extra cushion on the multiplier')}
+              <div class="dt-card-title">Parameters</div>
+              ${fieldHTML('Balance', 'balance', '20')}
+              ${fieldHTML('Win Increase %', 'win_inc', '78')}
+              ${fieldHTML('Loss Reset', 'loss_reset', '5', 'text', 'numeric')}
+              ${fieldHTML('Balance Divisor', 'bet_div', '500')}
+              ${fieldHTML('Profit Multiplier', 'profit_mult', '100')}
+              ${fieldHTML('Buffer %', 'buffer', '25')}
             </div>
-
             <div class="dt-card">
-              <div class="dt-card-title">Test it first <span class="dt-opt-tag">optional</span></div>
-              <div class="dt-card-sub">See how this strategy performs before betting real money.</div>
-              ${rowInputHTML('Number of test runs', 'Trials', 'n_trials', '100', 'numeric')}
-              <div class="dt-btn-row" style="margin-top:9px;">
-                <button class="dt-btn dt-btn-primary" id="dt-sim_run">Run test</button>
+              <div class="dt-card-title">Calculated Values</div>
+              <div class="dt-field">
+                <span class="dt-label">Multiplier${helpBtn('Multiplier')}</span>
+                <input type="text" id="dt-out_mult" readonly>
+                <button class="dt-btn dt-btn-small" data-copy="out_mult">Copy</button>
+              </div>
+              <div class="dt-field">
+                <span class="dt-label">Bet Size${helpBtn('Bet Size')}</span>
+                <input type="text" id="dt-out_bet" readonly>
+                <button class="dt-btn dt-btn-small" data-copy="out_bet">Copy</button>
+              </div>
+              <div class="dt-field">
+                <span class="dt-label">Profit Stop${helpBtn('Profit Stop')}</span>
+                <input type="text" id="dt-out_profit" readonly>
+                <button class="dt-btn dt-btn-small" data-copy="out_profit">Copy</button>
+              </div>
+              <div class="dt-field">
+                <span class="dt-label">Balance Target${helpBtn('Balance Target')}</span>
+                <input type="text" id="dt-out_target" readonly>
+                <button class="dt-btn dt-btn-small" data-copy="out_target">Copy</button>
+              </div>
+            </div>
+            <div class="dt-card">
+              <div class="dt-card-title">Simulation Controls</div>
+              ${fieldHTML('Trials', 'n_trials', '100', 'text', 'numeric')}
+              <div class="dt-btn-row">
+                <button class="dt-btn dt-btn-primary" id="dt-sim_run">Run Simulation</button>
                 <button class="dt-btn dt-btn-danger" id="dt-sim_stop" disabled>Stop</button>
               </div>
               <div class="dt-progress-wrap"><div class="dt-progress-bar" id="dt-sim_progress"></div></div>
               <div class="dt-status-line" id="dt-sim_status">Idle</div>
-              <div class="dt-scroll" style="margin-top:8px;">
+            </div>
+            <div class="dt-card">
+              <div class="dt-card-title">Simulation Results</div>
+              <div class="dt-scroll">
                 <table class="dt-stats" id="dt-sim_results">
                   <tbody>
-                    <tr><td colspan="2" style="text-align:center; opacity:0.5; padding:14px;">Run a test to see how often this strategy wins.</td></tr>
+                    <tr><td colspan="2" style="text-align:center; opacity:0.5; padding:16px;">Run a simulation to see stats.</td></tr>
                   </tbody>
                 </table>
               </div>
+            </div>
+            <div class="dt-card">
+              <div class="dt-card-title">Game Integration</div>
+              <button class="dt-btn dt-btn-primary dt-btn-block" id="dt-game_sync">Export Balance &amp; Update Strategy</button>
+              <button class="dt-btn dt-btn-block" id="dt-game_import">Import New Strategy</button>
+              <div class="dt-hint" style="margin-top:8px;">Sync reads your in-game balance, recalculates, then writes the new bet size + profit stop into your existing strategy. Import creates a fresh strategy from scratch.</div>
             </div>
           </section>
         `;
@@ -5825,40 +5379,25 @@ self.onmessage = async (e) => {
     function buildOptPanel() {
         return `
           <section class="dt-panel" id="dt-panel-opt">
-            ${stepperHTML(1)}
-            <div class="dt-coach"><b>Find a strategy.</b> The tool tests hundreds of setups and ranks the best for you.</div>
             <div class="dt-card">
-              <div class="dt-card-title">How hard should it search?</div>
-              <div class="dt-card-sub">Just pick one and press Find. You can fine-tune the ranges below.</div>
-              <div class="dt-preset-grid">
-                <button type="button" class="dt-preset" data-preset="quick"><span class="dt-preset-ic">⚡</span><span><span class="dt-preset-name">Quick</span><span class="dt-preset-desc">~70 setups · a few seconds</span></span></button>
-                <button type="button" class="dt-preset" data-preset="balanced"><span class="dt-preset-rec">Recommended</span><span class="dt-preset-ic">⚖️</span><span><span class="dt-preset-name">Balanced</span><span class="dt-preset-desc">a few hundred setups · best for most people</span></span></button>
-                <button type="button" class="dt-preset" data-preset="thorough"><span class="dt-preset-ic">🔬</span><span><span class="dt-preset-name">Thorough</span><span class="dt-preset-desc">thousands · slower, most complete</span></span></button>
-                <button type="button" class="dt-preset" data-preset="center"><span class="dt-preset-ic">🎯</span><span><span class="dt-preset-name">Around my setup</span><span class="dt-preset-desc">centers on your Calculator values</span></span></button>
-              </div>
-              ${rowInputHTML('Bankroll', 'Starting Balance', 'opt_balance', '20', 'decimal', "Money you're playing with")}
-              ${rowInputHTML('Tests per setup', 'Trials per Combo', 'opt_trials', '10', 'numeric', 'More = more accurate, slower')}
-
-              <details class="dt-adv-ranges">
-                <summary>Customize ranges<span class="dt-adv-hint">advanced — presets fill these</span></summary>
-                ${rangeGroupHTML('Bet size control', 'opt_betdiv', '256,500', 'e.g. 256-512;step=1 or 25,30,40', 'Bet Divisor Range')}
-                ${rangeGroupHTML('Profit target multiplier', 'opt_profit', '50,100', 'e.g. 25-150;step=5', 'Profit Multiplier Range')}
-                ${rangeGroupHTML('Bet increase on win %', 'opt_w', '50-100;step=5', 'e.g. 50-150;step=5', 'Win Increase % Range')}
-                ${rangeGroupHTML('Losses before reset', 'opt_l', '3-5;step=1', 'e.g. 3-8 (whole numbers)', 'Loss Reset (whole)')}
-                ${rangeGroupHTML('Safety margin %', 'opt_buf', '25,30,40', 'e.g. 20-40;step=2', 'Buffer % Range')}
-              </details>
+              <div class="dt-card-title">Parameter Ranges</div>
+              ${fieldWideHTML('Starting Balance', 'opt_balance', '20')}
+              ${fieldWideHTML('Trials per Combo', 'opt_trials', '10')}
+              ${fieldWideHTML('Bet Divisor Range', 'opt_betdiv', '256,500', 'e.g. 256-512;step=1 or 25,30,40')}
+              ${fieldWideHTML('Profit Multiplier Range', 'opt_profit', '50,100', 'e.g. 25-150;step=5')}
+              ${fieldWideHTML('Win Increase % Range', 'opt_w', '50-100;step=5', 'e.g. 50-150;step=5')}
+              ${fieldWideHTML('Loss Reset (whole)', 'opt_l', '3-5;step=1', 'e.g. 3-8 (integers only)')}
+              ${fieldWideHTML('Buffer % Range', 'opt_buf', '25,30,40', 'e.g. 20-40;step=2')}
+              <button class="dt-btn dt-btn-primary dt-btn-block" id="dt-opt_run">Run Optimizer</button>
             </div>
-
             <div class="dt-card">
-              <div class="dt-est" id="dt-opt_preview">&mdash;</div>
-              <button class="dt-btn dt-btn-primary dt-go dt-go-big" id="dt-opt_run">⚙️ Find strategies</button>
-              <div class="dt-progress-wrap" style="margin-top:8px;"><div class="dt-progress-bar" id="dt-opt_progress"></div></div>
-              <div class="dt-status-line" id="dt-opt_status">Ready when you are.</div>
-              <div class="dt-btn-row" style="margin-top:9px;">
-                <button class="dt-btn" id="dt-opt_clear">Clear results</button>
+              <div class="dt-card-title">Progress</div>
+              <div class="dt-progress-wrap"><div class="dt-progress-bar" id="dt-opt_progress"></div></div>
+              <div class="dt-status-line" id="dt-opt_status">Idle</div>
+              <div class="dt-btn-row">
+                <button class="dt-btn" id="dt-opt_clear">Clear Results</button>
                 <button class="dt-btn dt-btn-danger" id="dt-opt_stop" disabled>Stop</button>
               </div>
-              <button type="button" class="dt-next" id="dt-next_opt" data-goto="results" disabled>Run a search to continue</button>
             </div>
           </section>
         `;
@@ -5868,17 +5407,9 @@ self.onmessage = async (e) => {
     function buildResultsPanel() {
         return `
           <section class="dt-panel" id="dt-panel-results">
-            ${stepperHTML(2)}
-            <div class="dt-coach"><b>Pick a strategy.</b> We've highlighted the best one for you.</div>
-            <div id="dt-res_best"></div>
             <div class="dt-card">
-              <div class="dt-card-title">All results</div>
-              <div class="dt-card-sub">Ranked best-first. Tap a row to select it, then "Use selected".</div>
-              <div class="dt-res-toolbar">
-                <label class="dt-toggle"><input type="checkbox" id="dt-res_safe"> Hide risky <span style="opacity:0.6;">(bust &gt; ${SAFE_BUST_MAX}%)</span></label>
-                <label class="dt-toggle"><input type="checkbox" id="dt-res_allcols"> All columns</label>
-              </div>
-              <div class="dt-status-line" id="dt-res_status">No results yet — run the Optimizer first.</div>
+              <div class="dt-card-title">Optimizer Results</div>
+              <div class="dt-status-line" id="dt-res_status">No results yet. Run the Optimizer.</div>
               <div class="dt-scroll">
                 <table class="dt-results" id="dt-res_table">
                   <thead><tr id="dt-res_head"></tr></thead>
@@ -5886,9 +5417,10 @@ self.onmessage = async (e) => {
                 </table>
               </div>
               <div class="dt-btn-row">
-                <button class="dt-btn dt-btn-primary" id="dt-res_apply">Use selected</button>
-                <button class="dt-btn" id="dt-res_csv">Export CSV</button>
+                <button class="dt-btn" id="dt-res_apply">Apply Selected</button>
+                <button class="dt-btn" id="dt-res_csv">Save to CSV</button>
               </div>
+              <div class="dt-hint" style="margin-top:8px;">Tap a row to select it, then "Apply Selected" to load those parameters into the Calculator.</div>
             </div>
           </section>
         `;
@@ -5898,15 +5430,10 @@ self.onmessage = async (e) => {
     function buildSettingsPanel() {
         return `
           <section class="dt-panel" id="dt-panel-settings">
-            <div class="dt-coach">Tune the look and behaviour. <b>Everything here is optional</b> — the defaults work fine.</div>
             <div class="dt-card">
-              <div class="dt-card-title">Appearance</div>
-              <div class="dt-card-sub">Theme and text size.</div>
+              <div class="dt-card-title">Interface</div>
               <div class="dt-setting-row">
-                <div>
-                  <div class="dt-setting-label">Color theme</div>
-                  <div class="dt-setting-desc">Match your casino's look.</div>
-                </div>
+                <div class="dt-setting-label">Color Theme</div>
                 <select class="dt-theme-select" id="dt-theme_select">
                   <option value="original">Original</option>
                   <option value="stake">Stake</option>
@@ -5915,8 +5442,8 @@ self.onmessage = async (e) => {
               </div>
               <div class="dt-setting-row">
                 <div>
-                  <div class="dt-setting-label">Bigger text</div>
-                  <div class="dt-setting-desc">Increases text size by 20% everywhere.</div>
+                  <div class="dt-setting-label">Large Fonts (+20%)</div>
+                  <div class="dt-setting-desc">Increases text size across the app.</div>
                 </div>
                 <label class="dt-switch"><input type="checkbox" id="dt-large_fonts"><span class="dt-slider"></span></label>
               </div>
@@ -5925,32 +5452,32 @@ self.onmessage = async (e) => {
               <div class="dt-card-title">Optimizer</div>
               <div class="dt-setting-row">
                 <div>
-                  <div class="dt-setting-label">Keep previous results</div>
-                  <div class="dt-setting-desc">Add new runs to the Results list instead of replacing them.</div>
+                  <div class="dt-setting-label">Append Results</div>
+                  <div class="dt-setting-desc">If on, new Optimizer runs append to Results instead of replacing.</div>
                 </div>
                 <label class="dt-switch"><input type="checkbox" id="dt-keep_prev"><span class="dt-slider"></span></label>
               </div>
               <div class="dt-setting-row">
                 <div>
-                  <div class="dt-setting-label">Speed (CPU cores)</div>
-                  <div class="dt-setting-desc">More cores = faster runs. 1–8.</div>
+                  <div class="dt-setting-label">Parallel Workers</div>
+                  <div class="dt-setting-desc">Number of Web Workers used.</div>
                 </div>
                 <input type="number" min="1" max="8" class="dt-num-input" id="dt-worker_count">
               </div>
             </div>
             <div class="dt-card">
-              <div class="dt-card-title">Live streak counter</div>
+              <div class="dt-card-title">Streak Counter</div>
               <div class="dt-setting-row">
                 <div>
-                  <div class="dt-setting-label">Show the counter</div>
-                  <div class="dt-setting-desc">A small floating widget that tracks your live win/loss streaks.</div>
+                  <div class="dt-setting-label">Show Counter HUD</div>
+                  <div class="dt-setting-desc">Draggable floating widget tracking win/loss streaks from the live dice results.</div>
                 </div>
                 <label class="dt-switch"><input type="checkbox" id="dt-show_counter"><span class="dt-slider"></span></label>
               </div>
               <div class="dt-setting-row">
                 <div>
-                  <div class="dt-setting-label">Auto-stop on win streak</div>
-                  <div class="dt-setting-desc">Automatically stops autoplay once your win streak hits the target.</div>
+                  <div class="dt-setting-label">Auto-Stop Autoplay</div>
+                  <div class="dt-setting-desc">Automatically click "Stop Autoplay" once win streak reaches the target.</div>
                 </div>
                 <label class="dt-switch"><input type="checkbox" id="dt-counter_autostop"><span class="dt-slider"></span></label>
               </div>
@@ -5959,9 +5486,9 @@ self.onmessage = async (e) => {
               <div class="dt-card-title">About</div>
               <div class="dt-setting-row">
                 <div class="dt-setting-label">Version</div>
-                <div style="opacity:0.7;">Dice &amp; Limbo Tools v2.47 (Desktop)</div>
+                <div style="opacity:0.7;">AiO 2.0 (Desktop)</div>
               </div>
-              <button class="dt-btn dt-btn-block dt-btn-small" id="dt-reset_state">Reset all saved data</button>
+              <button class="dt-btn dt-btn-block dt-btn-small" id="dt-reset_state">Reset All Saved Data</button>
             </div>
           </section>
         `;
@@ -5972,7 +5499,6 @@ self.onmessage = async (e) => {
        CALCULATOR
        ========================================================= */
     function calcValues() {
-        const mark = (id, bad) => { const el = $(id); if (el) el.classList.toggle('dt-invalid', !!bad); };
         try {
             const balance = parseFloat($('balance').value);
             const w = parseFloat($('win_inc').value) / 100;
@@ -5980,13 +5506,7 @@ self.onmessage = async (e) => {
             const bet_div = parseFloat($('bet_div').value);
             const profit_mult = parseFloat($('profit_mult').value);
             const buffer = 1 + parseFloat($('buffer').value) / 100;
-            mark('balance', !Number.isFinite(balance));
-            mark('win_inc', !Number.isFinite(w));
-            mark('loss_reset', !Number.isFinite(l));
-            mark('bet_div', !Number.isFinite(bet_div) || bet_div === 0);
-            mark('profit_mult', !Number.isFinite(profit_mult));
-            mark('buffer', !Number.isFinite(buffer));
-            if (![balance, w, bet_div, profit_mult, buffer].every(isFinite) || !Number.isFinite(l) || bet_div === 0) throw 0;
+            if (![balance, w, bet_div, profit_mult, buffer].every(isFinite) || !Number.isFinite(l)) throw 0;
             const m = ((1 + w) * l) * buffer;
             const bet_size = balance / bet_div;
             const profit_stop = bet_size * profit_mult;
@@ -6229,47 +5749,24 @@ self.onmessage = async (e) => {
     function renderResults() {
         const head = $('res_head');
         const body = $('res_body');
-        const best = $('res_best');
         if (!head) return;
-        const cols = showAllCols ? RES_COLS : RES_COLS_PRIMARY;
-        head.innerHTML = cols.map(c => {
-            const help = (RES_COL_HELP[c] || '').replace(/"/g, '&quot;');
-            const arrow = c === resultsSortCol ? (resultsSortAsc ? ' ▲' : ' ▼') : '';
-            return `<th data-col="${c}" title="${help}">${RES_COL_LABELS[c] || c}${arrow}</th>`;
-        }).join('');
+        head.innerHTML = RES_COLS.map(c => `<th data-col="${c}">${c}${c === resultsSortCol ? (resultsSortAsc ? ' ▲' : ' ▼') : ''}</th>`).join('');
         if (!optResults.length) {
             body.innerHTML = '';
-            if (best) best.innerHTML = '';
             $('res_status').textContent = 'No results yet. Run the Optimizer.';
             return;
         }
-        if (best) {
-            best.innerHTML = renderBestCard();
-            const ab = $('res_best_apply');
-            if (ab) ab.onclick = applyBestPick;
-        }
-        let sorted = optResults.slice().sort((a, b) => {
+        $('res_status').textContent = optResults.length + ' result' + (optResults.length === 1 ? '' : 's');
+        const sorted = optResults.slice().sort((a, b) => {
             const av = a[resultsSortCol], bv = b[resultsSortCol];
             if (av == null && bv == null) return 0;
             const cmp = (typeof av === 'number' && typeof bv === 'number') ? av - bv : String(av).localeCompare(String(bv), undefined, { numeric: true });
             return resultsSortAsc ? cmp : -cmp;
         });
-        if (safeOnly) sorted = sorted.filter(r => (typeof r['Bust%'] === 'number' ? r['Bust%'] : 100) <= SAFE_BUST_MAX);
-        $('res_status').textContent = safeOnly
-            ? `${sorted.length} of ${optResults.length} result${optResults.length === 1 ? '' : 's'} (Bust% ≤ ${SAFE_BUST_MAX})`
-            : `${optResults.length} result${optResults.length === 1 ? '' : 's'}`;
-        body.innerHTML = sorted.map((r) => {
-            const cells = cols.map(c => {
+        body.innerHTML = sorted.map((r, i) => {
+            const cells = RES_COLS.map(c => {
                 const v = r[c];
-                const cls = resCellClass(c, v);
-                let inner = typeof v === 'number' ? v.toFixed(2) : v;
-                // Color-coded risk bar in the Bust% column (bar width grows with risk).
-                if (c === 'Bust%' && typeof v === 'number') {
-                    const w = Math.max(3, Math.min(28, v * 1.4));
-                    const bcls = v <= 5 ? 'good' : (v >= 20 ? 'bad' : 'mid');
-                    inner = `<span class="dt-riskbar ${bcls}" style="width:${w}px"></span>${v.toFixed(1)}`;
-                }
-                return `<td class="${cls}">${inner}</td>`;
+                return `<td>${typeof v === 'number' ? v.toFixed(2) : v}</td>`;
             }).join('');
             const origIdx = optResults.indexOf(r);
             return `<tr data-idx="${origIdx}" class="${origIdx === selectedRowIdx ? 'selected' : ''}">${cells}</tr>`;
@@ -6312,7 +5809,6 @@ self.onmessage = async (e) => {
         selectedRowIdx = -1;
         saveState();
         renderResults();
-        updateStepper();
     }
     function exportResultsCSV() {
         if (!optResults.length) { toast('No results to save.'); return; }
@@ -6522,7 +6018,6 @@ self.onmessage = async (e) => {
                 }
             } catch (e) { console.warn('[shuffle_importNew] Condition 5 cleanup skipped:', e); }
 
-            seedStatsFromCalc();
             toast(`"${multiplier}x" strategy created. Click "Save Strategy".`);
         } catch (err) { toast('Import failed: ' + err); console.error(err); }
     }
@@ -6674,7 +6169,6 @@ self.onmessage = async (e) => {
                 }
             } catch (e) { console.warn('[stake_importNew] Condition 5 cleanup skipped:', e); }
 
-            seedStatsFromCalc();
             toast(`"${multiplier}x" strategy created. Click "Save Strategy".`);
         } catch (err) { toast('Import failed: ' + err); console.error(err); }
     }
@@ -6687,20 +6181,6 @@ self.onmessage = async (e) => {
     function gameUpdate() {
         if (location.hostname.includes('shuffle.us')) return shuffle_updateExisting();
         return stake_updateExisting();
-    }
-    /* On a fresh-strategy import, seed the Stats-tab Balance Divisor / Profit
-       Multiplier from the Calculator so they match the values the new strategy
-       was just built from. Initial seed only — the user is free to change them
-       afterward (the Stats deck stays two-way bound to the Calculator). No-op
-       when the Stats tab isn't present (standalone, not stitched into the HUD). */
-    function seedStatsFromCalc() {
-        [['bet_div', 'dt-stats-bet-div'], ['profit_mult', 'dt-stats-profit-mult']].forEach(([calcId, statsId]) => {
-            const src = $(calcId), dst = document.getElementById(statsId);
-            if (src && dst && src.value !== '' && src.value !== 'Invalid') {
-                dst.value = src.value;
-                dst.dispatchEvent(new Event('input', { bubbles: true }));
-            }
-        });
     }
     function gameImport() {
         if (location.hostname.includes('shuffle.us')) return shuffle_importNew();
@@ -7025,27 +6505,9 @@ self.onmessage = async (e) => {
        ========================================================= */
     function switchTab(name) {
         const panel = document.getElementById(PANEL_ID);
-        panel.setAttribute('data-active-tab', name); // drives the extend-downward sizing
         panel.querySelectorAll('.dt-tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === name));
         panel.querySelectorAll('.dt-panel').forEach(p => p.classList.toggle('active', p.id === 'dt-panel-' + name));
         panel.querySelector('.dt-body').scrollTop = 0;
-        updateStepper();
-    }
-    /* Refresh the guided-workflow stepper from real engine state:
-       step 1 (Optimize) is "done" once results exist; step 2 (Review) once a row
-       is selected or a best pick exists. Also drives the Optimizer "next" button. */
-    function updateStepper() {
-        const panel = document.getElementById(PANEL_ID);
-        if (!panel) return;
-        const hasResults = Array.isArray(optResults) && optResults.length > 0;
-        const reviewed = hasResults && (selectedRowIdx >= 0 || bestResultIdx() >= 0);
-        panel.querySelectorAll('.dt-step[data-step="1"]').forEach(s => s.classList.toggle('done', hasResults));
-        panel.querySelectorAll('.dt-step[data-step="2"]').forEach(s => s.classList.toggle('done', reviewed));
-        const next = document.getElementById('dt-next_opt');
-        if (next) {
-            next.disabled = !hasResults;
-            next.textContent = hasResults ? 'See your results →' : 'Run a search to continue';
-        }
     }
 
     /* =========================================================
@@ -7089,187 +6551,21 @@ self.onmessage = async (e) => {
     /* =========================================================
        COPY TO CLIPBOARD
        ========================================================= */
-    async function copyById(id, btn) {
+    async function copyById(id) {
         const val = $(id).value;
         if (!val || val === 'Invalid') { toast('Nothing to copy.'); return; }
-        const done = () => { toast('Copied: ' + val); flashCopied(btn); };
         try {
             await navigator.clipboard.writeText(val);
-            done();
+            toast('Copied: ' + val);
         } catch {
             const el = $(id);
             el.removeAttribute('readonly');
             el.select();
-            try { document.execCommand('copy'); done(); }
+            try { document.execCommand('copy'); toast('Copied: ' + val); }
             catch { toast('Copy failed.'); }
             el.setAttribute('readonly', '');
             window.getSelection().removeAllRanges();
         }
-    }
-    function flashCopied(btn) {
-        if (!btn) return;
-        const prev = btn.dataset._lbl || btn.textContent;
-        btn.dataset._lbl = prev;
-        btn.classList.add('dt-copied');
-        btn.textContent = 'Copied ✓';
-        clearTimeout(btn._copT);
-        btn._copT = setTimeout(() => { btn.textContent = prev; btn.classList.remove('dt-copied'); }, 1100);
-    }
-
-    /* =========================================================
-       ADVANCED IOW — UX HELPERS (additive; no core logic changed)
-       ========================================================= */
-    const OPT_RANGE_FIELDS = [
-        { id: 'opt_betdiv', integer: false },
-        { id: 'opt_profit', integer: false },
-        { id: 'opt_w', integer: false },
-        { id: 'opt_l', integer: true },
-        { id: 'opt_buf', integer: false }
-    ];
-    function fmtRangeList(arr) {
-        if (arr.length <= 4) return arr.join(', ');
-        return arr[0] + ', ' + arr[1] + ' … ' + arr[arr.length - 1];
-    }
-    function mmsFmt(n) { return String(Math.round(n * 1e6) / 1e6); }
-    // Boxes → text field. Build canonical "min-max;step=N" and write it into the
-    // existing range field, then refresh the preview + persist. Never rewrites the
-    // boxes (so it can't clobber what the user is typing).
-    function syncStepperToField(id) {
-        const minEl = $('mms_' + id + '_min'), maxEl = $('mms_' + id + '_max'), stepEl = $('mms_' + id + '_step');
-        if (!minEl || !maxEl) return;
-        const min = minEl.value.trim(), max = maxEl.value.trim(), step = stepEl ? stepEl.value.trim() : '';
-        let str;
-        if (min !== '' && max !== '') { str = min + '-' + max; if (step !== '') str += ';step=' + step; }
-        else if (min !== '') str = min;
-        else if (max !== '') str = max;
-        else return; // nothing usable (e.g. only Step filled)
-        const field = $(id); if (!field) return;
-        field.value = str;
-        updateOptPreview(); saveState();
-    }
-    // Text field → boxes. Derive Min/Max from the parsed values; derive Step only when
-    // the values are evenly spaced (≥3 of them) so we don't misrepresent a list like 25,30,40.
-    function syncFieldToStepper(id) {
-        const field = $(id); if (!field) return;
-        const f = OPT_RANGE_FIELDS.find(x => x.id === id);
-        const minEl = $('mms_' + id + '_min'), maxEl = $('mms_' + id + '_max'), stepEl = $('mms_' + id + '_step');
-        if (!minEl || !maxEl || !stepEl) return;
-        const vals = parseRange(field.value, f ? f.integer : false);
-        if (!vals.length) return; // leave boxes as-is on unparseable input
-        minEl.value = mmsFmt(Math.min(...vals));
-        maxEl.value = mmsFmt(Math.max(...vals));
-        let step = '';
-        if (vals.length >= 3) {
-            const s = vals.slice().sort((a, b) => a - b);
-            const d = s[1] - s[0]; let even = true;
-            for (let i = 2; i < s.length; i++) { if (Math.abs((s[i] - s[i - 1]) - d) > 1e-9) { even = false; break; } }
-            if (even) step = mmsFmt(d);
-        }
-        stepEl.value = step;
-    }
-    function refreshAllSteppers() { OPT_RANGE_FIELDS.forEach(f => syncFieldToStepper(f.id)); }
-    function updateOptPreview() {
-        let combos = 1, anyBad = false;
-        for (const f of OPT_RANGE_FIELDS) {
-            const el = $(f.id); if (!el) continue;
-            const vals = parseRange(el.value, f.integer);
-            const prev = $('prev_' + f.id);
-            if (!vals.length) {
-                anyBad = true;
-                if (prev) { prev.textContent = '⚠ check this range'; prev.classList.add('bad'); }
-            } else {
-                combos *= vals.length;
-                if (prev) { prev.textContent = '→ ' + fmtRangeList(vals) + ' (' + vals.length + ' value' + (vals.length === 1 ? '' : 's') + ')'; prev.classList.remove('bad'); }
-            }
-        }
-        const est = $('opt_preview'); if (!est) return;
-        const trialsEl = $('opt_trials');
-        const trials = parseInt(trialsEl ? trialsEl.value : '', 10);
-        if (anyBad || !Number.isFinite(trials) || trials < 1) {
-            est.textContent = 'Fix the ranges above to size the run.';
-            est.classList.add('bad'); est.classList.remove('warn');
-            return;
-        }
-        const sims = combos * trials;
-        est.innerHTML = '<strong>' + combos.toLocaleString() + '</strong> combo' + (combos === 1 ? '' : 's') + ' × <strong>' + trials + '</strong> trials = <strong>' + sims.toLocaleString() + '</strong> sims';
-        est.classList.remove('bad');
-        est.classList.toggle('warn', combos > 50000);
-    }
-    const OPT_PRESETS = {
-        quick: { opt_betdiv: '256,500', opt_profit: '50,100', opt_w: '60-90;step=15', opt_l: '3-5;step=1', opt_buf: '25,40', opt_trials: '10' },
-        balanced: { opt_betdiv: '256-512;step=128', opt_profit: '50-150;step=50', opt_w: '50-100;step=10', opt_l: '3-6;step=1', opt_buf: '20-40;step=10', opt_trials: '20' },
-        thorough: { opt_betdiv: '256-512;step=64', opt_profit: '50-150;step=25', opt_w: '50-150;step=10', opt_l: '3-8;step=1', opt_buf: '20-40;step=5', opt_trials: '30' }
-    };
-    function applyOptPreset(name) {
-        if (name === 'center') { centerOptOnCalc(); return; }
-        const p = OPT_PRESETS[name]; if (!p) return;
-        for (const k in p) { const el = $(k); if (el) el.value = p[k]; }
-        updateOptPreview(); refreshAllSteppers(); saveState();
-        toast(name.charAt(0).toUpperCase() + name.slice(1) + ' preset loaded');
-    }
-    function centerOptOnCalc() {
-        const nv = id => { const el = $(id); const v = el ? parseFloat(el.value) : NaN; return Number.isFinite(v) ? v : null; };
-        const bal = nv('balance'), bd = nv('bet_div'), pm = nv('profit_mult'), wi = nv('win_inc'), bf = nv('buffer');
-        const lrEl = $('loss_reset'); const lr = lrEl ? parseInt(lrEl.value, 10) : NaN;
-        if ([bal, bd, pm, wi, bf].some(v => v == null) || !Number.isFinite(lr)) { toast('Enter valid Calculator values first.'); return; }
-        const set = (id, v) => { const el = $(id); if (el) el.value = v; };
-        const r = Math.round;
-        set('opt_balance', String(+bal.toFixed(2)));
-        set('opt_betdiv', Math.max(1, r(bd / 2)) + ',' + r(bd) + ',' + r(bd * 2));
-        set('opt_profit', Math.max(1, r(pm / 2)) + ',' + r(pm) + ',' + r(pm * 2));
-        set('opt_w', Math.max(0, r(wi - 20)) + '-' + r(wi + 20) + ';step=10');
-        set('opt_l', Math.max(1, lr - 1) + '-' + (lr + 1) + ';step=1');
-        set('opt_buf', Math.max(0, r(bf - 10)) + ',' + r(bf) + ',' + r(bf + 10));
-        updateOptPreview(); refreshAllSteppers(); saveState();
-        toast('Ranges centered on your Calculator values');
-    }
-    function resCellClass(col, v) {
-        if (typeof v !== 'number') return '';
-        if (col === 'Score') return v >= 1 ? 'dt-cell-good' : (v <= 0 ? 'dt-cell-bad' : 'dt-cell-mid');
-        if (col === 'Bust%') return v <= 5 ? 'dt-cell-good' : (v >= 20 ? 'dt-cell-bad' : 'dt-cell-mid');
-        if (col === 'CycleSuccess%') return v >= 60 ? 'dt-cell-good' : (v < 30 ? 'dt-cell-bad' : 'dt-cell-mid');
-        return '';
-    }
-    function bestResultIdx() {
-        if (!optResults.length) return -1;
-        let bi = 0;
-        for (let i = 1; i < optResults.length; i++) {
-            const s = optResults[i].Score, sb = optResults[bi].Score;
-            if ((s == null ? -Infinity : s) > (sb == null ? -Infinity : sb)) bi = i;
-        }
-        return bi;
-    }
-    function renderBestCard() {
-        const bi = bestResultIdx();
-        if (bi < 0) return '';
-        const r = optResults[bi];
-        // Plain-language verdict from the headline stats, then four focal metrics.
-        const bust = +r['Bust%'], succ = +r['CycleSuccess%'], avg = +r.AvgHigh, start = +r.StartingBalance;
-        const risk = bust <= 5 ? 'very safe' : (bust <= 12 ? 'fairly safe' : (bust <= 25 ? 'moderately risky' : 'high-risk'));
-        const grow = (start > 0 && avg > start)
-            ? ('grows your $' + start.toFixed(0) + ' to about $' + avg.toFixed(0) + ' on average')
-            : 'is roughly break-even on average';
-        const verdict = 'This setup is <b>' + risk + '</b> (only <b>' + bust.toFixed(0) + '% chance</b> of busting) and ' + grow + ', winning <b>' + succ.toFixed(0) + '%</b> of its cycles.';
-        const bustCls = bust <= 5 ? 'good' : (bust >= 20 ? 'bad' : '');
-        const scoreCls = (+r.Score) >= 1 ? 'good' : ((+r.Score) <= 0 ? 'bad' : '');
-        const st = (cls, val, lbl) => '<div class="dt-rb-stat ' + cls + '"><b>' + val + '</b><i>' + lbl + '</i></div>';
-        return '<div class="dt-res-best">' +
-            '<div class="dt-rb-tag">★ Recommended for you</div>' +
-            '<div class="dt-rb-verdict">' + verdict + '</div>' +
-            '<div class="dt-rb-stats">' +
-            st(bustCls, bust.toFixed(0) + '%', 'Bust risk') +
-            st('', '$' + avg.toFixed(0), 'Avg high') +
-            st('', succ.toFixed(0) + '%', 'Win rate') +
-            st(scoreCls, (+r.Score).toFixed(2), 'Score') +
-            '</div>' +
-            '<button class="dt-btn dt-btn-primary dt-go" id="dt-res_best_apply">Use this setup →</button>' +
-            '</div>';
-    }
-    function applyBestPick() {
-        const bi = bestResultIdx();
-        if (bi < 0) return;
-        selectedRowIdx = bi;
-        applySelectedToCalculator();
     }
 
     /* =========================================================
@@ -7410,36 +6706,10 @@ self.onmessage = async (e) => {
         });
         ['n_trials', 'opt_balance', 'opt_trials', 'opt_betdiv', 'opt_profit', 'opt_w', 'opt_l', 'opt_buf']
             .forEach(id => $(id).addEventListener('input', saveState));
-        // Advanced IOW UX: live combo-count + per-range previews, presets, results toggles
-        ['opt_trials', 'opt_betdiv', 'opt_profit', 'opt_w', 'opt_l', 'opt_buf']
-            .forEach(id => { const el = $(id); if (el) el.addEventListener('input', updateOptPreview); });
-        // Min/Max/Step boxes <-> text field two-way sync
-        OPT_RANGE_FIELDS.forEach(f => { const el = $(f.id); if (el) el.addEventListener('input', () => syncFieldToStepper(f.id)); });
-        OPT_RANGE_FIELDS.forEach(f => ['min', 'max', 'step'].forEach(part => {
-            const el = $('mms_' + f.id + '_' + part);
-            if (el) el.addEventListener('input', () => syncStepperToField(f.id));
-        }));
-        // ⌨ toggle: reveal/hide the per-range custom-syntax field
-        $$('.dt-rng-adv-btn').forEach(b => b.addEventListener('click', () => {
-            const adv = $('adv_' + b.dataset.advtoggle);
-            if (!adv) return;
-            const show = adv.hasAttribute('hidden');
-            adv.toggleAttribute('hidden', !show);
-            b.classList.toggle('active', show);
-        }));
-        $$('[data-preset]').forEach(b => b.addEventListener('click', () => {
-            $$('[data-preset]').forEach(x => x.classList.toggle('active', x === b));
-            applyOptPreset(b.dataset.preset);
-        }));
-        const _resSafe = $('res_safe'); if (_resSafe) _resSafe.addEventListener('change', () => { safeOnly = _resSafe.checked; renderResults(); });
-        const _resCols = $('res_allcols'); if (_resCols) _resCols.addEventListener('change', () => { showAllCols = _resCols.checked; renderResults(); });
-        refreshAllSteppers();
-        updateOptPreview();
-        updateStepper();
 
         // Copy buttons
         document.getElementById(PANEL_ID).querySelectorAll('[data-copy]').forEach(b => {
-            b.addEventListener('click', () => copyById(b.dataset.copy, b));
+            b.addEventListener('click', () => copyById(b.dataset.copy));
         });
 
         // Tab delegation
@@ -7449,14 +6719,6 @@ self.onmessage = async (e) => {
             if (!btn) return;
             ev.preventDefault();
             switchTab(btn.dataset.tab);
-        });
-
-        // Guided workflow: stepper pills + "next step" buttons jump between tabs.
-        document.getElementById(PANEL_ID).addEventListener('click', (ev) => {
-            const step = ev.target.closest('.dt-step');
-            if (step && step.dataset.step) { switchTab(STEP_TABS[step.dataset.step]); return; }
-            const next = ev.target.closest('.dt-next');
-            if (next && !next.disabled && next.dataset.goto) { switchTab(next.dataset.goto); }
         });
 
         // Tooltip helpers — direct listeners on each ? button for iOS reliability,
@@ -9658,42 +8920,25 @@ let isRunning = false;
         return null;
     }
     function getHudHost() {
-        // Anchor on a native Nuts game element (the bet-controls rail or the sidebar).
-        // findNativeElement already skips anything inside our own HUD, so this anchor
-        // stays valid even after syncNativeHudElements() relocates the sidebar into a slot.
-        const anchor = findNativeElement('.sc-8d275cfe-3.eertbI') || findNativeElement('.sc-8d275cfe-3')
-                    || findNativeElement('.sc-8d275cfe-1.eGfUZM') || findNativeElement('.sc-8d275cfe-1');
-        if (!anchor) {
-            // No Nuts game container on the page (e.g. SPA-navigated to the lobby).
-            // Return null so buildHUD tears the HUD down instead of covering the page.
-            return null;
+        const nativeSidebar = findNativeElement('.sc-8d275cfe-1.eGfUZM') || findNativeElement('.sc-8d275cfe-1');
+        const nativeStage = findNativeElement('.sc-8d275cfe-3.eertbI') || findNativeElement('.sc-8d275cfe-3');
+        const sharedHost = getLowestCommonAncestor(nativeSidebar, nativeStage);
+        if (sharedHost && sharedHost !== document.body && sharedHost !== document.documentElement) {
+            return sharedHost;
         }
-        // nuts.gg lays the game out in a CSS grid whose game-control column is a NARROW
-        // rail (~122px on Dice, ~428px on Target/Limbo). The old code used the
-        // sidebar/stage lowest-common-ancestor, but once the sidebar is relocated into a
-        // HUD slot that calc collapsed to the narrow rail — buildHUD then re-parented the
-        // HUD into the ~122px cell and the entire UI was squished (verified live on
-        // nuts.gg dice + target). Instead, climb to the first ancestor that spans the full
-        // game stage (>= 600px). That stays STABLE across calls (it never collapses back
-        // to the rail), so buildHUD stops re-parenting and the layout holds at full width.
-        let el = anchor;
-        while (el && el !== document.body && el !== document.documentElement) {
-            if (el.getBoundingClientRect().width >= 600) return el;
-            el = el.parentElement;
-        }
-        // Last-ditch fallbacks (older lobby containers, then the anchor itself).
-        return document.querySelector('.sc-1d9445d-0.cCJWrI')
+        // Returns null when no Nuts game container is on the page — buildHUD
+        // then tears the HUD down. Previously this fell back to document.body,
+        // which caused our absolute-positioned overlay to cover the home page
+        // / lobby after SPA navigation away from /dice or /target.
+        return nativeStage
+            || nativeSidebar
+            || document.querySelector('.sc-1d9445d-0.cCJWrI')
             || document.querySelector('.sc-1d9445d-0')
-            || anchor;
+            || null;
     }
     function findNativeElement(selector) {
-        // Skip our own HUD, native modals (.game-modal/dialog), and the chat drawer
-        // (ancestor check only). NO descendant chat check — a broad one over-excluded
-        // the Nuts game sidebar, which legitimately contains a chat widget. Nuts had
-        // no chat-grab bug to begin with.
-        const inOverlay = el => el.closest('#ratchet-master-container, [role="dialog"], [aria-modal="true"], .game-modal, [class*="chat" i], [data-testid*="chat" i]');
-        const elements = Array.from(document.querySelectorAll(selector)).filter(el => !inOverlay(el));
-        return elements[0] || null;
+        const elements = Array.from(document.querySelectorAll(selector));
+        return elements.find(el => !el.closest('#ratchet-master-container')) || elements[0] || null;
     }
     function mountSingleElement(slot, element) {
         if (!slot || !element) return;
@@ -9701,7 +8946,6 @@ let isRunning = false;
         slot.replaceChildren(element);
     }
     function syncNativeHudElements() {
-        if (nativeOverlayOpen()) return; // suspend while a native chat/settings/modal is open
         const nativeSidebar = findNativeElement('.sc-8d275cfe-1.eGfUZM') || findNativeElement('.sc-8d275cfe-1');
         const recentBets = findNativeElement('.sc-9b1418e2-1') || findNativeElement('.sc-9b1418e2-0');
         const sidebarSlot = document.getElementById('hud-native-sidebar-slot');
@@ -10371,7 +9615,6 @@ let isRunning = false;
         pulse();
     }
     function simulateKeyDown(keyCode, repeat = false) {
-        if (nativeOverlayOpen()) return; // don't inject space into native settings/chat/modals
         const downEvent = new KeyboardEvent('keydown', { key: ' ', code: 'Space', keyCode: keyCode, which: keyCode, bubbles: true, cancelable: true, repeat: repeat });
         document.dispatchEvent(downEvent);
         const pressEvent = new KeyboardEvent('keypress', { key: ' ', code: 'Space', keyCode: keyCode, which: keyCode, bubbles: true, cancelable: true, repeat: repeat });
@@ -10447,21 +9690,7 @@ let isRunning = false;
         const width = canvas.width = canvas.offsetWidth;
         const height = canvas.height = canvas.offsetHeight;
         ctx.clearRect(0, 0, width, height);
-        if (!width || !height) return;
-        // Always paint a faint grid + zero baseline so the panel reads as a live chart
-        // even before any bets. (It used to bail to a dead black box when empty, which
-        // looked like the graph was broken.)
-        ctx.strokeStyle = 'rgba(255,255,255,0.05)'; ctx.lineWidth = 1;
-        for (let gi = 1; gi < 5; gi++) { const gy = Math.round(height * gi / 5) + 0.5; ctx.beginPath(); ctx.moveTo(0, gy); ctx.lineTo(width, gy); ctx.stroke(); }
-        for (let gi = 1; gi < 6; gi++) { const gx = Math.round(width * gi / 6) + 0.5; ctx.beginPath(); ctx.moveTo(gx, 0); ctx.lineTo(gx, height); ctx.stroke(); }
-        if (profitHistory.length < 2) {
-            const zY = Math.round(height / 2) + 0.5;
-            ctx.strokeStyle = 'rgba(255,255,255,0.18)'; ctx.setLineDash([4, 4]);
-            ctx.beginPath(); ctx.moveTo(0, zY); ctx.lineTo(width, zY); ctx.stroke(); ctx.setLineDash([]);
-            ctx.fillStyle = 'rgba(255,255,255,0.30)'; ctx.font = '12px system-ui, sans-serif'; ctx.textAlign = 'center';
-            ctx.fillText('Waiting for first bet…', width / 2, zY - 8);
-            return;
-        }
+        if (profitHistory.length < 2) return;
         let maxVal = Math.max(...profitHistory, 0);
         let minVal = Math.min(...profitHistory, 0);
         const range = (maxVal - minVal) || 1;
@@ -10700,40 +9929,8 @@ let isRunning = false;
         if (isRapidFiring) startBetGuardian();
         else stopBetGuardian();
     }, 500);
-    // --- Native-UI guard (same purpose as the IOW/Smart copy above): suspend our
-    // hotkeys + synthetic-spacebar injection while a native overlay (Settings/Hotkeys,
-    // chat, any modal) is open or a text field is focused. ---
-    // NOTE: kept BROAD on purpose. nuts.gg is a Stake fork with NO persistent role=dialog
-    // popovers (the Shuffle false-positive problem doesn't exist here), so this matches the
-    // proven-live 2.44 behaviour. Do NOT narrow to .game-modal without live-verifying on a
-    // logged-in nuts.gg dice game first.
-    function nativeOverlayOpen() {
-        try {
-            const dialogs = document.querySelectorAll('[role="dialog"], [aria-modal="true"], .game-modal'); // Stake's Hotkeys/Game-Info modals are .game-modal (exact class), NOT [role=dialog]
-            for (let i = 0; i < dialogs.length; i++) {
-                const r = dialogs[i].getBoundingClientRect();
-                if (r.width > 1 && r.height > 1) return true;
-            }
-            // A plain focused <input> is intentionally NOT treated as an overlay:
-            // this gate also pauses the rapid-fire autoclicker, which must keep
-            // running while the user edits a game/HUD field. Only real native
-            // overlays (modal above, or focus inside chat/settings/hotkeys) count.
-            const ae = document.activeElement;
-            if (ae && ae.closest && ae.closest('[data-testid*="chat" i], [data-test*="chat" i], [class*="chat" i], [class*="settings" i], [class*="hotkey" i]')) return true;
-        } catch (e) {}
-        return false;
-    }
-    function shouldIgnoreHotkey(e) {
-        const t = e && e.target;
-        if (t) {
-            const tag = t.tagName;
-            if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || t.isContentEditable) return true;
-            if (t.closest && t.closest('[role="dialog"], [aria-modal="true"], .game-modal, [data-testid*="chat" i], [data-test*="chat" i], [class*="chat" i], [class*="settings" i], [class*="hotkey" i]')) return true;
-        }
-        return nativeOverlayOpen();
-    }
     document.addEventListener('keydown', e => {
-        if (shouldIgnoreHotkey(e)) return;
+        if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
         if (e.key.toLowerCase() === 'r') resetStats();
         if (ACTIVE_MODE === 'smart') {
             if (e.key === ']' || e.key === '[') {
@@ -12844,1724 +12041,11 @@ let isRunning = false;
         setTimeout(() => { renderStats(getBalance(), NaN, getSessionVaulted()); if (config.isRunning) startMonitor(); }, 1500);
     }
 
-
-/* === source: stake-7day-tracker (desktop) v2.20.2 — embedded as a bundle tool === */
-function tool_stake_7day_tracker() {
-    'use strict';
-    if (window.__stk7wToolBooted) return;
-    window.__stk7wToolBooted = true;
-
-    /* =========================================================================
-       Stake 7-Day Rolling Wager Tracker  (lifetime-counter model)
-       -------------------------------------------------------------------------
-       HOW IT WORKS  (v2.8: switched the TOTAL from the weekly raffle to Stake's
-       authoritative lifetime wager counter)
-       - TOTAL (authoritative): Stake's API exposes a lifetime, never-resetting
-         "amount wagered" per currency+scope via user{statisticScoped{betAmount
-         currency scope}}. On stake.us we read ONLY the SC row (currency "sweeps",
-         scope "house" = all casino incl. slots); GC is irrelevant and ignored.
-         On the crypto sites we sum betValue (USD-equiv) across currencies. We
-         snapshot this counter over time into "ltAnchors" and compute:
-            rolling 168h = lifetime(now) - lifetime(>=7d ago).
-         Because the counter never resets and isn't ticket-quantised, this removes
-         the old raffle model's two error sources (the weekly-reset carry-over and
-         ticket rounding). It is exact except for a sub-poll-interval sliver at the
-         7-day-ago edge.
-       - WHY ltAnchors (not the old `anchors`): the lifetime counter is on a totally
-         different scale than the old raffle everCum. We keep the new snapshots in a
-         separate field so an OLD script version left running in another tab can't
-         mix scales with us. On first run we BRIDGE the existing raffle anchors into
-         ltAnchors (offset-aligned to the current lifetime value) so the headline is
-         continuous and full-window immediately, then it heals to pinpoint as real
-         lifetime snapshots replace the bridged ones over the following 7 days.
-       - FALL-OFF CHART (v2.10): an interactive "conveyor" canvas chart. LIVE/now is the
-         LEFT edge; bets drift RIGHT as they age and fall off the RIGHT edge at 168h. Red
-         density bars (height = bet count per pixel-column) come from the bounded 1-min
-         gbins; true per-bet ticks (this session, from sessionTicks) overlay at deep zoom.
-         Stock-chart UX: scroll = zoom (5 min … 168h), drag = pan, ⟲ snaps back to live,
-         adaptive time axis scales to the minute. Hover → crosshair + a tooltip with the
-         exact date/time that wager falls off (= bet time + 168h). (The old v2.8 red "↓"
-         readout was removed — the chart conveys fall-off precisely now.)
-       - LIVE OVERLAY: per-bet motion captured from the feed (liveDelta) ticks the
-         headline between counter polls; each poll the counter catches up and draws
-         liveDelta down, so the number stays monotonic and converges to exact.
-       - RTP buckets: still a LABELED "live sample" from feed-captured bets, bucketed
-         by each game's API house edge, aggregated into bounded 10-min bins covering
-         the full 168h at fixed tiny size. NOT your true total (the counter gives no
-         RTP breakdown).
-       - The raffle is still polled, but ONLY to show your Tickets count.
-
-       MULTI-ACCOUNT: data is partitioned by the logged-in account (user id),
-       auto-detected. Switching accounts switches the tracked data.
-
-       MULTI-TAB: state shared via localStorage and merged (anchors by time, bins
-       per-writer). The lifetime counter is a server-side value, so every tab reads
-       the identical number -- the headline is robust to multiple tabs.
-
-       MULTI-DEVICE: the lifetime counter includes play from ALL devices (mobile app,
-       mobile web, desktop), so the "now" total is always complete the instant any tab
-       polls. localStorage can't sync across devices, so only the 7-day-ago baseline
-       is per-device; it stays accurate as long as that device snapshots near that
-       time. The old reset-seam corruption (often triggered by device-swapping) is gone.
-
-       PRIVACY: everything is stored locally in this browser. Nothing is sent out.
-       ========================================================================= */
-
-    var VERSION   = '2.20.2';                       // bump on every change; surfaced in the HUD (data-ver) so the running build is verifiable
-    var WINDOW_MS = 7 * 24 * 60 * 60 * 1000;       // rolling window: 7 days
-    var KEEP_MS   = 8 * 24 * 60 * 60 * 1000;       // retain bets a little past the window
-    var STORE_KEY = 'stk7w:v5';   // v5: data partitioned per account (userId)
-    var GQL_RE    = /graphql/i;
-
-    // --- v2.10: fall-off chart zoom bounds --------------------------------------
-    // The chart's visible time span is continuously zoomable between these.
-    var GSPAN_MIN  = 5 * 60 * 1000;                // max zoom-IN: 5 minutes visible (minute / per-bet detail)
-    var GSPAN_MAX  = WINDOW_MS;                     // max zoom-OUT: the full 168h window
-    var GTICK_SPAN = 60 * 60 * 1000;               // overlay true per-bet session ticks when the span is <= 1h
-
-    // --- v2.7: bounded RTP buckets ---------------------------------------------
-    var BIN_MS         = 10 * 60 * 1000;                    // RTP-bucket bin size (10 min)
-    var GBIN_MS        = 1 * 60 * 1000;                     // v2.9 fall-off GRAPH bin size (1 min) — finer density, still bounded (~100KB)
-    var GTICKS_CAP     = 12000;                             // v2.9 in-memory per-bet ticks for the graph overlay (this session only; NOT persisted)
-    var BIN_KEEP_MS    = WINDOW_MS + 60 * 60 * 1000;        // keep bins ~1h past the window
-    var BETS_CAP       = 200;                               // raw bets now only a debug ring; buckets read bins, not this
-    var LIVEID_KEEP_MS = 10 * 60 * 1000;                    // de-dupe ids only need to outlive feed re-sends (sec–min), not 8 days
-    var WRITER_ID = (function () {
-        try {
-            var w = sessionStorage.getItem('stk7w:writer');
-            if (!w) { w = 'w' + Math.random().toString(36).slice(2, 9); sessionStorage.setItem('stk7w:writer', w); }
-            return w;
-        } catch (e) { return 'w' + Math.random().toString(36).slice(2, 9); }
-    })();
-
-    // Platform: stake.us is the social casino (SC/GC). Everything else (stake.com
-    // and its mirrors) is the crypto site, where we track a single COMBINED USD total.
-    var IS_SOCIAL = /(^|\.)stake\.us$/i.test(location.hostname);
-    var TRACK_CCY = IS_SOCIAL ? ['SC'] : ['USD'];   // social: SC ONLY (GC is irrelevant). crypto: combined USD
-    var rates = {};                                  // crypto: currency(lowercase) -> USD per unit
-    var liveDelta = 0;
-    var liveSince = Date.now();                      // ignore backfill (bets placed before tracking began)
-    var sessionTicks = [];                           // v2.9: {t,amt} of bets captured THIS session, for the graph's per-bet overlay (memory only, never persisted)
-    function getCookie(n) {
-        var m = document.cookie.match('(^|;)\\s*' + n + '\\s*=\\s*([^;]+)');
-        return m ? m.pop().replace(/"/g, '') : '';
-    }
-
-    /* ----------------------------- storage ------------------------------- */
-    function blankCur() {
-        return { bets: [], liveIds: {}, trackStart: 0, bins: {}, gbins: {} };   // bins: RTP (10-min){h,m,l,n}; gbins: graph density (1-min){n,w}; both bounded
-    }
-    function blankAccount() {
-        // total wager comes from the lifetime counter: ltAnchors are its snapshots,
-        // differenced for the rolling 168h. The old raffle fields (anchors/base/period)
-        // are vestigial (kept so a bridge/rollback is possible); tickets still shown.
-        return {
-            name: null, target: 0, targetAt: 0,
-            anchors: [], base: 0, periodStart: null, lastPeriodWager: 0, tickets: null,
-            ltAnchors: [], ltSeeded: false, ltStart: 0,   // v2.8 lifetime-counter snapshots
-            cur: {}, resetAt: {}
-        };
-    }
-    var EMPTY_REC = blankCur();  // read-only stand-in returned before an account is detected
-    var DEFAULTS = {
-        v: 5,
-        currency: 'SC',          // currency shown in the HUD
-        gameEdge: {},            // normalised game key -> house edge % (shared across accounts)
-        ui: { open: true, left: null, top: null, graphOpen: false, graphSpan: 604800000, graphLive: true },
-        accounts: {},            // userId -> blankAccount()
-        active: null,            // logged-in userId (auto-detected; switches with the account)
-        debug: [],               // notes (ring buffer)
-        diag: []                 // bet-owner samples (ring buffer)
-    };
-    var S = load();
-    function load() {
-        try {
-            var raw = localStorage.getItem(STORE_KEY);
-            if (raw) {
-                var p = JSON.parse(raw);
-                return Object.assign({}, DEFAULTS, p, { ui: Object.assign({}, DEFAULTS.ui, p.ui || {}) });
-            }
-        } catch (e) {}
-        return JSON.parse(JSON.stringify(DEFAULTS));
-    }
-    // Don't display a currency we no longer track (e.g. a stale 'GC' selection).
-    if (TRACK_CCY.indexOf(S.currency) < 0) S.currency = TRACK_CCY[0];
-
-    // One-time migration from the pre-multi-account stores (v3/v4, single-account S.cur).
-    var legacyMigrate = null;
-    (function detectLegacy() {
-        if (Object.keys(S.accounts || {}).length) return;   // already on the new model
-        ['stk7w:v4', 'stk7w:v3'].forEach(function (key) {
-            if (legacyMigrate) return;
-            try {
-                var p = JSON.parse(localStorage.getItem(key) || 'null');
-                if (p && p.cur && Object.keys(p.cur).some(function (c) { return p.cur[c] && (p.cur[c].bets || []).length; })) {
-                    legacyMigrate = { cur: p.cur, target: p.target || 0, resetAt: p.resetAt || {}, from: key };
-                }
-            } catch (e) {}
-        });
-    })();
-    function curHasBets(a) { return !!(a && a.cur && Object.keys(a.cur).some(function (c) { return (a.cur[c].bets || []).length; })); }
-    // --- multi-tab safe merge ----------------------------------------------
-    function mergeCur(a, b) {
-        a = a || blankCur(); b = b || blankCur();
-        var byK = {}, order = [];
-        function add(x) {
-            var key = x.k || ('t' + x.t + '_' + x.amt + '_' + (x.game || ''));
-            if (!(key in byK)) { byK[key] = x; order.push(key); }
-        }
-        (a.bets || []).forEach(add); (b.bets || []).forEach(add);
-        var bets = order.map(function (k) { return byK[k]; }).sort(function (x, y) { return x.t - y.t; });
-        if (bets.length > BETS_CAP) bets = bets.slice(bets.length - BETS_CAP);   // bets is now just a small debug ring
-        var bins = {};
-        [a.bins, b.bins].forEach(function (src) {
-            if (!src) return;
-            Object.keys(src).forEach(function (w) {
-                var dw = bins[w] || (bins[w] = {});
-                Object.keys(src[w]).forEach(function (bk) {
-                    var s = src[w][bk] || {}, d = dw[bk] || (dw[bk] = { h: 0, m: 0, l: 0, n: 0 });
-                    if ((s.h || 0) > d.h) d.h = s.h; if ((s.m || 0) > d.m) d.m = s.m;
-                    if ((s.l || 0) > d.l) d.l = s.l; if ((s.n || 0) > d.n) d.n = s.n;
-                });
-            });
-        });
-        // v2.9 graph bins (1-min {n,w}): same per-(writer,bin) max merge as RTP bins.
-        var gbins = {};
-        [a.gbins, b.gbins].forEach(function (src) {
-            if (!src) return;
-            Object.keys(src).forEach(function (w) {
-                var dw = gbins[w] || (gbins[w] = {});
-                Object.keys(src[w]).forEach(function (bk) {
-                    var s = src[w][bk] || {}, d = dw[bk] || (dw[bk] = { n: 0, w: 0 });
-                    if ((s.n || 0) > d.n) d.n = s.n; if ((s.w || 0) > d.w) d.w = s.w;
-                });
-            });
-        });
-        var ts = [a.trackStart, b.trackStart].filter(function (t) { return t; });
-        var liveIds = Object.assign({}, a.liveIds || {}, b.liveIds || {});
-        var liveMinT = Date.now() - LIVEID_KEEP_MS;
-        for (var lk in liveIds) { if (liveIds[lk] < liveMinT) delete liveIds[lk]; }
-        return {
-            bets: bets,
-            liveIds: liveIds,
-            trackStart: ts.length ? Math.min.apply(null, ts) : 0,
-            bins: bins,
-            gbins: gbins,
-            _mig: a._mig || b._mig || 0,      // carry the one-time legacy-migration flag through merges
-            _gseed: a._gseed || b._gseed || 0 // carry the one-time graph-bin seed flag through merges
-        };
-    }
-    // Union an anchor-style array (by timestamp), sorted ascending.
-    function unionAnchors(aArr, bArr) {
-        var byT = {}, ord = [];
-        function addP(p) { if (!p) return; var k = '' + p.t; if (!(k in byT)) { byT[k] = p; ord.push(k); } }
-        (aArr || []).forEach(addP); (bArr || []).forEach(addP);
-        return ord.map(function (k) { return byT[k]; }).sort(function (x, y) { return x.t - y.t; });
-    }
-    function mergeAccount(aa, bb) {
-        aa = aa || blankAccount(); bb = bb || blankAccount();
-        var cur = {}, ccys = {};
-        Object.keys(aa.cur || {}).forEach(function (c) { ccys[c] = 1; });
-        Object.keys(bb.cur || {}).forEach(function (c) { ccys[c] = 1; });
-        Object.keys(ccys).forEach(function (c) { cur[c] = mergeCur((aa.cur || {})[c], (bb.cur || {})[c]); });
-        var resetAt = {};
-        [aa.resetAt, bb.resetAt].forEach(function (r) {
-            if (r) Object.keys(r).forEach(function (c) { resetAt[c] = Math.max(resetAt[c] || 0, r[c] || 0); });
-        });
-        Object.keys(cur).forEach(function (c) {
-            var ra = resetAt[c] || 0; if (!ra) return;
-            var rec = cur[c];
-            rec.bets = (rec.bets || []).filter(function (x) { return x.t >= ra; });
-            rec.trackStart = rec.bets.length ? rec.bets[0].t : 0;
-        });
-        // everCum (legacy/raffle): keep base/period from whichever tab is fresher.
-        var aEver = (aa.base || 0) + (aa.lastPeriodWager || 0);
-        var bEver = (bb.base || 0) + (bb.lastPeriodWager || 0);
-        var fresher = bEver >= aEver ? bb : aa;
-        var anchors = unionAnchors(aa.anchors, bb.anchors);
-        // v2.8 lifetime snapshots: union by timestamp; bridged flag ORs; ltStart = earliest truthy.
-        var ltAnchors = unionAnchors(aa.ltAnchors, bb.ltAnchors);
-        var ltStarts = [aa.ltStart, bb.ltStart].filter(function (t) { return t; });
-        var tgtSide = (bb.targetAt || 0) >= (aa.targetAt || 0) ? bb : aa;
-        return {
-            name: bb.name || aa.name || null,
-            target: tgtSide.target || 0,
-            targetAt: Math.max(aa.targetAt || 0, bb.targetAt || 0),
-            base: fresher.base || 0,
-            periodStart: fresher.periodStart || null,
-            lastPeriodWager: fresher.lastPeriodWager || 0,
-            tickets: (fresher.tickets != null ? fresher.tickets : (bb.tickets != null ? bb.tickets : (aa.tickets != null ? aa.tickets : null))),
-            anchors: anchors,
-            ltAnchors: ltAnchors,
-            ltSeeded: !!(aa.ltSeeded || bb.ltSeeded),
-            ltStart: ltStarts.length ? Math.min.apply(null, ltStarts) : 0,
-            cur: cur,
-            resetAt: resetAt
-        };
-    }
-    function mergeState(a, b) {
-        a = (a && typeof a === 'object') ? a : {};
-        b = (b && typeof b === 'object') ? b : {};
-        var out = { v: 5, accounts: {} };
-        var ids = {};
-        Object.keys(a.accounts || {}).forEach(function (id) { ids[id] = 1; });
-        Object.keys(b.accounts || {}).forEach(function (id) { ids[id] = 1; });
-        Object.keys(ids).forEach(function (id) { out.accounts[id] = mergeAccount((a.accounts || {})[id], (b.accounts || {})[id]); });
-        out.gameEdge = Object.assign({}, a.gameEdge || {}, b.gameEdge || {});
-        out.active = b.active || a.active || null;
-        out.currency = b.currency || a.currency || 'SC';
-        out.ui = b.ui || a.ui || { open: true, left: null, top: null };
-        out.debug = (b.debug && b.debug.length ? b.debug : (a.debug || []));
-        out.diag = (b.diag && b.diag.length ? b.diag : (a.diag || []));
-        return out;
-    }
-    function readStored() { try { return JSON.parse(localStorage.getItem(STORE_KEY) || '{}'); } catch (e) { return {}; } }
-    function writeMerged() {
-        S = mergeState(readStored(), S);
-        try { localStorage.setItem(STORE_KEY, JSON.stringify(S)); } catch (e) {}
-    }
-    var saveQueued = false;
-    function save() {
-        if (saveQueued) return;
-        saveQueued = true;
-        setTimeout(function () { saveQueued = false; writeMerged(); }, 250);
-    }
-    function flushSave() { writeMerged(); }
-    try {
-        window.addEventListener('pagehide', flushSave);
-        document.addEventListener('visibilitychange', function () { if (document.visibilityState === 'hidden') flushSave(); });
-        window.addEventListener('storage', function (e) {
-            if (e.key && e.key !== STORE_KEY) return;
-            S = mergeState(S, readStored());
-            if (hud.target && document.activeElement !== hud.target) hud.target.value = getTarget() || '';
-            scheduleRender();
-        });
-    } catch (e) {}
-    function acct(create) {
-        if (!S.active) return null;
-        if (!S.accounts[S.active]) { if (!create) return null; S.accounts[S.active] = blankAccount(); }
-        return S.accounts[S.active];
-    }
-    function getTarget() { var a = acct(); return a ? (a.target || 0) : 0; }
-    function clearGoal() { var a = acct(true); if (a) { a.target = 0; a.targetAt = Date.now(); } if (hud.target) hud.target.value = ''; save(); render(); }
-    function curRec(c) {
-        c = c || S.currency;
-        var a = acct(true);
-        if (!a) return EMPTY_REC;          // no account yet -> read-only empty
-        if (!a.cur[c]) a.cur[c] = blankCur();
-        var r = a.cur[c];
-        if (!r.bets) r.bets = [];
-        if (!r.liveIds) r.liveIds = {};
-        if (!r.bins) r.bins = {};
-        return r;
-    }
-    // Stake's bet API uses SWEEPS / GOLD; the UI uses SC / GC.
-    function normalizeCurrency(c) {
-        if (!c) return '';
-        var u = String(c).toUpperCase();
-        if (u === 'SWEEPS') return 'SC';
-        if (u === 'GOLD') return 'GC';
-        return u;
-    }
-
-    /* ----------------------- USD rates (crypto site) --------------------- */
-    function applyRates(list) {
-        if (!Array.isArray(list)) return;
-        var changed = false;
-        list.forEach(function (x) {
-            if (x && x.currency && typeof x.baseRate === 'number') { rates[String(x.currency).toLowerCase()] = x.baseRate; changed = true; }
-        });
-        if (changed) reconvertUSD();
-    }
-    function fetchRates() {
-        if (IS_SOCIAL) return;
-        try {
-            fetch(location.origin + '/_api/graphql', {
-                method: 'POST', credentials: 'include',
-                headers: { 'content-type': 'application/json', 'x-access-token': getCookie('session'), 'x-language': 'en' },
-                body: JSON.stringify({ query: 'query($isAcp:Boolean!){currencyConfiguration(isAcp:$isAcp){baseRates{currency baseRate}}}', variables: { isAcp: false } })
-            }).then(function (r) { return r.json(); }).then(function (j) {
-                applyRates(j && j.data && j.data.currencyConfiguration && j.data.currencyConfiguration.baseRates);
-            }).catch(function () {});
-        } catch (e) {}
-    }
-    function reconvertUSD() {
-        if (IS_SOCIAL) return;
-        var changed = false, accs = S.accounts || {};
-        Object.keys(accs).forEach(function (id) {
-            var rec = accs[id].cur && accs[id].cur.USD;
-            if (!rec || !rec.bets) return;
-            rec.bets.forEach(function (b) {
-                if ((!b.amt || b.amt === 0) && b.raw && b.rc) {
-                    var rate = rates[String(b.rc).toLowerCase()];
-                    if (typeof rate === 'number' && rate > 0) { b.amt = b.raw * rate; changed = true; }
-                }
-            });
-        });
-        if (changed) { save(); scheduleRender(); }
-    }
-
-    /* --------------------------- RTP / edge ------------------------------ */
-    var ORIGINALS_EDGE = {
-        dice: 1, limbo: 1, mines: 1, hilo: 1, dragontower: 1, diamonds: 1,
-        keno: 1, plinko: 1, wheel: 1, blackjack: 0.5, baccarat: 1.06,
-        videopoker: 0.5, crash: 1, slide: 1, tower: 1, cricket: 1
-    };
-    function normGame(s) { return String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, ''); }
-    function currentGameSlug() {
-        var m = (location.pathname || '').match(/\/casino\/games\/([^/?#]+)/);
-        return m ? m[1] : '';
-    }
-    function edgeForGame(game) {
-        var k = normGame(game);
-        if (!k) return null;
-        if (S.gameEdge[k] != null) return S.gameEdge[k];
-        if (ORIGINALS_EDGE[k] != null) return ORIGINALS_EDGE[k];
-        return null;
-    }
-    function bucketOfEdge(edge) {
-        if (edge == null) return 'low';
-        var rtp = 100 - edge;
-        if (rtp >= 99 - 1e-9) return 'high';
-        if (rtp >= 98 - 1e-9) return 'mid';
-        return 'low';
-    }
-    function currentEdge() {
-        try {
-            var meta = document.querySelector('.game-meta-tags');
-            if (!meta) return null;
-            var m = (meta.textContent || '').match(/Edge:\s*([\d.]+)\s*%/i);
-            if (!m) return null;
-            var e = parseFloat(m[1]);
-            return isFinite(e) ? e : null;
-        } catch (e) { return null; }
-    }
-    function captureGameEdge() {
-        try {
-            var meta = document.querySelector('.game-meta-tags');
-            if (!meta) return;
-            var m = (meta.textContent || '').match(/Edge:\s*([\d.]+)\s*%/i);
-            if (!m) return;
-            var edge = parseFloat(m[1]);
-            if (!isFinite(edge)) return;
-            var keys = [];
-            var sm = location.pathname.match(/\/casino\/games\/([^/?#]+)/);
-            if (sm) keys.push(normGame(sm[1]));
-            var h1 = document.querySelector('h1[class*="ds-heading"]');
-            if (h1) keys.push(normGame(h1.textContent || ''));
-            var changed = false;
-            keys.forEach(function (k) { if (k && S.gameEdge[k] !== edge) { S.gameEdge[k] = edge; changed = true; } });
-            if (changed) { note('edge ' + (sm ? sm[1] : '') + ' = ' + edge + '%'); save(); scheduleRender(); }
-        } catch (e) {}
-    }
-
-    /* --------------------------- number helpers -------------------------- */
-    function parseNum(text) {
-        if (text == null) return NaN;
-        var raw = String(text).replace(/ /g, ' ').trim();
-        if (!raw) return NaN;
-        var m = raw.match(/-?\d[\d,.\s']*/);
-        if (!m) return NaN;
-        var t = m[0].replace(/[\s']/g, '');
-        var hasDot = t.indexOf('.') >= 0, hasComma = t.indexOf(',') >= 0;
-        if (hasDot && hasComma) {
-            if (t.lastIndexOf('.') > t.lastIndexOf(',')) t = t.replace(/,/g, '');
-            else t = t.replace(/\./g, '').replace(/,/g, '.');
-        } else if (hasComma && !hasDot) {
-            var parts = t.split(',');
-            if (parts.length === 2 && parts[1].length <= 2) t = parts[0] + '.' + parts[1];
-            else t = t.replace(/,/g, '');
-        }
-        var n = parseFloat(t);
-        return isFinite(n) ? n : NaN;
-    }
-    function fmt(n) {
-        if (!isFinite(n)) return '–';
-        return n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-    }
-    function shortDate(t) {
-        if (!t) return '—';
-        try { return new Date(t).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) + ' ' +
-                     new Date(t).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' }); }
-        catch (e) { return '—'; }
-    }
-
-    /* ------------------------ rolling computation ------------------------ */
-    // TOTAL: rolling 168h = lifetime(now) - lifetime(>=7d ago), from ltAnchors.
-    function rolling() {
-        var a = acct();
-        var now = Date.now(), cutoff = now - WINDOW_MS;
-        var an = a && a.ltAnchors;
-        if (!a || !an || !an.length) {
-            return { ready: false, rolling: 0, full: false, realFull: false, coverMs: 0, realCoverMs: 0, since: 0, live: 0 };
-        }
-        var cur = an[an.length - 1].cum;
-        // Baseline = the OLDEST snapshot at/after the 7-day cutoff, so the measured window
-        // is always a SUBSET of the true trailing-168h window (a guaranteed lower bound).
-        var baseline = null;
-        for (var i = 0; i < an.length; i++) { if (an[i].t >= cutoff) { baseline = an[i]; break; } }
-        if (!baseline) baseline = an[an.length - 1];
-        // Exactness clock: time since the FIRST real (post-swap) lifetime snapshot. Bridged
-        // (seed) snapshots carry the old raffle method's error, so the figure is only
-        // guaranteed pinpoint once a genuine lifetime snapshot is the baseline (>=7d in).
-        var ltCoverMs = a.ltStart ? (now - a.ltStart) : 0;
-        return {
-            ready: true,
-            rolling: Math.max(0, cur - baseline.cum) + liveDelta,   // + real-time captured-bet overlay
-            full: ltCoverMs >= WINDOW_MS - 1000,
-            realFull: ltCoverMs >= WINDOW_MS - 1000,
-            coverMs: Math.min(now - baseline.t, WINDOW_MS),
-            realCoverMs: Math.min(ltCoverMs, WINDOW_MS),
-            since: an[0].t,
-            live: liveDelta
-        };
-    }
-    // RTP buckets. PREFER the server-sourced split (from Stake's own bet ledger -> identical on every
-    // device on the account); fall back to the local per-writer bins (the live WS sample) only until
-    // the first ledger poll lands. This is what makes the slots/originals split match across devices.
-    var BUCKET_CAP = 300, BUCKET_PAGE = 50, BUCKET_MS = 3 * 60 * 1000;   // recent-ledger sample size + poll cadence
-    var serverBuckets = null;   // {high, mid, low, count, t} from houseBetList; null until first successful poll
-    var bucketsBusy = false;
-    function rollingBuckets() {
-        if (serverBuckets && serverBuckets.count > 0) return serverBuckets;   // authoritative, cross-device-consistent
-        var b = { high: 0, mid: 0, low: 0, count: 0 };
-        var a = acct(); if (!a) return b;
-        var rec = a.cur && a.cur[S.currency]; if (!rec || !rec.bins) return b;
-        var minBin = Math.floor((Date.now() - WINDOW_MS) / BIN_MS);
-        Object.keys(rec.bins).forEach(function (w) {
-            var wb = rec.bins[w];
-            Object.keys(wb).forEach(function (bk) {
-                if (+bk < minBin) return;
-                var c = wb[bk];
-                b.high += c.h || 0; b.mid += c.m || 0; b.low += c.l || 0; b.count += c.n || 0;
-            });
-        });
-        return b;
-    }
-    // v2.15: ms until the rolling-7d wager would fall below `req` if you stop wagering now
-    // (i.e., when enough wager ages off the back of the 7d window). null if no usable history.
-    function eligTimeLeftMs(req) {
-        var a = acct(); if (!a || !a.ltAnchors || a.ltAnchors.length < 2) return null;
-        var an = a.ltAnchors, now = Date.now(), cur = an[an.length - 1].cum, target = cur - req;
-        if (target <= an[0].cum) return WINDOW_MS;                       // would take the full window (or more)
-        var lo = 0, hi = an.length - 1;                                  // first index with cum >= target
-        while (lo < hi) { var mid = (lo + hi) >> 1; if (an[mid].cum < target) lo = mid + 1; else hi = mid; }
-        var p1 = an[lo], p0 = an[lo - 1] || an[lo];
-        var tau = (p1.cum === p0.cum) ? p1.t : p0.t + (p1.t - p0.t) * ((target - p0.cum) / (p1.cum - p0.cum));
-        return Math.max(0, Math.min(WINDOW_MS, tau - (now - WINDOW_MS)));
-    }
-    function eligHrs(ms) {
-        if (ms >= WINDOW_MS - 60000) return '7d+';
-        var h = ms / 3600000;
-        if (h >= 48) return (h / 24).toFixed(1) + 'd';
-        if (h >= 10) return Math.round(h) + 'h';
-        return h.toFixed(1) + 'h';
-    }
-    // ---- v2.12 wager-activity chart: view-state (continuous zoom + pan, NOW on the RIGHT) ----
-    // gView.end = newest time shown (the RIGHT edge). Live tracks now; panned pins it.
-    // Persisted: S.ui.graphSpan (zoom) + S.ui.graphLive. hoverX/mx/my/drag* are interaction-only.
-    var gView = { end: 0, hoverX: null, mx: 0, my: 0, dragX: null, dragEnd: 0 };
-    function gSpan() { var s = S.ui && +S.ui.graphSpan; s = (s && isFinite(s)) ? s : GSPAN_MAX; return Math.max(GSPAN_MIN, Math.min(GSPAN_MAX, s)); }
-    function gEnd() {
-        var now = Date.now(), span = gSpan();
-        if (S.ui.graphLive) return now;
-        return Math.max(now - WINDOW_MS + span, Math.min(now, gView.end || now));   // no future, no panning past available data
-    }
-    function fmtShort(n) { if (!isFinite(n)) return '–'; var x = Math.abs(n); if (x >= 1e6) return (n / 1e6).toFixed(2) + 'M'; if (x >= 1e3) return (n / 1e3).toFixed(1) + 'k'; return Math.round(n) + ''; }
-    function formatDur(ms) {
-        if (ms <= 0) return '0m';
-        var d = Math.floor(ms / 86400000); ms -= d * 86400000;
-        var h = Math.floor(ms / 3600000); ms -= h * 3600000;
-        var m = Math.floor(ms / 60000);
-        return (d ? d + 'd ' : '') + ((d || h) ? h + 'h ' : '') + m + 'm';
-    }
-    // ---- v2.10 fall-off chart rendering ----------------------------------------
-    var GAXIS_STEPS = [60000, 120000, 300000, 600000, 900000, 1800000, 3600000, 7200000, 10800000, 21600000, 43200000, 86400000];
-    function gNiceStep(span) { for (var i = 0; i < GAXIS_STEPS.length; i++) if (span / GAXIS_STEPS[i] <= 6) return GAXIS_STEPS[i]; return GAXIS_STEPS[GAXIS_STEPS.length - 1]; }
-    // 12-hour clock with am/pm (used across the chart axis + hover tooltip)
-    function gTime12(d, withMin) {
-        var h = d.getHours(), ap = h < 12 ? 'am' : 'pm', hh = (h % 12) || 12;
-        return withMin ? (hh + ':' + ('0' + d.getMinutes()).slice(-2) + ap) : (hh + ap);
-    }
-    function gAxisLabel(t, step) {
-        var d = new Date(t);
-        if (step >= 86400000) return ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][d.getDay()] + ' ' + d.getDate();
-        if (step >= 3600000) return gTime12(d, false);
-        return gTime12(d, true);
-    }
-    function gClock(t) { try { var d = new Date(t); return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) + ' ' + gTime12(d, true); } catch (e) { return '—'; } }
-    function gClockSec(t) { try { var d = new Date(t); return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) + ' ' + gTime12(d, true).replace(/(am|pm)$/, ':' + ('0' + d.getSeconds()).slice(-2) + '$1'); } catch (e) { return '—'; } }
-    var gQueued = false;
-    function scheduleGraph() { if (gQueued) return; gQueued = true; requestAnimationFrame(function () { gQueued = false; drawGraph(); }); }
-    function gHideTip() { if (hud.gtip) hud.gtip.style.display = 'none'; }
-    function gTipAt() {
-        if (!hud.gtip) return;
-        var tw = hud.gtip.offsetWidth || 170, vx = gView.mx + 14, vy = gView.my + 14;
-        if (vx + tw > window.innerWidth - 8) vx = gView.mx - tw - 14;
-        if (vy + 72 > window.innerHeight - 8) vy = gView.my - 72;
-        hud.gtip.style.left = vx + 'px'; hud.gtip.style.top = vy + 'px'; hud.gtip.style.display = 'block';
-    }
-    function gShowTipBar(tc, dtPerPx, w) {
-        var single = dtPerPx <= 90000, C = ' ' + S.currency;
-        var when = single ? gClock(tc) : (gClock(tc - dtPerPx / 2) + ' – ' + gClock(tc + dtPerPx / 2));
-        hud.gtip.innerHTML = '<div class="gtl">wagered</div>'
-            + '<div class="gtv">' + fmt(w) + C + '</div>'
-            + '<div class="gtf">' + when + '</div>';
-        gTipAt();
-    }
-    // v2.12 wager-activity chart (trading-terminal style): bars = wager per period over time,
-    // NOW on the right; right SC axis; ticker (7d total + in-view total); crosshair readout.
-    // Continuous zoom (scroll) + pan (drag) + ⟲ live + ⤢ fit-to-7d. No derived price line.
-    function drawGraph() {
-        if (!hud.gcanvas || !S.ui.open || !hud.w || hud.w.style.display === 'none') return;
-        var cv = hud.gcanvas, ctx; try { ctx = cv.getContext('2d'); } catch (e) { return; }
-        if (!ctx) return;
-        var dpr = window.devicePixelRatio || 1;
-        var W = cv.clientWidth || 300, H = cv.clientHeight || 150;
-        if (cv.width !== Math.round(W * dpr) || cv.height !== Math.round(H * dpr)) { cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr); }
-        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-        ctx.clearRect(0, 0, W, H);   // recessed well's dark bg shows through
-        var span = gSpan(), end = gEnd(), now = Date.now(), t0 = end - span;
-        var tkH = 2, axB = 15, axR = 30, padL = 2;
-        var plotW = W - padL - axR, pTop = tkH, pBot = H - axB, plotH = pBot - pTop;
-        function X(t) { return padL + (t - t0) / span * plotW; }
-        function T(x) { return t0 + (x - padL) / plotW * span; }
-        var a = acct(), rec = a && a.cur && a.cur[S.currency];
-
-        // wager per pixel column; plus in-view total
-        var colW = new Array(W), vmax = 0, sumW = 0;
-        if (rec && rec.gbins) { Object.keys(rec.gbins).forEach(function (wk) { var wb = rec.gbins[wk];
-            Object.keys(wb).forEach(function (bk) { var t = (+bk) * GBIN_MS; if (t < t0 || t > end) return;
-                var xi = Math.floor(X(t)); if (xi < padL || xi >= padL + plotW) return;
-                var w = wb[bk].w || 0;
-                colW[xi] = (colW[xi] || 0) + w; sumW += w;
-                if (colW[xi] > vmax) vmax = colW[xi]; }); }); }
-        if (vmax <= 0) vmax = 1;
-        function VY(v) { return pBot - (v / vmax) * (plotH - 2); }
-
-        ctx.font = '9px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace';
-        // value gridlines + right SC axis (wager per column)
-        for (var g = 0; g <= 2; g++) { var gv = vmax * g / 2, gy = Math.round(VY(gv)) + 0.5;
-            ctx.strokeStyle = 'rgba(255,255,255,.05)'; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(padL, gy); ctx.lineTo(padL + plotW, gy); ctx.stroke();
-            if (g > 0) { ctx.fillStyle = '#56707f'; ctx.textAlign = 'left'; ctx.fillText(fmtShort(gv), padL + plotW + 4, gy + 3); } }
-        // time gridlines + labels (now on the right)
-        var step = gNiceStep(span), gt = Math.ceil(t0 / step) * step; ctx.textAlign = 'center';
-        for (; gt <= end; gt += step) { var gx = X(gt);
-            ctx.strokeStyle = 'rgba(255,255,255,.04)'; ctx.beginPath(); ctx.moveTo(gx + 0.5, pTop); ctx.lineTo(gx + 0.5, pBot); ctx.stroke();
-            ctx.fillStyle = '#56707f'; ctx.fillText(gAxisLabel(gt, step), Math.max(13, Math.min(padL + plotW - 13, gx)), H - 3); }
-        ctx.strokeStyle = 'rgba(255,255,255,.10)'; ctx.beginPath(); ctx.moveTo(padL, pBot + 0.5); ctx.lineTo(padL + plotW, pBot + 0.5); ctx.stroke();
-
-        // wager bars (cyan volume, soft glow) — data tone, distinct from the green status accent
-        var grad = ctx.createLinearGradient(0, pTop, 0, pBot);
-        grad.addColorStop(0, 'rgba(110,214,245,.98)'); grad.addColorStop(.65, 'rgba(79,184,214,.6)'); grad.addColorStop(1, 'rgba(79,184,214,.12)');
-        var hxi = (gView.hoverX != null) ? Math.round(gView.hoverX) : -1;
-        ctx.save(); ctx.shadowColor = 'rgba(79,184,214,.5)'; ctx.shadowBlur = 4; ctx.fillStyle = grad;
-        for (var x = padL; x < padL + plotW; x++) { var w = colW[x] || 0; if (!w) continue;
-            var bh = Math.max(1.4, (plotH - 2) * (w / vmax));
-            ctx.globalAlpha = (x === hxi) ? 1 : 0.92; ctx.fillRect(x, pBot - bh, 1, bh); }
-        ctx.restore(); ctx.globalAlpha = 1;
-        if (sumW <= 0) { ctx.fillStyle = '#56707f'; ctx.textAlign = 'center'; ctx.fillText('no wager in this range', padL + plotW / 2, pTop + plotH / 2); }
-
-        // "now" marker (green dashed + node) when the present is in view
-        if (now >= t0 && now <= end + 1) { var nx = X(now);
-            ctx.strokeStyle = 'rgba(31,214,85,.55)'; ctx.setLineDash([2, 2]); ctx.beginPath(); ctx.moveTo(nx - 0.5, pTop); ctx.lineTo(nx - 0.5, pBot); ctx.stroke(); ctx.setLineDash([]);
-            ctx.fillStyle = '#1fd655'; ctx.beginPath(); ctx.arc(nx - 0.5, pTop + 3, 2.2, 0, 7); ctx.fill(); }
-
-        // in-view total (top-left); the hero number already carries the 7d total
-        var C = ' ' + S.currency;
-        ctx.textAlign = 'left'; ctx.font = '9px ui-monospace,Menlo,monospace'; ctx.fillStyle = '#6e8b9c';
-        ctx.fillText('view  Σ ' + fmtShort(sumW) + C + (S.ui.graphLive ? '' : '  · paused'), padL + 2, 9);
-
-        // crosshair + tooltip
-        if (gView.hoverX != null && hxi >= padL && hxi <= padL + plotW) {
-            ctx.strokeStyle = 'rgba(255,255,255,.22)'; ctx.setLineDash([3, 3]); ctx.beginPath(); ctx.moveTo(hxi + 0.5, pTop); ctx.lineTo(hxi + 0.5, pBot); ctx.stroke(); ctx.setLineDash([]);
-            gShowTipBar(T(hxi), span / plotW, colW[hxi] || 0);
-        } else if (gView.hoverX != null) gHideTip();
-    }
-
-    /* --------------------- lifetime wager (the total) -------------------- */
-    var KEEP_ANCHOR_MS = 9 * 24 * 60 * 60 * 1000;
-    // Record a lifetime snapshot (monotonic; throttle unchanged; prune past the window+margin).
-    function recordLt(a, cum) {
-        if (!isFinite(cum) || cum < 0) return;
-        if (!a.ltAnchors) a.ltAnchors = [];
-        var now = Date.now(), last = a.ltAnchors[a.ltAnchors.length - 1];
-        if (last) {
-            if (cum < last.cum - 1e-6) return;                                            // lifetime can't drop
-            if (Math.abs(cum - last.cum) < 1e-9 && (now - last.t) < 10 * 60 * 1000) return; // throttle unchanged
-        }
-        a.ltAnchors.push({ t: now, cum: cum });
-        var cutoff = now - WINDOW_MS, minT = now - KEEP_ANCHOR_MS, keepIdx = -1;
-        for (var i = 0; i < a.ltAnchors.length; i++) if (a.ltAnchors[i].t <= cutoff) keepIdx = i;
-        a.ltAnchors = a.ltAnchors.filter(function (p, idx) { return p.t >= minT || idx === keepIdx; });
-    }
-    // Fold the latest lifetime reading into ltAnchors. On first run, BRIDGE the legacy
-    // raffle anchors onto the lifetime scale (offset-aligned) so the headline is continuous
-    // and full-window immediately, kept in ltAnchors so old script versions can't mix scales.
-    function updateLifetime(L) {
-        var a = acct(true);
-        if (!a || !isFinite(L) || L < 0) return;
-        if (!a.ltAnchors) a.ltAnchors = [];
-        if (!a.ltSeeded) {
-            if (!a.ltAnchors.length && a.anchors && a.anchors.length) {
-                var last = a.anchors[a.anchors.length - 1];
-                var delta = L - last.cum;   // shift newest old anchor up to the current lifetime value
-                if (isFinite(delta)) {
-                    a.ltAnchors = a.anchors.map(function (p) { return { t: p.t, cum: p.cum + delta, seed: true }; });
-                }
-            }
-            a.ltSeeded = true;
-            note('lifetime seed @ ' + L.toFixed(2) + ' (bridged ' + ((a.ltAnchors && a.ltAnchors.length) || 0) + ' anchors)');
-        }
-        if (!a.ltStart) a.ltStart = Date.now();   // exactness clock starts at the first real reading
-        var prev = a.ltAnchors.length ? a.ltAnchors[a.ltAnchors.length - 1].cum : L;
-        // The counter just caught up by (L - prev): draw the live overlay down by that much,
-        // so the headline stays monotonic and never double-counts those bets.
-        if (L > prev + 1e-9) liveDelta = Math.max(0, liveDelta - (L - prev));
-        recordLt(a, L);
-        save(); scheduleRender();
-    }
-    // Map the tracked HUD currency to Stake's API currency name.
-    function apiCurrencyFor(c) {
-        var u = String(c || '').toUpperCase();
-        if (u === 'SC') return 'sweeps';
-        if (u === 'GC') return 'gold';
-        return u.toLowerCase();
-    }
-    // Reduce statisticScoped rows to the lifetime wager we track.
-    // SOCIAL (stake.us): the SC row ONLY (currency "sweeps", scope "house"); GC is ignored.
-    // CRYPTO: sum betValue (USD-equiv) across all currencies (scope "house").
-    function lifetimeFromStats(list) {
-        if (!Array.isArray(list)) return null;
-        if (IS_SOCIAL) {
-            var want = apiCurrencyFor(S.currency);   // 'sweeps'
-            var sum = null;
-            list.forEach(function (r) {
-                if (r && r.scope === 'house' && String(r.currency).toLowerCase() === want && typeof r.betAmount === 'number') {
-                    sum = (sum || 0) + r.betAmount;
-                }
-            });
-            return sum;
-        }
-        var usd = null;
-        list.forEach(function (r) {
-            if (r && r.scope === 'house' && typeof r.betValue === 'number') usd = (usd || 0) + r.betValue;
-        });
-        return usd;
-    }
-    // Authoritative lifetime wager total (never resets; not ticket-quantised).
-    function fetchLifetime() {
-        try {
-            fetch(location.origin + '/_api/graphql', {
-                method: 'POST', credentials: 'include',
-                headers: { 'content-type': 'application/json', 'x-access-token': getCookie('session'), 'x-language': 'en' },
-                body: JSON.stringify({ query: 'query{user{statisticScoped{betAmount betValue currency scope}}}', variables: {} })
-            }).then(function (r) { return r.json(); }).then(function (j) {
-                var list = j && j.data && j.data.user && j.data.user.statisticScoped;
-                var L = lifetimeFromStats(list);
-                if (L != null) updateLifetime(L);
-            }).catch(function () {});
-        } catch (e) {}
-    }
-    // Pick the weekly wager raffle from activeRaffles (kept only for the Tickets display).
-    function pickRaffle(list) {
-        if (!Array.isArray(list)) return null;
-        var cand = list.filter(function (r) { return r && r.raffleUser && r.ticketValue > 0; });
-        cand.sort(function (x, y) {
-            function wk(r) { var d = (Date.parse(r.endTime) - Date.parse(r.startTime)) / 86400000; return (d >= 5 && d <= 9) ? 0 : 1; }
-            if (wk(x) !== wk(y)) return wk(x) - wk(y);
-            return String(x.id) < String(y.id) ? -1 : 1;
-        });
-        return cand[0] || null;
-    }
-    function fetchRaffle() {
-        try {
-            fetch(location.origin + '/_api/graphql', {
-                method: 'POST', credentials: 'include',
-                headers: { 'content-type': 'application/json', 'x-access-token': getCookie('session'), 'x-language': 'en' },
-                body: JSON.stringify({ query: 'query{activeRaffles{id name ticketValue startTime endTime raffleUser{progress ticketCount}}}', variables: {} })
-            }).then(function (r) { return r.json(); }).then(function (j) {
-                var rf = pickRaffle(j && j.data && j.data.activeRaffles);
-                if (!rf || !rf.raffleUser) return;
-                var a = acct(); if (a) { a.tickets = rf.raffleUser.ticketCount; scheduleRender(); }   // Tickets display only
-            }).catch(function () {});
-        } catch (e) {}
-    }
-    function syncGameEdges() {
-        try {
-            fetch(location.origin + '/_api/graphql', {
-                method: 'POST', credentials: 'include',
-                headers: { 'content-type': 'application/json', 'x-access-token': getCookie('session'), 'x-language': 'en' },
-                body: JSON.stringify({ query: 'query{user{houseBetList(limit:50){game{name slug edge}}}}', variables: {} })
-            }).then(function (r) { return r.json(); }).then(function (j) {
-                var list = j && j.data && j.data.user && j.data.user.houseBetList;
-                if (!Array.isArray(list)) return;
-                var n = 0;
-                for (var i = 0; i < list.length; i++) { if (learnGameEdge(list[i] && list[i].game) != null) n++; }
-                if (n) { save(); scheduleRender(); note('synced game edges: ' + Object.keys(S.gameEdge).length + ' known'); }
-            }).catch(function () {});
-        } catch (e) {}
-    }
-    // Recompute the RTP split from Stake's authoritative bet ledger so every device derives the SAME
-    // slots/originals proportion. Amount-weighted, bucketed by each game's house edge. Paginated
-    // (the API hard-caps offset at 1000); a fresh snapshot each poll. Degrades to the local sample on error.
-    function bucketEdgePct(b) {
-        if (b && b.game && typeof b.game.edge === 'number') return b.game.edge * 100;   // API edge is a fraction
-        return edgeForGame(b && b.game && (b.game.slug || b.game.name));                 // cache fallback (null -> 'low')
-    }
-    function fetchBuckets() {
-        if (bucketsBusy) return;
-        bucketsBusy = true;
-        var acc = { high: 0, mid: 0, low: 0, count: 0 }, offset = 0;
-        function finish() {
-            bucketsBusy = false;
-            if (acc.count > 0) { serverBuckets = { high: acc.high, mid: acc.mid, low: acc.low, count: acc.count, t: Date.now() }; scheduleRender(); }
-        }
-        function add(b) {
-            var ccy = normalizeCurrency(b.currency), amt;
-            if (IS_SOCIAL) { if (TRACK_CCY.indexOf(ccy) < 0) return; amt = b.amount; }
-            else { var rate = rates[String(ccy).toLowerCase()]; amt = (typeof rate === 'number' && rate > 0) ? b.amount * rate : 0; }
-            if (!(amt > 0)) return;
-            acc[bucketOfEdge(bucketEdgePct(b))] += amt; acc.count++;
-        }
-        function step() {
-            if (offset >= BUCKET_CAP) return finish();
-            try {
-                fetch(location.origin + '/_api/graphql', {
-                    method: 'POST', credentials: 'include',
-                    headers: { 'content-type': 'application/json', 'x-access-token': getCookie('session'), 'x-language': 'en' },
-                    body: JSON.stringify({ query: 'query($l:Int,$o:Int){user{houseBetList(limit:$l,offset:$o){amount currency game{slug name edge}}}}', variables: { l: BUCKET_PAGE, o: offset } })
-                }).then(function (r) { return r.json(); }).then(function (j) {
-                    var list = j && j.data && j.data.user && j.data.user.houseBetList;
-                    if (!Array.isArray(list) || !list.length) return finish();
-                    list.forEach(add);
-                    offset += BUCKET_PAGE;
-                    if (list.length < BUCKET_PAGE) return finish();
-                    step();
-                }).catch(function () { finish(); });
-            } catch (e) { finish(); }
-        }
-        step();
-    }
-    function fetchSelf() {
-        try {
-            fetch(location.origin + '/_api/graphql', {
-                method: 'POST', credentials: 'include',
-                headers: { 'content-type': 'application/json', 'x-access-token': getCookie('session'), 'x-language': 'en' },
-                body: JSON.stringify({ query: 'query{user{id name}}', variables: {} })
-            }).then(function (r) { return r.json(); }).then(function (j) {
-                var u = j && j.data && j.data.user;
-                if (!u || u.id == null) return;
-                var id = String(u.id), isNew = (S.active !== id);
-                S.active = id;
-                if (!S.accounts[id]) S.accounts[id] = blankAccount();
-                if (u.name && S.accounts[id].name !== String(u.name)) S.accounts[id].name = String(u.name);
-                if (isNew) { liveDelta = 0; liveSince = Date.now(); note('account: ' + (u.name || id.slice(0, 8))); }
-                save(); scheduleRender();
-            }).catch(function () {});
-        } catch (e) {}
-    }
-
-    /* ------------------------- live bet ingestion ------------------------ */
-    function noteRing(arr, s, cap) { arr.push(Date.now() + ' ' + s); while (arr.length > (cap || 30)) arr.shift(); }
-    function note(s) { noteRing(S.debug, s, 30); }
-    function diag(s) { noteRing(S.diag, s, 24); save(); }
-
-    function pruneBets(r, now) {
-        var minT = now - KEEP_MS;
-        if (r.bets.length > 60) r.bets = r.bets.filter(function (b) { return b.t >= minT; });
-        if (r.bets.length > BETS_CAP) { r.bets.sort(function (a, b) { return a.t - b.t; }); r.bets = r.bets.slice(r.bets.length - BETS_CAP); }
-        var idMinT = now - LIVEID_KEEP_MS;
-        for (var k in r.liveIds) { if (r.liveIds[k] < idMinT) delete r.liveIds[k]; }
-        if (r.bins) {
-            var minBin = Math.floor((now - BIN_KEEP_MS) / BIN_MS);
-            Object.keys(r.bins).forEach(function (w) {
-                var wb = r.bins[w], any = false;
-                Object.keys(wb).forEach(function (bk) { if (+bk < minBin) delete wb[bk]; else any = true; });
-                if (!any) delete r.bins[w];
-            });
-        }
-        if (r.gbins) {
-            var minGBin = Math.floor((now - BIN_KEEP_MS) / GBIN_MS);
-            Object.keys(r.gbins).forEach(function (w) {
-                var wb = r.gbins[w], any = false;
-                Object.keys(wb).forEach(function (bk) { if (+bk < minGBin) delete wb[bk]; else any = true; });
-                if (!any) delete r.gbins[w];
-            });
-        }
-    }
-    function recordBet(bet) {
-        if (!S.active) return;            // no account detected yet
-        var rawCcy = normalizeCurrency(bet.currency);
-        if (!rawCcy) return;
-        var c, amt, rc, raw;
-        if (IS_SOCIAL) {
-            if (TRACK_CCY.indexOf(rawCcy) < 0) return;     // social: SC ONLY (GC ignored)
-            c = rawCcy; amt = bet.amt;
-        } else {
-            c = 'USD';                                     // crypto: combine into USD
-            rc = rawCcy; raw = bet.amt;
-            var rate = rates[rawCcy.toLowerCase()];
-            amt = (typeof rate === 'number' && rate > 0) ? bet.amt * rate : 0;  // 0 until rate loads; reconverted later
-        }
-        var r = curRec(c);
-        var now = Date.now();
-        var bt = (bet.t && isFinite(bet.t)) ? bet.t : now;   // real placement time
-        var id = bet.id != null ? String(bet.id) : ('x' + bet.amt + ':' + (bet.tn || '') + ':' + Math.round(bt / 1000));
-        if (r.liveIds[id]) return;            // de-dupe (the same bet re-appears in feed batches)
-        r.liveIds[id] = now;
-        if (!r.trackStart || bt < r.trackStart) r.trackStart = bt;   // earliest bet we've seen
-        var game = bet.game || currentGameSlug() || '';
-        var e = (bet.edge != null) ? bet.edge : edgeForGame(game);
-        if (e == null) e = currentEdge();
-        var rec = { k: id, t: bt, amt: amt, game: game, mult: bet.mult, tn: bet.tn || '', edge: (e != null ? e : undefined) };
-        if (rc) { rec.rc = rc; rec.raw = raw; }   // keep crypto amount for reconversion
-        r.bets.push(rec);
-        // Fold into the bounded RTP bins (the long-term, full-168h bucket store).
-        var bkt = bucketOfEdge(e), binKey = Math.floor(bt / BIN_MS);
-        if (!r.bins) r.bins = {};
-        var wbins = r.bins[WRITER_ID] || (r.bins[WRITER_ID] = {});
-        var cell = wbins[binKey] || (wbins[binKey] = { h: 0, m: 0, l: 0, n: 0 });
-        cell[bkt === 'high' ? 'h' : bkt === 'mid' ? 'm' : 'l'] += amt; cell.n += 1;
-        // v2.9: also fold into the finer 1-min GRAPH bins (count + wager) for the fall-off graph.
-        if (!r.gbins) r.gbins = {};
-        var gb = r.gbins[WRITER_ID] || (r.gbins[WRITER_ID] = {});
-        var gk = Math.floor(bt / GBIN_MS), gcell = gb[gk] || (gb[gk] = { n: 0, w: 0 });
-        gcell.n += 1; gcell.w += amt;
-        if (bt >= liveSince) {                    // this session's real bets -> true per-bet ticks at deep zoom (memory only)
-            sessionTicks.push({ t: bt, amt: amt });
-            if (sessionTicks.length > GTICKS_CAP) sessionTicks.shift();
-        }
-        if (bt >= liveSince) liveDelta += amt;   // live overlay: tick the headline per captured bet (reconciled by the counter)
-        pruneBets(r, now);
-        save();
-        scheduleRender();
-    }
-
-    function captureSelf(obj, depth) {
-        if (!obj || typeof obj !== 'object' || depth > 7) return false;
-        if (Array.isArray(obj)) {
-            for (var i = 0; i < obj.length; i++) { if (captureSelf(obj[i], depth + 1)) return true; }
-            return false;
-        }
-        if (obj.id != null && (('balances' in obj) || ('vault' in obj) || ('email' in obj) || ('hasTwoFactor' in obj))) {
-            var id = String(obj.id);
-            var name = obj.name != null ? String(obj.name) : null;
-            var isNew = (S.active !== id);
-            S.active = id;
-            if (!S.accounts[id]) S.accounts[id] = blankAccount();
-            if (name && S.accounts[id].name !== name) S.accounts[id].name = name;
-            if (legacyMigrate && !curHasBets(S.accounts[id])) {
-                S.accounts[id].cur = legacyMigrate.cur;
-                if (legacyMigrate.target) S.accounts[id].target = legacyMigrate.target;
-                S.accounts[id].resetAt = legacyMigrate.resetAt || {};
-                note('migrated wager from ' + legacyMigrate.from);
-                legacyMigrate = null;
-            }
-            if (isNew) { liveDelta = 0; liveSince = Date.now(); note('account: ' + (name || id.slice(0, 8))); }
-            save();
-            return true;
-        }
-        for (var k in obj) { if (obj[k] && typeof obj[k] === 'object') { if (captureSelf(obj[k], depth + 1)) return true; } }
-        return false;
-    }
-    function betIsMine(u) {
-        if (!S.active || !u) return false;
-        var uid = u.id != null ? String(u.id) : null;
-        var un = u.name != null ? String(u.name) : null;
-        var a = S.accounts[S.active];
-        var an = a && a.name;
-        return (uid && uid === S.active) || (un && an && un === an);
-    }
-
-    function collectBets(obj, depth, acc) {
-        if (!obj || typeof obj !== 'object' || depth > 9) return;
-        if (Array.isArray(obj)) {
-            for (var i = 0; i < obj.length; i++) collectBets(obj[i], depth + 1, acc);
-            return;
-        }
-        if (typeof obj.amount === 'number' && typeof obj.currency === 'string' && obj.amount > 0 &&
-            (('payoutMultiplier' in obj) || ('payout' in obj) ||
-             ('state' in obj && ('multiplier' in obj || 'payoutMultiplier' in obj)) ||
-             (/Bet$/.test(obj.__typename || '')))) {
-            acc.push(obj);
-        }
-        for (var k in obj) {
-            if (Object.prototype.hasOwnProperty.call(obj, k)) {
-                var v = obj[k];
-                if (v && typeof v === 'object') collectBets(v, depth + 1, acc);
-            }
-        }
-    }
-    function gameNameOf(o) {
-        var g = o.game;
-        if (typeof g === 'string') return g;
-        if (g && typeof g === 'object') return g.name || g.title || g.slug || g.gameName || '';
-        return o.gameName || o.gameId || '';
-    }
-    function learnGameEdge(g) {
-        if (!g || typeof g !== 'object' || typeof g.edge !== 'number' || !isFinite(g.edge)) return null;
-        var pct = g.edge * 100;
-        [g.slug, g.name, g.title].forEach(function (s) { var k = normGame(s); if (k) S.gameEdge[k] = pct; });
-        return pct;
-    }
-    function betTime(o) {
-        var t = o.createdAt != null ? o.createdAt : (o.updatedAt != null ? o.updatedAt : (o.time != null ? o.time : null));
-        if (t != null) {
-            var n = (typeof t === 'number') ? t : Date.parse(t);
-            if (isFinite(n) && n > 0) { if (n < 1e12) n *= 1000; return n; }   // seconds -> ms
-        }
-        return Date.now();
-    }
-
-    var nameSamples = 0;
-    function handlePayload(text) {
-        if (!text || text.length > 1500000) return;
-        if (!IS_SOCIAL && text.indexOf('baseRate') >= 0) {
-            try { var d0 = JSON.parse(text); var cc = d0 && d0.data && d0.data.currencyConfiguration; if (cc && cc.baseRates) applyRates(cc.baseRates); } catch (e) {}
-        }
-        if (text.indexOf('amount') < 0) return;     // cheap pre-filter
-        var data;
-        try { data = JSON.parse(text); } catch (e) { return; }
-        if (text.indexOf('balances') >= 0 || text.indexOf('"vault"') >= 0 || text.indexOf('"email"') >= 0 || text.indexOf('hasTwoFactor') >= 0) {
-            try { captureSelf(data, 0); } catch (e) {}
-        }
-        var acc = [];
-        try { collectBets(data, 0, acc); } catch (e) { return; }
-        if (!acc.length) return;
-
-        var uniq = [], seen = {};
-        for (var i = 0; i < acc.length; i++) {
-            var o = acc[i];
-            var key = o.id != null ? ('id:' + o.id) : (o.iid != null ? ('iid:' + o.iid) : ('k:' + i));
-            if (seen[key]) continue;
-            seen[key] = 1; uniq.push(o);
-        }
-
-        for (var j = 0; j < uniq.length; j++) {
-            var b = uniq[j], u = b.user;
-            var mine = betIsMine(u);
-            if (nameSamples < 14 && u && (u.id != null || u.name != null)) {
-                nameSamples++;
-                diag('owner ' + b.amount + normalizeCurrency(b.currency) + ' :: ' +
-                     (u.name ? String(u.name).slice(0, 14) : 'id:' + String(u.id).slice(0, 6)) + (mine ? ' <SELF>' : ''));
-            }
-            if (mine) {
-                recordBet({
-                    id: b.id != null ? b.id : (b.iid != null ? b.iid : null),
-                    amt: b.amount,
-                    currency: b.currency,
-                    game: gameNameOf(b),
-                    mult: typeof b.payoutMultiplier === 'number' ? b.payoutMultiplier : undefined,
-                    tn: b.__typename || '',
-                    t: betTime(b),
-                    edge: learnGameEdge(b.game)          // API house edge (%), also cached in S.gameEdge
-                });
-            }
-        }
-    }
-
-    /* ----------------------------- net hooks ----------------------------- */
-    (function installHooks(window) {   /* window = the REAL page window (unsafeWindow) so fetch/WS hooks reach the site */
-        try {
-            var of = window.fetch;
-            if (of) {
-                window.fetch = function () {
-                    var args = arguments;
-                    var isGql = false;
-                    try {
-                        var u = args[0] && args[0].url ? args[0].url : args[0];
-                        isGql = (typeof u === 'string' && GQL_RE.test(u));
-                    } catch (e) {}
-                    var p = of.apply(this, args);
-                    if (isGql) {
-                        p.then(function (res) {
-                            try { res.clone().text().then(handlePayload).catch(function () {}); } catch (e) {}
-                        }).catch(function () {});
-                    }
-                    return p;
-                };
-            }
-        } catch (e) {}
-
-        try {
-            var oOpen = window.XMLHttpRequest.prototype.open;
-            var oSend = window.XMLHttpRequest.prototype.send;
-            window.XMLHttpRequest.prototype.open = function (m, u) { this.__stk_url = u; return oOpen.apply(this, arguments); };
-            window.XMLHttpRequest.prototype.send = function () {
-                try {
-                    if (GQL_RE.test(this.__stk_url || '')) {
-                        var self = this;
-                        this.addEventListener('load', function () {
-                            try { handlePayload(self.responseText); } catch (e) {}
-                        });
-                    }
-                } catch (e) {}
-                return oSend.apply(this, arguments);
-            };
-        } catch (e) {}
-
-        try {
-            var OWS = window.WebSocket;
-            if (OWS) {
-                var WS = function (url, protos) {
-                    var s = protos !== undefined ? new OWS(url, protos) : new OWS(url);
-                    try {
-                        s.addEventListener('message', function (ev) {
-                            if (typeof ev.data === 'string' && ev.data.indexOf('amount') >= 0) handlePayload(ev.data);
-                        });
-                    } catch (e) {}
-                    return s;
-                };
-                WS.prototype = OWS.prototype;
-                WS.CONNECTING = OWS.CONNECTING; WS.OPEN = OWS.OPEN; WS.CLOSING = OWS.CLOSING; WS.CLOSED = OWS.CLOSED;
-                window.WebSocket = WS;
-            }
-        } catch (e) {}
-    })(typeof unsafeWindow !== 'undefined' && unsafeWindow ? unsafeWindow : window);
-
-    /* ------------------- cross-device baseline sync ---------------------- */
-    // rolling = lifetime(now) - lifetime(7d ago). lifetime(now) is a server value
-    // (already identical on every device); only the 7d-ago baseline is local. This
-    // exports/imports a small downsampled set of the lifetime snapshots (ltAnchors)
-    // as a copy-paste code, so a second device on the SAME account is pinpoint
-    // immediately instead of after a 7-day warm-up. Nothing is sent anywhere: data
-    // only moves when YOU copy a code and paste it on your other device.
-    var SYNC_PREFIX = 'STK7W-B1.';
-    function b64enc(s) { try { return btoa(unescape(encodeURIComponent(s))); } catch (e) { return btoa(s); } }
-    function b64dec(s) { try { return decodeURIComponent(escape(atob(s))); } catch (e) { return atob(s); } }
-    // downsample ltAnchors over the trailing window (denser near the 7d-ago edge)
-    function baselineAnchors(an, now) {
-        var out = [], lastT = -Infinity, minT = now - (WINDOW_MS + 18 * 3600 * 1000), edge = now - WINDOW_MS;
-        for (var i = 0; i < an.length; i++) {
-            var p = an[i]; if (!p || p.t < minT) continue;
-            var gap = (Math.abs(p.t - edge) <= 12 * 3600 * 1000) ? (30 * 60 * 1000) : (60 * 60 * 1000);
-            if (p.t - lastT >= gap) { out.push(p); lastT = p.t; }
-        }
-        if (an.length) { var L = an[an.length - 1]; if (!out.length || out[out.length - 1].t !== L.t) out.push(L); }
-        return out;
-    }
-    function exportBaselineCode() {
-        var a = acct(); if (!a || !a.ltAnchors || !a.ltAnchors.length) return null;
-        var now = Date.now(), pts = baselineAnchors(a.ltAnchors, now);
-        if (!pts.length) return null;
-        var d = [], pt = 0, pc = 0;   // delta-encoded [t0sec,cum0],[dt,dcum],...
-        for (var i = 0; i < pts.length; i++) {
-            var ts = Math.round(pts[i].t / 1000), cu = Math.round(pts[i].cum);
-            d.push(i === 0 ? [ts, cu] : [ts - pt, cu - pc]); pt = ts; pc = cu;
-        }
-        var payload = { v: 1, u: String(S.active || ''), n: (a.name || ''), c: S.currency, g: Math.round(now / 1000), d: d };
-        return SYNC_PREFIX + b64enc(JSON.stringify(payload));
-    }
-    function importBaselineCode(str) {
-        if (!str) return { ok: false, msg: 'Paste a code first.' };
-        str = String(str).trim(); var i = str.indexOf(SYNC_PREFIX);
-        if (i < 0) return { ok: false, msg: 'That does not look like a sync code.' };
-        var json; try { json = JSON.parse(b64dec(str.slice(i + SYNC_PREFIX.length))); } catch (e) { return { ok: false, msg: 'Code is corrupted or incomplete.' }; }
-        if (!json || json.v !== 1 || !Array.isArray(json.d) || !json.d.length) return { ok: false, msg: 'Unrecognised code.' };
-        var anchors = [], pt = 0, pc = 0;
-        for (var k = 0; k < json.d.length; k++) {
-            var e = json.d[k]; if (!e || e.length < 2) continue;
-            if (k === 0) { pt = e[0]; pc = e[1]; } else { pt += e[0]; pc += e[1]; }
-            anchors.push({ t: pt * 1000, cum: pc });
-        }
-        if (!anchors.length) return { ok: false, msg: 'No snapshots in code.' };
-        var id = json.u || S.active;
-        if (!id) return { ok: false, msg: 'No account detected yet — open Stake first.' };
-        if (S.active && json.u && String(json.u) !== String(S.active)) return { ok: false, msg: 'That code is from a different Stake account.' };
-        if (!S.accounts[id]) S.accounts[id] = blankAccount();
-        var a = S.accounts[id], before = (a.ltAnchors || []).length;
-        a.ltAnchors = unionAnchors(a.ltAnchors, anchors);
-        a.ltSeeded = true;
-        var oldest = a.ltAnchors.length ? a.ltAnchors[0].t : Date.now();
-        a.ltStart = a.ltStart ? Math.min(a.ltStart, oldest) : oldest;   // claim coverage back to the imported history -> pinpoint now
-        if (json.n && !a.name) a.name = String(json.n);
-        flushSave(); scheduleRender();
-        var added = a.ltAnchors.length - before;
-        return { ok: true, msg: 'Imported ' + anchors.length + ' snapshots (' + (added > 0 ? ('+' + added + ' new') : 'already current') + '). Baseline updated.' };
-    }
-    // self-contained sync dialog (shared by desktop + mobile; inline-styled, no CSS deps)
-    function openSyncDialog() {
-        if (document.getElementById('stk7w-sync')) return;
-        var code = null; try { code = exportBaselineCode(); } catch (e) {}
-        var ov = document.createElement('div'); ov.id = 'stk7w-sync';
-        ov.style.cssText = 'position:fixed;inset:0;z-index:2147483646;display:flex;align-items:center;justify-content:center;background:rgba(3,8,12,.62);-webkit-backdrop-filter:blur(3px);backdrop-filter:blur(3px);padding:14px;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;';
-        var btn = 'border:0;border-radius:9px;padding:11px 15px;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit;-webkit-appearance:none;';
-        var ta = 'width:100%;box-sizing:border-box;background:#06121b;border:1px solid #2f4553;color:#cfe0ec;border-radius:9px;padding:10px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11px;line-height:1.4;resize:none;-webkit-user-select:text;user-select:text;';
-        var lbl = 'font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:#65808f;font-weight:700;margin:0 0 6px;';
-        var card = document.createElement('div');
-        card.style.cssText = 'width:min(460px,94vw);max-height:90vh;overflow:auto;background:linear-gradient(180deg,#102433,#0a1620);border:1px solid #26404e;border-radius:16px;box-shadow:0 30px 70px -18px rgba(0,0,0,.82);color:#e8f0f5;padding:18px;';
-        card.innerHTML =
-            '<div style="font-size:15px;font-weight:800;margin-bottom:4px;">Cross-device sync</div>'
-          + '<div style="font-size:12px;color:#9fb4c1;line-height:1.5;margin-bottom:15px;">Same Stake account on another device? Copy this code there and tap <b>Apply</b> to calibrate its 7-day total right away — no week-long warm-up.</div>'
-          + '<div style="' + lbl + '">This device&rsquo;s code</div>'
-          + '<textarea id="stk7w-sc-out" readonly rows="3" style="' + ta + '"></textarea>'
-          + '<button id="stk7w-sc-copy" style="' + btn + 'background:#1fd655;color:#062c14;margin-top:8px;">Copy code</button>'
-          + '<div style="height:1px;background:rgba(255,255,255,.08);margin:16px 0;"></div>'
-          + '<div style="' + lbl + '">Paste a code from your other device</div>'
-          + '<textarea id="stk7w-sc-in" rows="3" placeholder="Paste STK7W-B1… code here" style="' + ta + '"></textarea>'
-          + '<div style="display:flex;gap:8px;margin-top:8px;align-items:center;flex-wrap:wrap;">'
-          + '<button id="stk7w-sc-apply" style="' + btn + 'background:#2a4d63;color:#fff;">Apply</button>'
-          + '<button id="stk7w-sc-close" style="' + btn + 'background:transparent;color:#9fb4c1;border:1px solid #2f4553;">Close</button>'
-          + '<span id="stk7w-sc-msg" style="font-size:11.5px;color:#9fb4c1;"></span>'
-          + '</div>';
-        ov.appendChild(card); document.body.appendChild(ov);
-        function close() { if (ov.parentNode) ov.parentNode.removeChild(ov); }
-        ov.addEventListener('click', function (e) { if (e.target === ov) close(); });
-        var out = card.querySelector('#stk7w-sc-out'), msg = card.querySelector('#stk7w-sc-msg'), copyBtn = card.querySelector('#stk7w-sc-copy');
-        if (code) { out.value = code; }
-        else { out.value = ''; out.placeholder = 'No baseline yet — let the tracker run a little, then come back.'; copyBtn.disabled = true; copyBtn.style.opacity = '.5'; copyBtn.style.cursor = 'default'; }
-        copyBtn.addEventListener('click', function () {
-            if (!code) return;
-            out.focus(); out.select();
-            var done = function () { msg.textContent = 'Copied!'; msg.style.color = '#1fd655'; };
-            try { navigator.clipboard.writeText(out.value).then(done, function () { try { document.execCommand('copy'); done(); } catch (e) { msg.textContent = 'Select all, then copy'; msg.style.color = '#ffb020'; } }); }
-            catch (e) { try { document.execCommand('copy'); done(); } catch (e2) { msg.textContent = 'Select all, then copy'; msg.style.color = '#ffb020'; } }
-        });
-        card.querySelector('#stk7w-sc-apply').addEventListener('click', function () {
-            var r = importBaselineCode(card.querySelector('#stk7w-sc-in').value);
-            msg.textContent = r.msg; msg.style.color = r.ok ? '#1fd655' : '#ff6b76';
-            if (r.ok) { try { render(); } catch (e) {} setTimeout(close, 1500); }
-        });
-        card.querySelector('#stk7w-sc-close').addEventListener('click', close);
-    }
-
-    /* ------------------------------- HUD --------------------------------- */
-    var hud = {};
-    var renderQueued = false;
-    function scheduleRender() {
-        if (renderQueued) return;
-        renderQueued = true;
-        requestAnimationFrame(function () { renderQueued = false; render(); });
-    }
-
-    function injectStyle() {
-        var css = ''
-        // ---- main panel: a static "instrument" dashboard mounted under the balance ----
-        + '#stk7w{position:fixed;z-index:850;top:58px;left:50%;transform:translateX(-50%);width:912px;max-width:calc(100vw - 18px);'
-        + 'color:#e8f0f5;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;'
-        + 'background:radial-gradient(135% 120% at 16% -10%,rgba(31,214,85,.07),transparent 45%),radial-gradient(120% 130% at 100% 0%,rgba(79,184,214,.06),transparent 50%),linear-gradient(180deg,#102433,#0a1620);'
-        + 'border:1px solid #26404e;border-radius:18px;overflow:hidden;box-shadow:0 30px 70px -18px rgba(0,0,0,.78),0 1px 0 rgba(255,255,255,.07) inset,0 0 0 1px rgba(255,255,255,.015) inset;}'
-        + '#stk7w *{box-sizing:border-box;}'
-        + '#stk7w .mono{font-family:ui-monospace,SFMono-Regular,"SF Mono","JetBrains Mono",Menlo,monospace;font-variant-numeric:tabular-nums;}'
-        + '@keyframes stk7wpulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.4;transform:scale(.82)}}'
-        + '#stk7w .hd{display:flex;align-items:center;justify-content:space-between;padding:10px 20px;border-bottom:1px solid rgba(255,255,255,.055);background:linear-gradient(180deg,rgba(255,255,255,.025),transparent);}'
-        + '#stk7w .who{display:flex;align-items:center;gap:11px;font-size:11.5px;color:#9fb4c1;}'
-        + '#stk7w .who b{color:#fff;font-weight:600;}'
-        + '#stk7w .live{display:inline-flex;align-items:center;gap:6px;font-size:9.5px;letter-spacing:.16em;color:#1fd655;text-transform:uppercase;font-weight:600;}'
-        + '#stk7w .live i{width:6px;height:6px;border-radius:50%;background:#1fd655;box-shadow:0 0 9px #1fd655;animation:stk7wpulse 1.9s infinite ease-in-out;}'
-        + '#stk7w .hrt{display:flex;align-items:center;gap:14px;}'
-        + '#stk7w .pin{font-size:11px;color:#ffb020;font-family:ui-monospace,Menlo,monospace;}'
-        + '#stk7w .pin.ok{color:#1fd655;}#stk7w .pin b{font-weight:700;}'
-        + '#stk7w .badge{font-size:9px;font-weight:700;letter-spacing:.08em;color:#1fd655;background:rgba(31,214,85,.13);border:1px solid rgba(31,214,85,.25);padding:3px 7px;border-radius:6px;cursor:default;}'
-        + '#stk7w .x{cursor:pointer;color:#5f7585;font-size:18px;line-height:1;width:16px;text-align:center;user-select:none;}'
-        + '#stk7w .x:hover{color:#fff;}'
-        + '#stk7w .grid{display:flex;}'
-        + '#stk7w .cell{padding:17px 20px;}'
-        + '#stk7w .cell+.cell{border-left:1px solid rgba(255,255,255,.05);}'
-        + '#stk7w .c1{width:312px;flex:none;}#stk7w .c2{width:344px;flex:none;}#stk7w .c3{flex:1;min-width:0;}'
-        + '#stk7w .lbl{font-size:9px;letter-spacing:.18em;color:#65808f;text-transform:uppercase;font-weight:600;}'
-        + '#stk7w .hero{margin-top:9px;display:flex;align-items:baseline;gap:6px;}'
-        + '#stk7w .hnum{font-size:38px;font-weight:700;line-height:.9;letter-spacing:-1.4px;color:#fff;text-shadow:0 0 30px rgba(31,214,85,.32);}'
-        + '#stk7w .hu{font-size:14px;color:#8aa0b0;font-weight:500;}'
-        + '#stk7w .goalw{margin-top:18px;}'
-        + '#stk7w .gbar{height:7px;border-radius:5px;background:#091520;box-shadow:inset 0 1px 3px rgba(0,0,0,.6);overflow:hidden;}'
-        + '#stk7w .gbar > i{display:block;height:100%;border-radius:5px;background:linear-gradient(90deg,#00a838,#1fd655);box-shadow:0 0 11px rgba(31,214,85,.65);width:0;transition:width .3s;}'
-        + '#stk7w .gmeta{display:flex;justify-content:space-between;margin-top:8px;font-size:10.5px;color:#8aa0b0;cursor:pointer;}'
-        + '#stk7w .gmeta .pc{color:#1fd655;font-weight:600;}'
-        + '#stk7w .gmeta .rem-ok{color:#1fd655;font-weight:600;}'
-        + '#stk7w .gedit{display:none;width:100%;margin-top:8px;background:#091520;border:1px solid #2f4553;color:#fff;border-radius:6px;padding:5px 8px;font-size:11px;font-family:ui-monospace,Menlo,monospace;}'
-        + '#stk7w .rtpw{margin-top:19px;padding-top:17px;border-top:1px solid rgba(255,255,255,.05);}'
-        + '#stk7w .meter{display:flex;height:9px;border-radius:6px;overflow:hidden;background:#091520;box-shadow:inset 0 1px 3px rgba(0,0,0,.6);}'
-        + '#stk7w .meter > i{height:100%;width:0;transition:width .3s;}'
-        + '#stk7w .rtpr{margin-top:12px;}'
-        + '#stk7w .rline{display:flex;justify-content:space-between;align-items:center;margin-top:8px;font-size:10px;}'
-        + '#stk7w .rline .rk{display:flex;align-items:center;gap:7px;color:#9fb4c1;min-width:0;}'
-        + '#stk7w .rline .rk i{width:7px;height:7px;border-radius:2px;flex:none;}'
-        + '#stk7w .rline .rval{font-size:11px;color:#dfe9ef;font-weight:600;margin-left:10px;white-space:nowrap;}'
-        + '#stk7w .ctop{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;}'
-        + '#stk7w .ct{display:flex;gap:4px;align-items:center;}'
-        + '#stk7w .ct button{background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);color:#9fb4c1;border-radius:6px;font-size:10px;padding:2px 7px;cursor:pointer;line-height:1.4;font-family:inherit;}'
-        + '#stk7w .ct button:hover{border-color:#3a4a57;color:#fff;background:rgba(255,255,255,.07);}'
-        + '#stk7w .ct .live2{font-weight:700;letter-spacing:.02em;}'
-        + '#stk7w .ct .live2.on{color:#1fd655;border-color:rgba(31,214,85,.5);background:rgba(31,214,85,.1);}'
-        + '#stk7w .well{background:#07121a;border:1px solid rgba(255,255,255,.045);border-radius:11px;box-shadow:inset 0 2px 10px rgba(0,0,0,.55);padding:11px 13px 7px;}'
-        + '#stk7w #stk7w-gcanvas{width:100%;height:150px;display:block;cursor:crosshair;touch-action:none;}'
-        + '#stk7w .egp{display:flex;justify-content:space-between;align-items:center;margin:15px 0 9px;}'
-        + '#stk7w .egp:first-of-type{margin-top:0;}'
-        + '#stk7w .egn{font-size:10.5px;font-weight:700;color:#d2dde4;}'
-        + '#stk7w .egn span{color:#65808f;font-weight:500;font-size:9px;letter-spacing:.1em;text-transform:uppercase;margin-left:5px;}'
-        + '#stk7w .egc{font-size:9px;font-weight:700;padding:2px 8px;border-radius:20px;}'
-        + '#stk7w .egc.ok{background:rgba(31,214,85,.14);color:#1fd655;}'
-        + '#stk7w .egc.no{background:rgba(255,91,104,.13);color:#ff6b76;}'
-        + '#stk7w .egc.part{background:rgba(255,176,32,.14);color:#ffb020;}'
-        + '#stk7w .et{display:flex;align-items:center;gap:10px;margin-top:8px;}'
-        + '#stk7w .ep{width:9px;height:9px;border-radius:50%;flex:none;}'
-        + '#stk7w .ep.ok{background:#1fd655;box-shadow:0 0 8px rgba(31,214,85,.75);}'
-        + '#stk7w .ep.no{background:transparent;border:1.5px solid #ff5b68;}'
-        + '#stk7w .etn{font-size:10.5px;color:#aebecb;min-width:74px;}'
-        + '#stk7w .etn b{color:#e8f0f5;font-weight:600;}'
-        + '#stk7w .etn .rq{color:#5f7585;font-size:9px;margin-left:3px;}'
-        + '#stk7w .es{margin-left:auto;font-size:10px;text-align:right;}'
-        + '#stk7w .es b{font-weight:700;}'
-        + '#stk7w .es .q{color:#65808f;font-size:9px;margin-left:2px;}'
-        // ---- docked nav pill (collapsed state; lives in Stake top bar, right of Wallet) ----
-        + '#stk7w-dock{display:inline-flex;align-items:center;gap:9px;height:36px;align-self:center;margin-left:10px;padding:0 13px;background:#0c1c27;border:1px solid rgba(31,214,85,.5);border-radius:10px;cursor:pointer;color:#e8f0f5;font-family:-apple-system,"Segoe UI",sans-serif;font-size:12.5px;white-space:nowrap;box-shadow:0 1px 3px rgba(0,0,0,.35);}'
-        + '#stk7w-dock.fixed{position:fixed;z-index:850;top:10px;right:16px;}'
-        + '#stk7w-dock:hover{border-color:#1fd655;background:#0f2531;}'
-        + '#stk7w-dock .dl{width:7px;height:7px;border-radius:50%;background:#1fd655;box-shadow:0 0 8px #1fd655;animation:stk7wpulse 1.9s infinite ease-in-out;flex:none;}'
-        + '#stk7w-dock .dlbl{color:#cddbe4;font-weight:600;}'
-        + '#stk7w-dock .dsep{width:1px;height:16px;background:rgba(255,255,255,.12);}'
-        + '#stk7w-dock .dval{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-variant-numeric:tabular-nums;color:#fff;font-weight:600;}'
-        + '#stk7w-dock .dval i{color:#8aa0b0;font-style:normal;font-size:10px;font-weight:500;margin-left:2px;}'
-        + '#stk7w-dock .dcv{color:#5f7585;font-size:9px;}'
-        + '#stk7w-dock.open .dcv{color:#1fd655;}'
-        // ---- chart hover tooltip ----
-        + '#stk7w-gtip{position:fixed;z-index:860;pointer-events:none;display:none;background:#0a1822;border:1px solid rgba(79,184,214,.4);border-radius:7px;padding:7px 10px;box-shadow:0 8px 24px rgba(0,0,0,.6);}'
-        + '#stk7w-gtip .gtl{color:#65808f;font-size:9px;letter-spacing:.06em;text-transform:uppercase;font-family:ui-monospace,Menlo,monospace;}'
-        + '#stk7w-gtip .gtv{color:#fff;font-size:12.5px;font-weight:700;margin-top:2px;font-family:ui-monospace,Menlo,monospace;}'
-        + '#stk7w-gtip .gtf{color:#9fd0e0;font-size:10px;margin-top:3px;font-family:ui-monospace,Menlo,monospace;}';
-        var st = document.createElement('style');
-        st.textContent = css;
-        (document.head || document.documentElement).appendChild(st);
-    }
-
-    function buildHud() {
-        if (document.getElementById('stk7w')) return;
-        injectStyle();
-
-        // ---- docked nav pill (the collapsed state; sits in Stake's top bar, right of Wallet) ----
-        var dock = document.createElement('div');
-        dock.id = 'stk7w-dock';
-        dock.innerHTML = '<span class="dl"></span><span class="dlbl">Rolling 7-Day Wager Tracker</span><span class="dsep"></span><span class="dval" id="stk7w-dval">–</span><span class="dcv">▾</span>';
-        hud.dock = dock;
-        hud.dval = dock.querySelector('#stk7w-dval');
-        dock.addEventListener('click', function () { S.ui.open = !S.ui.open; save(); applyOpen(); });
-
-        // ---- main panel (static instrument dashboard) ----
-        var w = document.createElement('div');
-        w.id = 'stk7w';
-        w.setAttribute('data-ver', VERSION);
-        w.innerHTML =
-            '<div class="hd">'
-          + '  <div class="who"><span class="live"><i></i>Live</span><b id="stk7w-acct">—</b><span id="stk7w-tixw">· — tickets</span></div>'
-          + '  <div class="hrt"><span class="pin" id="stk7w-cover">—</span><span class="x" id="stk7w-sync-btn" title="cross-device sync" style="font-size:15px;">⇄</span><span class="badge" id="stk7w-cur" title="tracking ' + S.currency + '">' + S.currency + '</span><span class="x" id="stk7w-min" title="collapse">–</span></div>'
-          + '</div>'
-          + '<div class="grid">'
-          + '  <div class="cell c1">'
-          + '    <div class="lbl">Rolling 7-Day Wager</div>'
-          + '    <div class="hero"><span class="hnum mono" id="stk7w-roll">–</span><span class="hu">' + S.currency + '</span></div>'
-          + '    <div class="goalw">'
-          + '      <div class="gbar"><i id="stk7w-fill"></i></div>'
-          + '      <div class="gmeta" id="stk7w-gmeta" title="click to set a goal"><span class="mono" id="stk7w-gleft">—</span><span class="mono" id="stk7w-gright">—</span></div>'
-          + '      <input class="gedit mono" id="stk7w-target" type="number" min="0" step="any" placeholder="goal (' + S.currency + ')">'
-          + '    </div>'
-          + '    <div class="rtpw"><div class="lbl">RTP Distribution</div>'
-          + '      <div class="meter"><i id="stk7w-mhi" style="background:linear-gradient(90deg,#16b045,#1fd655)"></i><i id="stk7w-mmid" style="background:#ffb020"></i><i id="stk7w-mlow" style="background:linear-gradient(90deg,#ff5b68,#c43d48)"></i></div>'
-          + '      <div class="rtpr">'
-          + '        <div class="rline"><span class="rk"><i style="background:#1fd655"></i>Originals (99%&lt;)</span><span class="rval mono" id="stk7w-bhi">—</span></div>'
-          + '        <div class="rline"><span class="rk"><i style="background:#ffb020"></i>Originals/Table Games (98%-99%)</span><span class="rval mono" id="stk7w-bmid">—</span></div>'
-          + '        <div class="rline"><span class="rk"><i style="background:#ff5b68"></i>Slots (98% &gt;)</span><span class="rval mono" id="stk7w-blow">—</span></div>'
-          + '      </div>'
-          + '    </div>'
-          + '  </div>'
-          + '  <div class="cell c2">'
-          + '    <div class="ctop"><div class="lbl">Wager Activity · 7d</div>'
-          + '      <div class="ct"><button class="live2 on" id="stk7w-glive" title="snap to live">⟲ Live</button><button id="stk7w-gout" title="zoom out">−</button><button id="stk7w-gin" title="zoom in">+</button><button id="stk7w-gfit" title="fit 7 days">⛶</button></div>'
-          + '    </div>'
-          + '    <div class="well"><canvas id="stk7w-gcanvas"></canvas></div>'
-          + '  </div>'
-          + '  <div class="cell c3"><div class="lbl" style="margin-bottom:13px">Code Eligibility</div><div id="stk7w-elig"></div></div>'
-          + '</div>';
-        document.body.appendChild(w);
-        hud.w = w;
-        hud.acct = w.querySelector('#stk7w-acct');
-        hud.tixw = w.querySelector('#stk7w-tixw');
-        hud.cover = w.querySelector('#stk7w-cover');
-        hud.cur = w.querySelector('#stk7w-cur');
-        hud.roll = w.querySelector('#stk7w-roll');
-        hud.fill = w.querySelector('#stk7w-fill');
-        hud.gmeta = w.querySelector('#stk7w-gmeta');
-        hud.gleft = w.querySelector('#stk7w-gleft');
-        hud.gright = w.querySelector('#stk7w-gright');
-        hud.target = w.querySelector('#stk7w-target');
-        hud.mhi = w.querySelector('#stk7w-mhi');
-        hud.mmid = w.querySelector('#stk7w-mmid');
-        hud.mlow = w.querySelector('#stk7w-mlow');
-        hud.bhi = w.querySelector('#stk7w-bhi');
-        hud.bmid = w.querySelector('#stk7w-bmid');
-        hud.blow = w.querySelector('#stk7w-blow');
-        window.addEventListener('resize', scheduleRender);
-
-        // ---- wager-activity chart: reuses the existing zoom/pan/hover engine ----
-        hud.gwrap = w.querySelector('.well');
-        hud.gcanvas = w.querySelector('#stk7w-gcanvas');
-        hud.glive = w.querySelector('#stk7w-glive');
-        hud.gtip = document.createElement('div'); hud.gtip.id = 'stk7w-gtip'; document.body.appendChild(hud.gtip);
-        if (S.ui.graphLive == null) S.ui.graphLive = true;
-        gView.end = Date.now();
-        function setLiveBtn() { if (hud.glive) hud.glive.className = 'live2' + (S.ui.graphLive ? ' on' : ''); }
-        function setLive(on) { S.ui.graphLive = !!on; if (on) gView.end = Date.now(); save(); setLiveBtn(); scheduleGraph(); }
-        function zoomBy(factor, atX) {
-            var W = hud.gcanvas.clientWidth || 300, span = gSpan(), end = gEnd(), now = Date.now();
-            var cx = (atX == null) ? W / 2 : atX, tc = (end - span) + (cx / W) * span;   // time under cursor (now-right)
-            var ns = Math.max(GSPAN_MIN, Math.min(GSPAN_MAX, span * factor));
-            var ne = tc + ns * (1 - cx / W);                                              // keep that time under the cursor
-            S.ui.graphSpan = ns;
-            if (ne >= now - 500) { S.ui.graphLive = true; gView.end = now; }
-            else { S.ui.graphLive = false; gView.end = ne; }
-            save(); setLiveBtn(); scheduleGraph();
-        }
-        hud.glive.addEventListener('click', function () { setLive(true); });
-        w.querySelector('#stk7w-gout').addEventListener('click', function () { zoomBy(1 / 0.7); });
-        w.querySelector('#stk7w-gin').addEventListener('click', function () { zoomBy(0.7); });
-        w.querySelector('#stk7w-gfit').addEventListener('click', function () { S.ui.graphSpan = GSPAN_MAX; S.ui.graphLive = true; gView.end = Date.now(); save(); setLiveBtn(); scheduleGraph(); });
-        hud.gcanvas.addEventListener('wheel', function (e) {
-            e.preventDefault();
-            var rect = hud.gcanvas.getBoundingClientRect();
-            zoomBy(e.deltaY > 0 ? 1 / 0.85 : 0.85, e.clientX - rect.left);
-        }, { passive: false });
-        hud.gcanvas.addEventListener('mousedown', function (e) { gView.dragX = e.clientX; gView.dragEnd = gEnd(); e.preventDefault(); });
-        window.addEventListener('mousemove', function (e) {
-            if (!S.ui.open || !hud.gcanvas) return;
-            var rect = hud.gcanvas.getBoundingClientRect();
-            if (gView.dragX != null) {
-                var W = hud.gcanvas.clientWidth || 300, span = gSpan(), now = Date.now();
-                var ne = gView.dragEnd - ((e.clientX - gView.dragX) / W) * span;   // now-right: drag right pans into history
-                ne = Math.max(now - WINDOW_MS + span, Math.min(now, ne));
-                S.ui.graphLive = (ne >= now - 500); gView.end = ne; setLiveBtn();
-            }
-            var inside = e.clientX >= rect.left && e.clientX <= rect.right && e.clientY >= rect.top && e.clientY <= rect.bottom;
-            if (inside) { gView.hoverX = e.clientX - rect.left; gView.mx = e.clientX; gView.my = e.clientY; }
-            else if (gView.hoverX != null) { gView.hoverX = null; gHideTip(); }
-            scheduleGraph();
-        });
-        window.addEventListener('mouseup', function () { if (gView.dragX != null) { gView.dragX = null; save(); } });
-        setLiveBtn();
-
-        // ---- Code Eligibility ladder: a status pip + days-left / amount-needed, all six tiers visible ----
-        var DROPS = [
-            { name: 'Daily', tiers: [{ v: '$1', req: 4000 }, { v: '$2', req: 8000 }, { v: '$3', req: 12000 }] },
-            { name: 'High Roller', tiers: [{ v: '$12.50', req: 50000 }, { v: '$25', req: 100000 }, { v: '$50', req: 200000 }] }
-        ];
-        hud.elig = w.querySelector('#stk7w-elig');
-        hud.drops = [];
-        DROPS.forEach(function (grp) {
-            var head = document.createElement('div'); head.className = 'egp';
-            var nm = document.createElement('div'); nm.className = 'egn'; nm.innerHTML = grp.name + '<span>Drops</span>';
-            var cnt = document.createElement('div'); cnt.className = 'egc'; cnt.textContent = '0/' + grp.tiers.length;
-            head.appendChild(nm); head.appendChild(cnt); hud.elig.appendChild(head);
-            var tiers = [];
-            grp.tiers.forEach(function (ti) {
-                var row = document.createElement('div'); row.className = 'et';
-                var pip = document.createElement('span'); pip.className = 'ep no';
-                var name = document.createElement('span'); name.className = 'etn mono';
-                name.innerHTML = '<b>' + ti.v + '</b><span class="rq">' + fmtShort(ti.req) + '</span>';
-                var es = document.createElement('span'); es.className = 'es mono'; es.textContent = '—';
-                row.appendChild(pip); row.appendChild(name); row.appendChild(es); hud.elig.appendChild(row);
-                tiers.push({ pip: pip, es: es, req: ti.req });
-            });
-            hud.drops.push({ cnt: cnt, tiers: tiers, total: grp.tiers.length });
-        });
-
-        // ---- goal: click the meta line to edit inline (Enter/blur commits, blank clears) ----
-        var editing = false;
-        function showEdit() { editing = true; hud.target.value = getTarget() || ''; hud.gmeta.style.display = 'none'; hud.target.style.display = 'block'; hud.target.focus(); hud.target.select(); }
-        function hideEdit() { if (!editing) return; editing = false; hud.target.style.display = 'none'; hud.gmeta.style.display = 'flex'; render(); }
-        hud.gmeta.addEventListener('click', showEdit);
-        hud.target.addEventListener('input', function () { var a = acct(true); if (a) { a.target = parseFloat(hud.target.value) || 0; a.targetAt = Date.now(); save(); } });
-        hud.target.addEventListener('keydown', function (e) { if (e.key === 'Enter' || e.key === 'Escape') hideEdit(); });
-        hud.target.addEventListener('blur', hideEdit);
-
-        if (TRACK_CCY.length > 1) hud.cur.addEventListener('click', cycleCurrency);
-        else { hud.cur.style.cursor = 'default'; }
-        w.querySelector('#stk7w-min').addEventListener('click', function () { S.ui.open = false; save(); applyOpen(); });
-        w.querySelector('#stk7w-sync-btn').addEventListener('click', openSyncDialog);
-
-        if (S.ui.open == null) S.ui.open = true;
-        ensureDocked();
-        applyOpen();
-        render();
-    }
-
-    // Keep the collapsed pill docked in Stake's top bar (right of Wallet); re-dock if the SPA re-renders.
-    function ensureDocked() {
-        if (!hud.dock) return;
-        var bt = document.querySelector('.balance-toggle');
-        if (bt && bt.parentNode) {
-            if (hud.dock.previousElementSibling !== bt) { hud.dock.classList.remove('fixed'); bt.parentNode.insertBefore(hud.dock, bt.nextSibling); }
-        } else if (!hud.dock.isConnected) {
-            hud.dock.classList.add('fixed'); document.body.appendChild(hud.dock);   // fallback: float top-right
-        }
-    }
-
-    function applyOpen() {
-        if (!hud.w) return;
-        ensureDocked();
-        if (S.ui.open) { hud.w.style.display = ''; if (hud.dock) hud.dock.classList.add('open'); }
-        else { hud.w.style.display = 'none'; if (hud.dock) hud.dock.classList.remove('open'); }
-        render();
-    }
-
-    function status(msg, cls) {
-        if (!hud.status) return;
-        hud.status.className = 'st' + (cls ? ' ' + cls : '');
-        hud.status.textContent = msg || '';
-    }
-
-    function cycleCurrency() {
-        var idx = TRACK_CCY.indexOf(S.currency);
-        S.currency = TRACK_CCY[(idx + 1) % TRACK_CCY.length];
-        save(); render();
-    }
-
-    function renderDebug() {
-        if (!hud.dbg || hud.dbg.style.display === 'none') return;
-        var r = curRec();
-        var a = acct();
-        var lines = [];
-        lines.push('currency: ' + S.currency + '   account: ' + (a ? (a.name || (S.active || '').slice(0, 8) + '…') : 'none') +
-                   '  (' + Object.keys(S.accounts || {}).length + ' tracked)');
-        lines.push('bets stored: ' + r.bets.length + (r.trackStart ? ('   since ' + shortDate(r.trackStart)) : ''));
-        lines.push('games with edge: ' + Object.keys(S.gameEdge || {}).length +
-                   (IS_SOCIAL ? '' : '   USD rates: ' + Object.keys(rates).length));
-        lines.push('— recent own bets —');
-        var rb = r.bets.slice(-8);
-        for (var i = rb.length - 1; i >= 0; i--) {
-            var be = rb[i].edge != null ? rb[i].edge : edgeForGame(rb[i].game);
-            lines.push(new Date(rb[i].t).toLocaleTimeString() + '  ' + fmt(rb[i].amt) + (rb[i].rc ? ' (' + rb[i].raw + rb[i].rc + ')' : '') +
-                       '  ' + (rb[i].game || '?') + '  ' + (be != null ? be + '% ' + bucketOfEdge(be) : 'edge?'));
-        }
-        if (S.diag && S.diag.length) {
-            lines.push('— bet-owner samples —');
-            for (var j = Math.max(0, S.diag.length - 5); j < S.diag.length; j++) {
-                lines.push(S.diag[j].split(' ').slice(1).join(' '));
-            }
-        }
-        hud.dbg.textContent = lines.join('\n');
-    }
-
-    // v2.17: cap the body height to the viewport so the HUD never runs off the bottom,
-    // even with every section expanded — it scrolls internally instead.
-    function fitBody() {
-        if (!hud.bd || !hud.w || hud.w.style.display === 'none') return;
-        var hd = hud.w.querySelector('.hd'), hh = hd ? hd.offsetHeight : 33;
-        hud.bd.style.maxHeight = Math.max(140, window.innerHeight - hud.w.getBoundingClientRect().top - hh - 12) + 'px';
-    }
-    function render() {
-        if (!hud.w) return;
-        ensureDocked();
-        var C = ' ' + S.currency;
-        if (hud.cur) hud.cur.textContent = S.currency;
-
-        var a = acct();
-        hud.acct.textContent = a ? (a.name || (S.active || '').slice(0, 10) + '…') : 'detecting…';
-        hud.tixw.textContent = '· ' + ((a && a.tickets != null) ? a.tickets : '—') + ' tickets';
-
-        var info = rolling();
-        var rollStr = info.ready ? fmt(info.rolling) : '–';
-        hud.roll.textContent = rollStr;
-        if (hud.dval) hud.dval.innerHTML = rollStr + '<i>' + S.currency + '</i>';   // live in the docked pill too
-
-        // header: pinpoint / coverage status
-        if (!a) { hud.cover.textContent = 'detecting account…'; hud.cover.className = 'pin'; }
-        else if (!info.ready) { hud.cover.textContent = 'reading lifetime…'; hud.cover.className = 'pin'; }
-        else if (info.realFull) { hud.cover.innerHTML = '✓ <b>calibrated</b>'; hud.cover.className = 'pin ok'; }
-        else {
-            var bridged = !!(a.ltAnchors && a.ltAnchors.some(function (p) { return p.seed; }));
-            hud.cover.innerHTML = '◷ ' + (bridged ? 'calibrated in ' : 'full window in ') + '<b>' + formatDur(WINDOW_MS - info.realCoverMs) + '</b>';
-            hud.cover.className = 'pin';
-        }
-
-        // RTP distribution: meter widths + values (sample proportions scaled to the authoritative total,
-        // so the three tiers sum to the rolling figure — the API gives the total, not the split).
-        var bk = rollingBuckets(), bst = bk.high + bk.mid + bk.low;
-        if (bst > 0 && info.ready) {
-            var roll = info.rolling || 0, vh = roll * bk.high / bst, vm = roll * bk.mid / bst, vl = roll * bk.low / bst, tot = (vh + vm + vl) || 1;
-            hud.bhi.textContent = fmtShort(vh); hud.bmid.textContent = fmtShort(vm); hud.blow.textContent = fmtShort(vl);
-            hud.mhi.style.width = (vh / tot * 100) + '%'; hud.mmid.style.width = (vm / tot * 100) + '%'; hud.mlow.style.width = (vl / tot * 100) + '%';
-        } else {
-            hud.bhi.textContent = hud.bmid.textContent = hud.blow.textContent = '—';
-            hud.mhi.style.width = hud.mmid.style.width = hud.mlow.style.width = '0%';
-        }
-
-        // goal progress (inline editor handles setting / clearing)
-        var tgt = getTarget();
-        if (tgt > 0 && info.ready) {
-            var pct = Math.max(0, Math.min(1, info.rolling / tgt)), rem = tgt - info.rolling;
-            hud.fill.style.width = (pct * 100) + '%';
-            if (rem <= 0) { hud.gleft.innerHTML = '<span class="rem-ok">✓ goal complete</span>'; hud.gright.textContent = fmtShort(tgt) + C; }
-            else { hud.gleft.innerHTML = '<span class="pc">' + Math.round(pct * 100) + '%</span> of ' + fmtShort(tgt) + ' goal'; hud.gright.textContent = fmtShort(rem) + ' to go'; }
-        } else {
-            hud.fill.style.width = '0%';
-            hud.gleft.textContent = 'No goal set'; hud.gright.textContent = 'click to set →';
-        }
-
-        // Code Eligibility: status pip + days-left / amount-needed, plus an (n/total) count pill per category.
-        if (hud.drops) {
-            hud.drops.forEach(function (g) {
-                var n = 0;
-                g.tiers.forEach(function (t) {
-                    if (!a || !info.ready) { t.es.textContent = '—'; t.es.style.color = '#65808f'; t.pip.className = 'ep no'; return; }
-                    if (info.rolling >= t.req) {
-                        n++;
-                        var ems = eligTimeLeftMs(t.req);
-                        t.es.innerHTML = '<b>' + (ems == null ? '—' : eligHrs(ems)) + '</b><span class="q">left</span>';
-                        t.es.style.color = '#1fd655'; t.pip.className = 'ep ok';
-                    } else {
-                        t.es.innerHTML = '<b>+' + fmtShort(t.req - info.rolling) + '</b>';
-                        t.es.style.color = '#ff6b76'; t.pip.className = 'ep no';
-                    }
-                });
-                g.cnt.textContent = n + '/' + g.total;
-                g.cnt.className = 'egc ' + ((!a || !info.ready) ? '' : (n === 0 ? 'no' : (n === g.total ? 'ok' : 'part')));
-            });
-        }
-
-        if (S.ui.open) drawGraph();
-    }
-
-    /* ---------------------------- drag panel ----------------------------- */
-    function makeDraggable(panel, handle) {
-        var sx, sy, ox, oy, drag = false;
-        handle.addEventListener('mousedown', function (e) {
-            if (e.target.classList.contains('x') || e.target.classList.contains('badge')) return;
-            drag = true;
-            var r = panel.getBoundingClientRect();
-            sx = e.clientX; sy = e.clientY; ox = r.left; oy = r.top;
-            e.preventDefault();
-        });
-        window.addEventListener('mousemove', function (e) {
-            if (!drag) return;
-            var nl = Math.max(0, Math.min(window.innerWidth - 60, ox + e.clientX - sx));
-            var nt = Math.max(0, Math.min(window.innerHeight - 30, oy + e.clientY - sy));
-            panel.style.left = nl + 'px'; panel.style.top = nt + 'px'; panel.style.right = 'auto';
-        });
-        window.addEventListener('mouseup', function () {
-            if (!drag) return; drag = false;
-            var r = panel.getBoundingClientRect();
-            S.ui.left = Math.round(r.left); S.ui.top = Math.round(r.top); save();
-        });
-    }
-
-    /* ------------------------------ startup ------------------------------ */
-    function cleanupOversizedStore() {
-        try {
-            var stored = readStored();
-            if (!stored || !stored.accounts) return;
-            var now = Date.now(), idMinT = now - LIVEID_KEEP_MS;
-            var minBin = Math.floor((now - BIN_KEEP_MS) / BIN_MS), winMinT = now - WINDOW_MS, changed = false;
-            Object.keys(stored.accounts).forEach(function (id) {
-                var acc = stored.accounts[id]; if (!acc || !acc.cur) return;
-                Object.keys(acc.cur).forEach(function (c) {
-                    var rec = acc.cur[c]; if (!rec) return;
-                    if (!rec.bins) rec.bins = {};
-                    if (!rec._mig && rec.bets && rec.bets.length) {
-                        var mw = rec.bins['migrated'] || (rec.bins['migrated'] = {});
-                        rec.bets.forEach(function (bt0) {
-                            if (!bt0 || bt0.t < winMinT) return;
-                            var e = (bt0.edge != null) ? bt0.edge : edgeForGame(bt0.game);
-                            var bk = bucketOfEdge(e), key = Math.floor(bt0.t / BIN_MS);
-                            var cell = mw[key] || (mw[key] = { h: 0, m: 0, l: 0, n: 0 });
-                            cell[bk === 'high' ? 'h' : bk === 'mid' ? 'm' : 'l'] += (bt0.amt || 0); cell.n += 1;
-                        });
-                        rec._mig = 1; changed = true;
-                    }
-                    if (rec.bets && rec.bets.length > BETS_CAP) { rec.bets = rec.bets.slice(rec.bets.length - BETS_CAP); changed = true; }
-                    if (rec.liveIds) {
-                        var kept = {}, before = 0, after = 0;
-                        for (var k in rec.liveIds) { before++; if (rec.liveIds[k] >= idMinT) { kept[k] = rec.liveIds[k]; after++; } }
-                        if (after !== before) { rec.liveIds = kept; changed = true; }
-                    }
-                    Object.keys(rec.bins).forEach(function (w) {
-                        var wb = rec.bins[w], any = false;
-                        Object.keys(wb).forEach(function (bk2) { if (+bk2 < minBin) { delete wb[bk2]; changed = true; } else any = true; });
-                        if (!any) { delete rec.bins[w]; changed = true; }
-                    });
-                    // v2.9: one-time SEED of the 1-min graph bins from the existing 10-min RTP bins
-                    // (remap each 10-min bin to its first 1-min slot) so the graph shows history
-                    // immediately — blocky for the pre-upgrade week, sharp going forward.
-                    if (!rec.gbins) rec.gbins = {};
-                    if (!rec._gseed) {
-                        var gseed = rec.gbins['seed'] || (rec.gbins['seed'] = {});
-                        Object.keys(rec.bins).forEach(function (w) {
-                            var wb = rec.bins[w];
-                            Object.keys(wb).forEach(function (bk2) {
-                                var c = wb[bk2], gk = (+bk2) * (BIN_MS / GBIN_MS);   // 10-min slot -> first 1-min slot
-                                var d = gseed[gk] || (gseed[gk] = { n: 0, w: 0 });
-                                d.n += (c.n || 0); d.w += (c.h || 0) + (c.m || 0) + (c.l || 0);
-                            });
-                        });
-                        rec._gseed = 1; changed = true;
-                    }
-                    var minGBin2 = Math.floor((now - BIN_KEEP_MS) / GBIN_MS);
-                    Object.keys(rec.gbins).forEach(function (w) {
-                        var wb = rec.gbins[w], any = false;
-                        Object.keys(wb).forEach(function (bk2) { if (+bk2 < minGBin2) { delete wb[bk2]; changed = true; } else any = true; });
-                        if (!any) { delete rec.gbins[w]; changed = true; }
-                    });
-                });
-                // v2.19: prune dead raffle-era fields once the lifetime counter is seeded (frees ~35% of the blob)
-                if (acc.ltSeeded && ((acc.anchors && acc.anchors.length) || acc.base || acc.lastPeriodWager || acc.periodStart != null)) {
-                    acc.anchors = []; acc.base = 0; acc.periodStart = null; acc.lastPeriodWager = 0; changed = true;
-                }
-            });
-            if (!changed) return;
-            try { localStorage.setItem(STORE_KEY, JSON.stringify(stored)); } catch (e) {}
-            S = mergeState(stored, S);
-            note('cleanup: migrated bets->bins, trimmed log, freed localStorage');
-        } catch (e) {}
-    }
-
-    function start() {
-        if (!document.body) { setTimeout(start, 80); return; }
-        cleanupOversizedStore();      // self-heal a bloated bet log so it can't keep the origin's localStorage maxed out
-        S.diag = []; save();          // fresh diagnostics each load
-        buildHud();
-        fetchSelf();                           // resolve account id -> username for the HUD label
-        setInterval(fetchSelf, 2 * 60 * 1000);
-        syncGameEdges();                       // authoritative per-game house edge from the API (RTP buckets)
-        setInterval(syncGameEdges, 3 * 60 * 1000);
-        captureGameEdge();
-        setInterval(captureGameEdge, 2500);   // legacy DOM Edge tag (fallback only; usually absent now)
-        if (!IS_SOCIAL) { fetchRates(); setInterval(fetchRates, 4 * 60 * 1000); }  // crypto USD rates (live sample)
-        fetchLifetime();                       // authoritative wager total (lifetime counter snapshot)
-        setInterval(fetchLifetime, 30 * 1000); // refresh ~every 30s (reconciles the live overlay sooner)
-        fetchRaffle();                         // Tickets display only
-        setInterval(fetchRaffle, 60 * 1000);
-        fetchBuckets();                        // server-sourced RTP split (consistent across devices)
-        setInterval(fetchBuckets, BUCKET_MS);
-        document.addEventListener('visibilitychange', function () { if (!document.hidden) { fetchLifetime(); fetchRaffle(); fetchBuckets(); } });
-        setInterval(render, 1000);             // keep the rolling window + fall-off current
-    }
-    if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', start);
-    } else {
-        start();
-    }
-}
-
     /* =========================================================
        TOOL REGISTRY — DEFINITIONS
        Add a new tool: define its body as a tool_xxx() function
        above, then call register({...}, tool_xxx) here.
        ========================================================= */
-
-    /* ----- Stake 7-Day Wager Tracker ----- */
-    register({
-        id: 'stake-7day-tracker',
-        name: 'Stake 7-Day Wager Tracker',
-        description: 'Rolling 7-day wager total, goal tracker, RTP split & fall-off chart.',
-        matches: [
-            'https://stake.com/*', 'https://stake.us/*', 'https://stake.bet/*', 'https://stake.games/*',
-            'https://staketr.com/*', 'https://staketr2.com/*', 'https://staketr3.com/*', 'https://staketr4.com/*',
-            'https://stake.bz/*', 'https://stake.pet/*'
-        ],
-        runAt: 'document-start',
-        defaultEnabled: true,
-        group: 'Stake',
-        uiSelectors: ['#stk7w', '#stk7w-dock', '#stk7w-sync', '#stk7w-gtip']
-    }, tool_stake_7day_tracker);
 
     /* ----- Stake Auto-Vault ----- */
     register({
@@ -15656,7 +13140,7 @@ function tool_stake_7day_tracker() {
                 '#hud-content > #dt-aio-panel .dt-tab-btn { padding: 6px 4px !important; font-size: 0.78em !important; }',
                 '#hud-content > #dt-aio-panel .dt-tab-btn .dt-tab-icon { font-size: 0.95em !important; }',
                 /* Cards: tighter padding, smaller margin */
-                '#hud-content > #dt-aio-panel .dt-card { padding: 9px 9px 7px !important; margin-bottom: 6px !important; border-width: 1px !important; }',
+                '#hud-content > #dt-aio-panel .dt-card { padding: 10px 10px 8px !important; margin-bottom: 8px !important; border-width: 1px !important; }',
                 '#hud-content > #dt-aio-panel .dt-card-title { top: -9px !important; font-size: 0.82em !important; padding: 0 6px !important; }',
                 /* Fields: tighter rows + smaller inputs */
                 '#hud-content > #dt-aio-panel .dt-field { margin: 3px 0 !important; gap: 6px !important; }',
@@ -15664,12 +13148,6 @@ function tool_stake_7day_tracker() {
                 '#hud-content > #dt-aio-panel .dt-field input[type="text"], #hud-content > #dt-aio-panel .dt-field input[type="number"], #hud-content > #dt-aio-panel input.dt-text-input { padding: 5px 7px !important; min-width: 70px !important; width: 84px !important; font-size: 0.88em !important; border-radius: 5px !important; }',
                 '#hud-content > #dt-aio-panel .dt-help { width: 16px !important; height: 16px !important; font-size: 10px !important; }',
                 '#hud-content > #dt-aio-panel .dt-hint { font-size: 0.7em !important; margin: -1px 0 4px !important; }',
-                /* Optimizer range groups: keep compact in the HUD; boxes/syntax stay full-width
-                   (own classes, so the 84px .dt-field clamp above never touches them) */
-                '#hud-content > #dt-aio-panel .dt-rng-row input.dt-mms { padding: 4px 3px !important; font-size: 0.78em !important; }',
-                '#hud-content > #dt-aio-panel .dt-rng-adv-btn { width: 28px !important; }',
-                '#hud-content > #dt-aio-panel .dt-row input.dt-in { font-size: 0.85em !important; }',
-                '#hud-content > #dt-aio-panel .dt-est { padding: 6px !important; font-size: 0.8em !important; }',
                 /* Buttons: smaller chrome */
                 '#hud-content > #dt-aio-panel .dt-btn { padding: 6px 10px !important; min-height: 32px !important; font-size: 0.82em !important; border-radius: 5px !important; }',
                 '#hud-content > #dt-aio-panel .dt-btn-small { padding: 4px 8px !important; min-height: 26px !important; font-size: 0.75em !important; }',
@@ -16290,57 +13768,8 @@ function tool_stake_7day_tracker() {
             const termsPanel = document.createElement('section');
             termsPanel.className = 'dt-panel';
             termsPanel.id = 'dt-panel-terms';
-            termsPanel.innerHTML =
-                '<input type="text" class="dt-terms-search" id="dt-terms_search" placeholder="🔍  Search terms…" aria-label="Search terms">' +
-                '<div class="dt-terms-empty" id="dt-terms_empty" hidden>No terms match your search.</div>' +
-                '<div class="dt-terms-scroll" id="dt-terms_scroll">' + lines.join('') + '</div>';
+            termsPanel.innerHTML = '<div class="dt-terms-scroll">' + lines.join('') + '</div>';
             body.appendChild(termsPanel);
-
-            // Live filter: hide rows that don't match; hide section headers whose
-            // whole section was filtered out. Pure presentation — no data changes.
-            const searchEl = termsPanel.querySelector('#dt-terms_search');
-            const scrollEl = termsPanel.querySelector('#dt-terms_scroll');
-            const emptyEl = termsPanel.querySelector('#dt-terms_empty');
-            if (searchEl && scrollEl) {
-                searchEl.addEventListener('input', () => {
-                    const q = searchEl.value.trim().toLowerCase();
-                    const kids = Array.from(scrollEl.children);
-                    let anyVisible = false;
-                    if (!q) {
-                        kids.forEach(el => { el.style.display = ''; });
-                        emptyEl.hidden = true;
-                        return;
-                    }
-                    // First pass: show/hide individual term rows + text by match.
-                    kids.forEach(el => {
-                        if (el.classList.contains('dt-terms-heading') || el.classList.contains('dt-terms-subheading') || el.classList.contains('dt-terms-spacer')) {
-                            el.style.display = 'none';  // headers handled in 2nd pass
-                            return;
-                        }
-                        const hit = el.textContent.toLowerCase().includes(q);
-                        el.style.display = hit ? '' : 'none';
-                        if (hit) anyVisible = true;
-                    });
-                    // Second pass: reveal a heading only if its section has any visible
-                    // row; reveal a subheading only if ITS sub-section (up to the next
-                    // heading OR subheading) has a visible row.
-                    for (let i = 0; i < kids.length; i++) {
-                        const el = kids[i];
-                        const isHeading = el.classList.contains('dt-terms-heading');
-                        const isSub = el.classList.contains('dt-terms-subheading');
-                        if (isHeading || isSub) {
-                            let show = false;
-                            for (let j = i + 1; j < kids.length; j++) {
-                                if (kids[j].classList.contains('dt-terms-heading')) break;
-                                if (isSub && kids[j].classList.contains('dt-terms-subheading')) break;
-                                if (kids[j].style.display !== 'none' && !kids[j].classList.contains('dt-terms-subheading') && !kids[j].classList.contains('dt-terms-spacer')) { show = true; break; }
-                            }
-                            el.style.display = show ? '' : 'none';
-                        }
-                    }
-                    emptyEl.hidden = anyVisible;
-                });
-            }
 
             termsSetup = true;
             return true;
