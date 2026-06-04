@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mobile 
 // @namespace    https://whaklgjndo.github.io/gambling-tools/
-// @version      5.5
+// @version      5.6
 // @description  .
 // @author       .
 // @match        https://stake.com/*
@@ -26,7 +26,7 @@
 (function () {
     'use strict';
 
-    try { console.log('[unified-mobile] boot v5.5 — chat/modal can no longer be grabbed into the HUD (never adopts an element containing a chat subtree); blend redesign of dice/limbo tabs; taller stage on those tabs; fresh-import Stats seed'); } catch (e) {}
+    try { console.log('[unified-mobile] boot v5.6 — FIX: Shuffle/Nuts HUD loads again (chat guard narrowed so it no longer over-matches game footers/sidebars that contain a chat widget); blend redesign; fresh-import Stats seed'); } catch (e) {}
 
     /* ============================================================
        iOS USERSCRIPTS COMPATIBILITY
@@ -1466,9 +1466,9 @@
         // including any element that CONTAINS a chat subtree. Stake's chat wraps its
         // input in a .footer whose only chat marker (.chat-input) is a DESCENDANT, so
         // an ancestor-only closest() misses it and we'd grab the chat input.
-        const inOverlay = el =>
-            el.closest('#ratchet-master-container, [role="dialog"], [aria-modal="true"], .game-modal, [class*="chat" i], [data-testid*="chat" i]') ||
-            el.querySelector('.chat-input, [class*="chat" i], [data-testid*="chat" i]');
+        // Ancestor check only — no descendant chat check (a broad one over-excluded
+        // legit game sidebars/footers that contain a chat widget, breaking Shuffle/Nuts).
+        const inOverlay = el => el.closest('#ratchet-master-container, [role="dialog"], [aria-modal="true"], .game-modal, [class*="chat" i], [data-testid*="chat" i]');
         const ok = el => !inOverlay(el);
         const host = getHudHost();
         const scoped = host ? Array.from(host.querySelectorAll(selector)).filter(ok) : [];
@@ -1478,11 +1478,9 @@
     }
 
     function findShuffleFooter() {
-        // Skip chat/modal overlays — incl. any element that CONTAINS a chat subtree
-        // (ancestor-only closest misses Stake's chat .footer > .chat-input).
-        const inOverlay = el =>
-            el.closest('[role="dialog"], [aria-modal="true"], .game-modal, [class*="chat" i], [data-testid*="chat" i]') ||
-            el.querySelector('.chat-input, [class*="chat" i], [data-testid*="chat" i]');
+        // Skip chat/modal overlays (ancestor check only) — no descendant chat check,
+        // which over-excluded legit game footers that share the page with a chat widget.
+        const inOverlay = el => el.closest('[role="dialog"], [aria-modal="true"], .game-modal, [class*="chat" i], [data-testid*="chat" i]');
         const byClass = document.querySelector(
             '[class*="footer"][class*="dice"], [class*="Dice"][class*="footer"], ' +
             '[class*="TBYuRq__footer"], [class*="gameFooter"], [class*="GameFooter"], ' +
@@ -4140,7 +4138,7 @@ self.onmessage = async (e) => {
               <div class="dt-card-title">About</div>
               <div class="dt-setting-row">
                 <div class="dt-setting-label">Version</div>
-                <div style="opacity:0.7;">Dice &amp; Limbo Tools v5.5 (Mobile)</div>
+                <div style="opacity:0.7;">Dice &amp; Limbo Tools v5.6 (Mobile)</div>
               </div>
               <button class="dt-btn dt-btn-block dt-btn-small" id="dt-reset_state">Reset All Saved Data</button>
             </div>
