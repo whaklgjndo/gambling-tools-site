@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mobile 
 // @namespace    https://whaklgjndo.github.io/gambling-tools/
-// @version      5.1
+// @version      5.7
 // @description  .
 // @author       .
 // @match        https://stake.com/*
@@ -26,7 +26,7 @@
 (function () {
     'use strict';
 
-    try { console.log('[unified-mobile] boot v5.0 — taller game-stage so limbo/dice HUD has room; Shuffle vault same-origin + currency-from-icon'); } catch (e) {}
+    try { console.log('[unified-mobile] boot v5.3 — blend redesign of dice/limbo calc/opt/results tabs (Coach + risk bars), taller stage on those tabs; native-overlay-safe element relocation'); } catch (e) {}
 
     /* ============================================================
        iOS USERSCRIPTS COMPATIBILITY
@@ -181,6 +181,14 @@
                   'https://staketr.com/casino/games/mines*', 'https://staketr2.com/casino/games/mines*',
                   'https://staketr3.com/casino/games/mines*', 'https://staketr4.com/casino/games/mines*',
                   'https://stake.bz/casino/games/mines*', 'https://stake.pet/casino/games/mines*'],
+        defaultEnabled: true
+    });
+    register({
+        id: 'stake-7day-tracker', name: 'Stake 7-Day Wager Tracker', group: 'Stake',
+        description: 'Rolling 7-day wager total, goal tracker, RTP split & fall-off chart.',
+        matches: ['https://stake.com/*', 'https://stake.us/*', 'https://stake.bet/*', 'https://stake.games/*',
+                  'https://staketr.com/*', 'https://staketr2.com/*', 'https://staketr3.com/*', 'https://staketr4.com/*',
+                  'https://stake.bz/*', 'https://stake.pet/*'],
         defaultEnabled: true
     });
     // ---- Shuffle ----
@@ -1454,28 +1462,33 @@
     }
 
     function findNativeElement(selector) {
+        // Skip our own HUD and any native modal/chat overlay so opening chat/settings
+        // can't pull their DOM into the HUD (mirrors the desktop fix).
+        const inOverlay = el => el.closest('[role="dialog"], [aria-modal="true"], [data-testid*="chat" i], [data-test*="chat" i], [class*="chat" i]');
+        const ok = el => !el.closest('#ratchet-master-container') && !inOverlay(el);
         const host = getHudHost();
         const scope = host || document;
-        const scoped = Array.from(scope.querySelectorAll(selector));
-        const pick = scoped.find(el => !el.closest('#ratchet-master-container')) || scoped[0];
-        if (pick) return pick;
-        const fallback = Array.from(document.querySelectorAll(selector));
-        return fallback.find(el => !el.closest('#ratchet-master-container')) || fallback[0] || null;
+        const scoped = Array.from(scope.querySelectorAll(selector)).filter(ok);
+        if (scoped.length) return scoped[0];
+        const fallback = Array.from(document.querySelectorAll(selector)).filter(ok);
+        return fallback[0] || null;
     }
 
     function findShuffleFooter() {
+        // Skip chat/modal overlays so we never grab their DOM (mirrors the desktop fix).
+        const inOverlay = el => el.closest('[role="dialog"], [aria-modal="true"], [data-testid*="chat" i], [data-test*="chat" i], [class*="chat" i]');
         const byClass = document.querySelector(
             '[class*="footer"][class*="dice"], [class*="Dice"][class*="footer"], ' +
             '[class*="TBYuRq__footer"], [class*="gameFooter"], [class*="GameFooter"], ' +
             '[class*="betControls"], [class*="BetControls"], [class*="gameControls"], [class*="GameControls"]'
         );
-        if (byClass) return byClass;
+        if (byClass && !inOverlay(byClass)) return byClass;
         for (const el of document.querySelectorAll('label, p, span, div')) {
-            if ((el.textContent || '').trim() === 'Multiplier') {
+            if ((el.textContent || '').trim() === 'Multiplier' && !inOverlay(el)) {
                 let p = el.parentElement;
                 for (let i = 0; i < 7; i++) {
                     if (!p || p === document.body) break;
-                    if (p.querySelectorAll('input').length >= 2) return p;
+                    if (!inOverlay(p) && p.querySelectorAll('input').length >= 2) return p;
                     p = p.parentElement;
                 }
             }
@@ -1999,7 +2012,13 @@
         // host's min-height so the HUD gets clean vertical room. The native bet
         // panel is a sibling BELOW the stage, so it just flows further down —
         // nothing is covered. (One knob to tune: the clamp() below.)
-        gameDisplay.style.minHeight = 'clamp(420px, 54dvh, 640px)';
+        // Extend further on the dice tool's content-heavy tabs (Calculator/Optimizer/
+        // Results) so they reach downward with less scrolling. Scoped to when our dice
+        // panel is actually mounted in the HUD, so IOW/Smart modes are unaffected.
+        const dtP = document.querySelector('#ratchet-master-container #dt-aio-panel');
+        const dtTab = dtP && dtP.getAttribute('data-active-tab');
+        const dtTall = !!dtP && (dtTab === 'calc' || dtTab === 'opt' || dtTab === 'results');
+        gameDisplay.style.minHeight = dtTall ? 'clamp(520px, 80dvh, 920px)' : 'clamp(420px, 54dvh, 640px)';
         if (hud && hud.parentElement !== gameDisplay) gameDisplay.appendChild(hud);
         if (!hud) {
             hud = document.createElement('div');
@@ -3011,6 +3030,22 @@
         'AvgHigh', 'StdDev', 'MaxHigh', 'AvgCycles', 'AvgRounds',
         'CycleSuccess%', 'Bust%', 'Score'
     ];
+    // Friendly headers + the compact default column set (rest behind "All columns").
+    const DT_RES_COL_LABELS = {
+        StartingBalance: 'Start $', Trials: 'Trials', BetDiv: 'Bet Divisor', ProfitMult: 'Profit Mult',
+        'W%': 'Win Inc %', L: 'Loss Reset', 'Buffer%': 'Buffer %', AvgHigh: 'Avg High $', StdDev: 'Std Dev',
+        MaxHigh: 'Max High $', AvgCycles: 'Avg Cycles', AvgRounds: 'Avg Rounds',
+        'CycleSuccess%': 'Win %', 'Bust%': 'Bust %', Score: 'Score'
+    };
+    const DT_RES_COLS_PRIMARY = ['BetDiv', 'ProfitMult', 'W%', 'CycleSuccess%', 'Bust%', 'Score'];
+    const DT_SAFE_BUST_MAX = 10;
+    let dt_safeOnly = false, dt_showAllCols = false;
+    // Optimizer presets: fill the range fields, then the existing engine runs.
+    const DT_OPT_PRESETS = {
+        quick: { opt_betdiv: '256,500', opt_profit: '50,100', opt_w: '60-90;step=15', opt_l: '3-5;step=1', opt_buf: '25,40', opt_trials: '10' },
+        balanced: { opt_betdiv: '256-512;step=128', opt_profit: '50-150;step=50', opt_w: '50-100;step=10', opt_l: '3-6;step=1', opt_buf: '20-40;step=10', opt_trials: '20' },
+        thorough: { opt_betdiv: '256-512;step=64', opt_profit: '50-150;step=25', opt_w: '50-150;step=10', opt_l: '3-8;step=1', opt_buf: '20-40;step=5', opt_trials: '30' }
+    };
 
     const dt_state = {
         balance: '20', win_inc: '78', loss_reset: '5',
@@ -3750,6 +3785,104 @@ self.onmessage = async (e) => {
     };
 
     /* ============================================================
+       BLEND REDESIGN CSS (mobile) — beginner-first "Coach" layout +
+       terminal risk bars for the calc/opt/results tabs. Injected after
+       DT_CSS; scoped to #${DT_PANEL_ID}; built on existing theme vars.
+       When stitched into the HUD, the bridge CSS (!important) wins on
+       container/tab sizing — these rules style our new elements only.
+       ============================================================ */
+    const DT_BLEND_CSS = `
+        #${DT_PANEL_ID} .dt-panel.active { display: flex; flex-direction: column; gap: 11px; }
+        #${DT_PANEL_ID} .dt-card { background: color-mix(in srgb, var(--dt-bg) 82%, white 4%); border: 1px solid color-mix(in srgb, var(--dt-border) 18%, transparent); border-radius: 12px; padding: 12px; }
+        #${DT_PANEL_ID} .dt-card-title { font-weight: 800; letter-spacing: .02em; font-size: 13px; margin: 0; display: flex; align-items: center; gap: 7px; }
+        #${DT_PANEL_ID} .dt-card-sub { font-size: 11px; color: color-mix(in srgb, var(--dt-fg) 55%, transparent); line-height: 1.4; margin: 3px 0 10px; }
+        #${DT_PANEL_ID} .dt-opt-tag { font-size: 9px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: color-mix(in srgb, var(--dt-fg) 50%, transparent); border: 1px solid color-mix(in srgb, var(--dt-border) 24%, transparent); border-radius: 20px; padding: 2px 7px; }
+        #${DT_PANEL_ID} .dt-steps { display: flex; align-items: center; margin: 0; }
+        #${DT_PANEL_ID} .dt-step { flex: 0 0 auto; display: flex; align-items: center; gap: 7px; background: none; border: none; color: var(--dt-fg); cursor: pointer; padding: 0; font-family: inherit; }
+        #${DT_PANEL_ID} .dt-step + .dt-step { flex: 1; }
+        #${DT_PANEL_ID} .dt-step::before { content: ""; flex: 1; height: 2px; background: color-mix(in srgb, var(--dt-border) 22%, transparent); border-radius: 2px; margin: 0 7px; }
+        #${DT_PANEL_ID} .dt-step:first-child::before { display: none; }
+        #${DT_PANEL_ID} .dt-step.done::before, #${DT_PANEL_ID} .dt-step.active::before { background: var(--dt-label-fg); }
+        #${DT_PANEL_ID} .dt-step-dot { width: 22px; height: 22px; border-radius: 50%; display: inline-grid; place-items: center; font-size: 10.5px; font-weight: 800; background: var(--dt-field-bg); border: 1.5px solid color-mix(in srgb, var(--dt-border) 30%, transparent); color: color-mix(in srgb, var(--dt-fg) 55%, transparent); }
+        #${DT_PANEL_ID} .dt-step-name { font-size: 10px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: color-mix(in srgb, var(--dt-fg) 38%, transparent); }
+        #${DT_PANEL_ID} .dt-step.done .dt-step-dot { background: color-mix(in srgb, var(--dt-label-fg) 22%, var(--dt-field-bg)); border-color: var(--dt-label-fg); color: var(--dt-label-fg); }
+        #${DT_PANEL_ID} .dt-step.done .dt-step-name { color: color-mix(in srgb, var(--dt-fg) 60%, transparent); }
+        #${DT_PANEL_ID} .dt-step.active .dt-step-dot { background: var(--dt-label-fg); border-color: var(--dt-label-fg); color: var(--dt-bg); box-shadow: 0 0 0 3px color-mix(in srgb, var(--dt-label-fg) 18%, transparent); }
+        #${DT_PANEL_ID} .dt-step.active .dt-step-name { color: var(--dt-label-fg); }
+        #${DT_PANEL_ID} .dt-coach { font-size: 11.5px; color: color-mix(in srgb, var(--dt-fg) 62%, transparent); line-height: 1.4; margin: -1px 1px 0; }
+        #${DT_PANEL_ID} .dt-coach b { color: var(--dt-fg); font-weight: 700; }
+        #${DT_PANEL_ID} .dt-heroes { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; }
+        #${DT_PANEL_ID} .dt-hero { position: relative; background: linear-gradient(160deg, color-mix(in srgb, var(--dt-label-fg) 14%, var(--dt-field-bg)), var(--dt-field-bg)); border: 1px solid color-mix(in srgb, var(--dt-label-fg) 32%, transparent); border-radius: 11px; padding: 11px 12px; }
+        #${DT_PANEL_ID} .dt-hero-k { font-size: 9.5px; letter-spacing: .08em; text-transform: uppercase; color: var(--dt-label-fg); font-weight: 700; display: flex; align-items: center; gap: 4px; }
+        #${DT_PANEL_ID} .dt-hero-row { display: flex; align-items: baseline; gap: 2px; margin-top: 4px; }
+        #${DT_PANEL_ID} .dt-hero-cur { font-family: ui-monospace, Consolas, monospace; font-size: 15px; font-weight: 700; color: color-mix(in srgb, var(--dt-fg) 70%, transparent); }
+        #${DT_PANEL_ID} .dt-hero .dt-out-val { font-family: ui-monospace, Consolas, monospace; font-size: 22px; font-weight: 700; color: var(--dt-fg); background: transparent; border: none; padding: 0; width: 100%; letter-spacing: -.02em; }
+        #${DT_PANEL_ID} .dt-hero .dt-copy { position: absolute; top: 9px; right: 9px; }
+        #${DT_PANEL_ID} .dt-subout { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; }
+        #${DT_PANEL_ID} .dt-so { position: relative; background: var(--dt-field-bg); border: 1px solid color-mix(in srgb, var(--dt-border) 18%, transparent); border-radius: 9px; padding: 8px 11px; }
+        #${DT_PANEL_ID} .dt-so-k { font-size: 9px; letter-spacing: .06em; text-transform: uppercase; color: color-mix(in srgb, var(--dt-fg) 52%, transparent); display: flex; align-items: center; gap: 4px; }
+        #${DT_PANEL_ID} .dt-so .dt-out-val { font-family: ui-monospace, Consolas, monospace; font-size: 15px; font-weight: 700; color: var(--dt-fg); background: transparent; border: none; padding: 0; width: 100%; margin-top: 2px; }
+        #${DT_PANEL_ID} .dt-so .dt-copy { position: absolute; top: 6px; right: 6px; }
+        #${DT_PANEL_ID} .dt-out-val:focus { outline: none; }
+        #${DT_PANEL_ID} .dt-copy { padding: 2px 7px; font-size: 10.5px; line-height: 1.4; min-height: 0; border-radius: 6px; background: color-mix(in srgb, var(--dt-bg) 60%, black 40%); border: 1px solid color-mix(in srgb, var(--dt-border) 28%, transparent); color: color-mix(in srgb, var(--dt-fg) 70%, transparent); cursor: pointer; }
+        #${DT_PANEL_ID} .dt-copied { background: var(--dt-progress) !important; color: #03171a !important; border-color: var(--dt-progress) !important; }
+        #${DT_PANEL_ID} .dt-go { width: 100%; font-weight: 800; }
+        #${DT_PANEL_ID} .dt-go-big { padding: 13px; font-size: 14px; }
+        #${DT_PANEL_ID} .dt-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 0; border-bottom: 1px solid color-mix(in srgb, var(--dt-border) 13%, transparent); }
+        #${DT_PANEL_ID} .dt-row:last-child { border-bottom: none; }
+        #${DT_PANEL_ID} .dt-row-label { flex: 1 1 auto; min-width: 0; font-size: 12px; font-weight: 600; color: color-mix(in srgb, var(--dt-fg) 92%, transparent); display: flex; flex-direction: column; gap: 1px; }
+        #${DT_PANEL_ID} .dt-rl-nm { display: flex; align-items: center; gap: 5px; }
+        #${DT_PANEL_ID} .dt-row-hint { font-size: 10px; font-weight: 500; color: color-mix(in srgb, var(--dt-fg) 38%, transparent); }
+        #${DT_PANEL_ID} .dt-row-ctrl { flex: 0 0 auto; }
+        #${DT_PANEL_ID} input.dt-in { width: 88px; text-align: right; background: var(--dt-field-bg); color: var(--dt-fg); border: 1px solid color-mix(in srgb, var(--dt-border) 26%, transparent); border-radius: 8px; padding: 8px 9px; font-family: ui-monospace, Consolas, monospace; font-size: 13px; }
+        #${DT_PANEL_ID} input.dt-in:focus { outline: none; border-color: var(--dt-label-fg); box-shadow: 0 0 0 3px color-mix(in srgb, var(--dt-label-fg) 22%, transparent); }
+        #${DT_PANEL_ID} input.dt-in.dt-invalid { border-color: var(--dt-danger) !important; }
+        #${DT_PANEL_ID} .dt-preset-grid { display: flex; flex-direction: column; gap: 8px; margin: 2px 0 4px; }
+        #${DT_PANEL_ID} .dt-preset { display: flex; align-items: center; gap: 11px; text-align: left; background: var(--dt-field-bg); border: 1px solid color-mix(in srgb, var(--dt-border) 20%, transparent); border-radius: 11px; padding: 10px 12px; cursor: pointer; position: relative; color: var(--dt-fg); font-family: inherit; }
+        #${DT_PANEL_ID} .dt-preset-ic { font-size: 19px; flex: 0 0 auto; width: 24px; text-align: center; }
+        #${DT_PANEL_ID} .dt-preset-name { font-size: 13px; font-weight: 800; display: block; }
+        #${DT_PANEL_ID} .dt-preset-desc { font-size: 10.5px; color: color-mix(in srgb, var(--dt-fg) 52%, transparent); display: block; margin-top: 1px; }
+        #${DT_PANEL_ID} .dt-preset.active { border-color: var(--dt-label-fg); background: color-mix(in srgb, var(--dt-label-fg) 12%, var(--dt-field-bg)); box-shadow: inset 0 0 0 1px var(--dt-label-fg); }
+        #${DT_PANEL_ID} .dt-preset-rec { position: absolute; top: -8px; right: 12px; font-size: 8.5px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; background: var(--dt-label-fg); color: var(--dt-bg); padding: 1px 7px; border-radius: 20px; }
+        #${DT_PANEL_ID} .dt-adv-ranges { margin-top: 5px; }
+        #${DT_PANEL_ID} .dt-adv-ranges > summary { list-style: none; cursor: pointer; padding: 8px 2px; font-size: 11.5px; font-weight: 600; color: var(--dt-label-fg); display: flex; align-items: center; gap: 6px; }
+        #${DT_PANEL_ID} .dt-adv-ranges > summary::-webkit-details-marker { display: none; }
+        #${DT_PANEL_ID} .dt-adv-ranges > summary::before { content: '▸'; opacity: .7; }
+        #${DT_PANEL_ID} .dt-adv-ranges[open] > summary::before { content: '▾'; }
+        #${DT_PANEL_ID} .dt-adv-hint { margin-left: auto; opacity: .5; font-weight: 400; }
+        #${DT_PANEL_ID} .dt-est { text-align: center; padding: 8px; border-radius: 8px; background: var(--dt-field-bg); border: 1px solid color-mix(in srgb, var(--dt-border) 18%, transparent); font-size: 11px; font-family: ui-monospace, monospace; margin-bottom: 9px; }
+        #${DT_PANEL_ID} .dt-est b { color: var(--dt-label-fg); }
+        #${DT_PANEL_ID} .dt-est.warn { border-color: #e0a23b; } #${DT_PANEL_ID} .dt-est.bad { color: var(--dt-danger); border-color: var(--dt-danger); }
+        #${DT_PANEL_ID} .dt-next { display: flex; align-items: center; justify-content: center; gap: 6px; width: 100%; margin-top: 10px; padding: 11px; border-radius: 9px; cursor: pointer; font-weight: 800; font-size: 13px; background: var(--dt-label-fg); color: var(--dt-bg); border: none; font-family: inherit; }
+        #${DT_PANEL_ID} .dt-next[disabled] { background: var(--dt-field-bg); color: color-mix(in srgb, var(--dt-fg) 55%, transparent); opacity: .6; border: 1px solid color-mix(in srgb, var(--dt-border) 18%, transparent); }
+        #${DT_PANEL_ID} .dt-res-toolbar { display: flex; flex-wrap: wrap; gap: 12px; margin: 2px 0 9px; }
+        #${DT_PANEL_ID} .dt-toggle { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; color: color-mix(in srgb, var(--dt-fg) 65%, transparent); }
+        #${DT_PANEL_ID} .dt-toggle input { accent-color: var(--dt-label-fg); }
+        #${DT_PANEL_ID} table.dt-results th { position: sticky; top: 0; background: color-mix(in srgb, var(--dt-bg) 92%, black 8%); font-size: 9px; letter-spacing: .03em; text-transform: uppercase; color: color-mix(in srgb, var(--dt-fg) 55%, transparent); cursor: pointer; }
+        #${DT_PANEL_ID} table.dt-results th, #${DT_PANEL_ID} table.dt-results td { text-align: right; white-space: nowrap; }
+        #${DT_PANEL_ID} table.dt-results th:first-child, #${DT_PANEL_ID} table.dt-results td:first-child { text-align: left; }
+        #${DT_PANEL_ID} table.dt-results tr.selected td { background: color-mix(in srgb, var(--dt-label-fg) 16%, transparent); box-shadow: inset 2px 0 0 var(--dt-label-fg); }
+        #${DT_PANEL_ID} td.dt-cell-good { color: var(--dt-progress) !important; } #${DT_PANEL_ID} td.dt-cell-mid { color: #e6c850 !important; } #${DT_PANEL_ID} td.dt-cell-bad { color: var(--dt-danger) !important; }
+        #${DT_PANEL_ID} .dt-riskbar { display: inline-block; height: 6px; border-radius: 2px; vertical-align: middle; margin-right: 5px; min-width: 3px; }
+        #${DT_PANEL_ID} .dt-riskbar.good { background: var(--dt-progress); } #${DT_PANEL_ID} .dt-riskbar.mid { background: #e6c850; } #${DT_PANEL_ID} .dt-riskbar.bad { background: var(--dt-danger); }
+        #${DT_PANEL_ID} .dt-res-best { background: linear-gradient(165deg, color-mix(in srgb, var(--dt-label-fg) 16%, var(--dt-bg)), var(--dt-bg)); border: 1px solid var(--dt-label-fg); border-radius: 13px; padding: 13px; }
+        #${DT_PANEL_ID} .dt-rb-tag { font-size: 10.5px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; color: var(--dt-label-fg); display: flex; align-items: center; gap: 6px; }
+        #${DT_PANEL_ID} .dt-rb-verdict { font-size: 12px; line-height: 1.45; color: color-mix(in srgb, var(--dt-fg) 92%, transparent); margin: 8px 0 11px; }
+        #${DT_PANEL_ID} .dt-rb-verdict b { color: var(--dt-fg); }
+        #${DT_PANEL_ID} .dt-rb-stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 7px; margin-bottom: 11px; }
+        #${DT_PANEL_ID} .dt-rb-stat { background: color-mix(in srgb, var(--dt-bg) 70%, black 30%); border: 1px solid color-mix(in srgb, var(--dt-border) 18%, transparent); border-radius: 8px; padding: 8px 3px; text-align: center; }
+        #${DT_PANEL_ID} .dt-rb-stat b { display: block; font-family: ui-monospace, monospace; font-size: 15px; font-weight: 700; color: var(--dt-fg); }
+        #${DT_PANEL_ID} .dt-rb-stat i { display: block; font-size: 8px; letter-spacing: .04em; text-transform: uppercase; color: color-mix(in srgb, var(--dt-fg) 52%, transparent); font-style: normal; margin-top: 2px; }
+        #${DT_PANEL_ID} .dt-rb-stat.good b { color: var(--dt-progress); } #${DT_PANEL_ID} .dt-rb-stat.bad b { color: var(--dt-danger); }
+        #${DT_PANEL_ID} .dt-setting-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 9px 0; border-bottom: 1px solid color-mix(in srgb, var(--dt-border) 13%, transparent); }
+        #${DT_PANEL_ID} .dt-setting-row:last-child { border-bottom: none; }
+        #${DT_PANEL_ID} .dt-setting-label { font-size: 12px; font-weight: 600; color: color-mix(in srgb, var(--dt-fg) 92%, transparent); }
+        #${DT_PANEL_ID} .dt-setting-desc { font-size: 10px; color: color-mix(in srgb, var(--dt-fg) 42%, transparent); margin-top: 1px; line-height: 1.35; }
+        #${DT_PANEL_ID} select.dt-theme-select, #${DT_PANEL_ID} input.dt-num-input { background: var(--dt-field-bg); color: var(--dt-fg); border: 1px solid color-mix(in srgb, var(--dt-border) 26%, transparent); border-radius: 8px; padding: 7px 9px; font-size: 12px; }
+        #${DT_PANEL_ID} input.dt-num-input { width: 64px; text-align: right; font-family: ui-monospace, Consolas, monospace; }
+    `;
+
+    /* ============================================================
        DOM BUILDER — slim mobile injectUI (no FAB, no backdrop,
        no draggable counter widget; bare counter divs included so
        the integration can re-parent them into the Stats tab).
@@ -3759,7 +3892,7 @@ self.onmessage = async (e) => {
         if (!document.getElementById('dt-aio-styles')) {
             const style = document.createElement('style');
             style.id = 'dt-aio-styles';
-            style.textContent = DT_CSS;
+            style.textContent = DT_CSS + DT_BLEND_CSS;
             document.head.appendChild(style);
         }
 
@@ -3781,6 +3914,7 @@ self.onmessage = async (e) => {
         if (!document.getElementById(DT_PANEL_ID)) {
             const panel = document.createElement('div');
             panel.id = DT_PANEL_ID;
+            panel.setAttribute('data-active-tab', 'calc'); // initial tab; drives extend-downward sizing
             panel.innerHTML = `
                 <div class="dt-head">
                   <h2 class="dt-title">Dice Tool</h2>
@@ -3815,76 +3949,92 @@ self.onmessage = async (e) => {
             <input type="${type}" inputmode="${inputmode}" id="dt-${id}" value="${value}">
           </div>`;
     }
-    function dt_fieldWideHTML(label, id, value, hint = '') {
+    function dt_fieldWideHTML(label, id, value, hint = '', term) {
         const hintHTML = hint ? `<div class="dt-hint">${hint}</div>` : '';
         return `
           <div class="dt-field dt-field-wide">
-            <span class="dt-label">${label}${dt_helpBtn(label)}</span>
+            <span class="dt-label">${label}${dt_helpBtn(term || label)}</span>
             <input type="text" id="dt-${id}" class="dt-text-input" value="${value}">
             ${hintHTML}
           </div>`;
+    }
+    /* === Blend helpers (mobile) — mirror the desktop builders === */
+    function dt_rowInputHTML(label, term, id, value, inputmode, hint) {
+        const hintHTML = hint ? `<span class="dt-row-hint">${hint}</span>` : '';
+        return `
+          <div class="dt-row">
+            <span class="dt-row-label"><span class="dt-rl-nm">${label}${dt_helpBtn(term || label)}</span>${hintHTML}</span>
+            <span class="dt-row-ctrl"><input type="text" inputmode="${inputmode || 'decimal'}" class="dt-in" id="dt-${id}" value="${value}"></span>
+          </div>`;
+    }
+    function dt_heroOutHTML(label, term, outId, cur) {
+        return `
+          <div class="dt-hero">
+            <button class="dt-copy" data-copy="${outId}" title="Copy ${label}">⧉</button>
+            <span class="dt-hero-k">${label}${dt_helpBtn(term || label)}</span>
+            <div class="dt-hero-row">${cur ? `<span class="dt-hero-cur">${cur}</span>` : ''}<input type="text" class="dt-out-val" id="dt-${outId}" readonly></div>
+          </div>`;
+    }
+    function dt_subOutHTML(label, term, outId) {
+        return `
+          <div class="dt-so">
+            <button class="dt-copy" data-copy="${outId}" title="Copy ${label}">⧉</button>
+            <span class="dt-so-k">${label}${dt_helpBtn(term || label)}</span>
+            <input type="text" class="dt-out-val" id="dt-${outId}" readonly>
+          </div>`;
+    }
+    /* Guided rail: Find (Optimizer) -> Pick (Results) -> Use (Calculator). */
+    const DT_STEP_TABS = { 1: 'opt', 2: 'results', 3: 'calc' };
+    function dt_stepperHTML(active) {
+        const steps = [[1, 'Find'], [2, 'Pick'], [3, 'Use']];
+        return `<div class="dt-steps">` + steps.map(([n, name]) =>
+            `<button type="button" class="dt-step${n === active ? ' active' : ''}" data-step="${n}"><span class="dt-step-dot">${n}</span><span class="dt-step-name">${name}</span></button>`).join('') + `</div>`;
     }
 
     function dt_buildCalcPanel() {
         return `
           <section class="dt-panel active" id="dt-panel-calc">
-            <div class="dt-card">
-              <div class="dt-card-title">Parameters</div>
-              ${dt_fieldHTML('Balance', 'balance', '20')}
-              ${dt_fieldHTML('Win Increase %', 'win_inc', '78')}
-              ${dt_fieldHTML('Loss Reset', 'loss_reset', '5', 'text', 'numeric')}
-              ${dt_fieldHTML('Balance Divisor', 'bet_div', '500')}
-              ${dt_fieldHTML('Profit Multiplier', 'profit_mult', '100')}
-              ${dt_fieldHTML('Buffer %', 'buffer', '25')}
+            ${dt_stepperHTML(3)}
+            <div class="dt-coach"><b>Use your strategy.</b> Put these two numbers into the game, then hit Send.</div>
+            <div class="dt-heroes">
+              ${dt_heroOutHTML('Starting bet', 'Bet Size', 'out_bet', '$')}
+              ${dt_heroOutHTML('Stop at profit', 'Profit Stop', 'out_profit', '$')}
             </div>
-            <div class="dt-card">
-              <div class="dt-card-title">Calculated Values</div>
-              <div class="dt-field">
-                <span class="dt-label">Multiplier${dt_helpBtn('Multiplier')}</span>
-                <input type="text" id="dt-out_mult" readonly>
-                <button class="dt-btn dt-btn-small" data-copy="out_mult">Copy</button>
-              </div>
-              <div class="dt-field">
-                <span class="dt-label">Bet Size${dt_helpBtn('Bet Size')}</span>
-                <input type="text" id="dt-out_bet" readonly>
-                <button class="dt-btn dt-btn-small" data-copy="out_bet">Copy</button>
-              </div>
-              <div class="dt-field">
-                <span class="dt-label">Profit Stop${dt_helpBtn('Profit Stop')}</span>
-                <input type="text" id="dt-out_profit" readonly>
-                <button class="dt-btn dt-btn-small" data-copy="out_profit">Copy</button>
-              </div>
-              <div class="dt-field">
-                <span class="dt-label">Balance Target${dt_helpBtn('Balance Target')}</span>
-                <input type="text" id="dt-out_target" readonly>
-                <button class="dt-btn dt-btn-small" data-copy="out_target">Copy</button>
-              </div>
+            <div class="dt-subout">
+              ${dt_subOutHTML('Multiplier', 'Multiplier', 'out_mult')}
+              ${dt_subOutHTML('Target balance', 'Balance Target', 'out_target')}
             </div>
+            <button class="dt-btn dt-btn-primary dt-go dt-go-big" id="dt-game_sync">Send to game →</button>
+            <button class="dt-btn dt-btn-block" id="dt-game_import">Create a fresh strategy</button>
+
             <div class="dt-card">
-              <div class="dt-card-title">Simulation Controls</div>
-              ${dt_fieldHTML('Trials', 'n_trials', '100', 'text', 'numeric')}
-              <div class="dt-btn-row">
-                <button class="dt-btn dt-btn-primary" id="dt-sim_run">Run Simulation</button>
+              <div class="dt-card-title">Your numbers</div>
+              <div class="dt-card-sub">Edit anything — the bet &amp; profit above update instantly. Tap any ? for help.</div>
+              ${dt_rowInputHTML('Bankroll', 'Balance', 'balance', '20', 'decimal', "Money you're playing with")}
+              ${dt_rowInputHTML('Bet increase on win %', 'Win Increase %', 'win_inc', '78', 'decimal', 'Grows your bet after a win')}
+              ${dt_rowInputHTML('Losses before reset', 'Loss Reset', 'loss_reset', '5', 'numeric', 'Back to base bet after N losses')}
+              ${dt_rowInputHTML('Bet size control', 'Balance Divisor', 'bet_div', '500', 'decimal', 'Higher = smaller, safer bets')}
+              ${dt_rowInputHTML('Profit target multiplier', 'Profit Multiplier', 'profit_mult', '100', 'decimal', 'Sets your profit stop')}
+              ${dt_rowInputHTML('Safety margin %', 'Buffer %', 'buffer', '25', 'decimal', 'Extra cushion on the multiplier')}
+            </div>
+
+            <div class="dt-card">
+              <div class="dt-card-title">Test it first <span class="dt-opt-tag">optional</span></div>
+              <div class="dt-card-sub">See how this strategy performs before betting real money.</div>
+              ${dt_rowInputHTML('Number of test runs', 'Trials', 'n_trials', '100', 'numeric')}
+              <div class="dt-btn-row" style="margin-top:9px;">
+                <button class="dt-btn dt-btn-primary" id="dt-sim_run">Run test</button>
                 <button class="dt-btn dt-btn-danger" id="dt-sim_stop" disabled>Stop</button>
               </div>
               <div class="dt-progress-wrap"><div class="dt-progress-bar" id="dt-sim_progress"></div></div>
               <div class="dt-status-line" id="dt-sim_status">Idle</div>
-            </div>
-            <div class="dt-card">
-              <div class="dt-card-title">Simulation Results</div>
-              <div class="dt-scroll">
+              <div class="dt-scroll" style="margin-top:8px;">
                 <table class="dt-stats" id="dt-sim_results">
                   <tbody>
-                    <tr><td colspan="2" style="text-align:center; opacity:0.5; padding:16px;">Run a simulation to see stats.</td></tr>
+                    <tr><td colspan="2" style="text-align:center; opacity:0.5; padding:16px;">Run a test to see how often this strategy wins.</td></tr>
                   </tbody>
                 </table>
               </div>
-            </div>
-            <div class="dt-card">
-              <div class="dt-card-title">Game Integration</div>
-              <button class="dt-btn dt-btn-primary dt-btn-block" id="dt-game_sync">Export Balance &amp; Update Strategy</button>
-              <button class="dt-btn dt-btn-block" id="dt-game_import">Import New Strategy</button>
-              <div class="dt-hint" style="margin-top:8px;">Sync reads your in-game balance, recalculates, then writes the new bet size + profit stop into your existing strategy. Import creates a fresh strategy from scratch.</div>
             </div>
           </section>
         `;
@@ -3893,25 +4043,38 @@ self.onmessage = async (e) => {
     function dt_buildOptPanel() {
         return `
           <section class="dt-panel" id="dt-panel-opt">
+            ${dt_stepperHTML(1)}
+            <div class="dt-coach"><b>Find a strategy.</b> The tool tests hundreds of setups and ranks the best for you.</div>
             <div class="dt-card">
-              <div class="dt-card-title">Parameter Ranges</div>
-              ${dt_fieldWideHTML('Starting Balance', 'opt_balance', '20')}
-              ${dt_fieldWideHTML('Trials per Combo', 'opt_trials', '10')}
-              ${dt_fieldWideHTML('Bet Divisor Range', 'opt_betdiv', '256,500', 'e.g. 256-512;step=1 or 25,30,40')}
-              ${dt_fieldWideHTML('Profit Multiplier Range', 'opt_profit', '50,100', 'e.g. 25-150;step=5')}
-              ${dt_fieldWideHTML('Win Increase % Range', 'opt_w', '50-100;step=5', 'e.g. 50-150;step=5')}
-              ${dt_fieldWideHTML('Loss Reset (whole)', 'opt_l', '3-5;step=1', 'e.g. 3-8 (integers only)')}
-              ${dt_fieldWideHTML('Buffer % Range', 'opt_buf', '25,30,40', 'e.g. 20-40;step=2')}
-              <button class="dt-btn dt-btn-primary dt-btn-block" id="dt-opt_run">Run Optimizer</button>
+              <div class="dt-card-title">How hard should it search?</div>
+              <div class="dt-card-sub">Just pick one and press Find. Fine-tune the ranges below if you want.</div>
+              <div class="dt-preset-grid">
+                <button type="button" class="dt-preset" data-preset="quick"><span class="dt-preset-ic">⚡</span><span><span class="dt-preset-name">Quick</span><span class="dt-preset-desc">~70 setups · a few seconds</span></span></button>
+                <button type="button" class="dt-preset" data-preset="balanced"><span class="dt-preset-rec">Recommended</span><span class="dt-preset-ic">⚖️</span><span><span class="dt-preset-name">Balanced</span><span class="dt-preset-desc">a few hundred · best for most</span></span></button>
+                <button type="button" class="dt-preset" data-preset="thorough"><span class="dt-preset-ic">🔬</span><span><span class="dt-preset-name">Thorough</span><span class="dt-preset-desc">thousands · slower</span></span></button>
+                <button type="button" class="dt-preset" data-preset="center"><span class="dt-preset-ic">🎯</span><span><span class="dt-preset-name">Around my setup</span><span class="dt-preset-desc">centers on your Calculator</span></span></button>
+              </div>
+              ${dt_rowInputHTML('Bankroll', 'Starting Balance', 'opt_balance', '20', 'decimal', "Money you're playing with")}
+              <details class="dt-adv-ranges">
+                <summary>Customize ranges<span class="dt-adv-hint">advanced</span></summary>
+                ${dt_fieldWideHTML('Tests per setup', 'opt_trials', '10', 'More = more accurate, slower', 'Trials per Combo')}
+                ${dt_fieldWideHTML('Bet size control', 'opt_betdiv', '256,500', 'e.g. 256-512;step=1 or 25,30,40', 'Bet Divisor Range')}
+                ${dt_fieldWideHTML('Profit target multiplier', 'opt_profit', '50,100', 'e.g. 25-150;step=5', 'Profit Multiplier Range')}
+                ${dt_fieldWideHTML('Bet increase on win %', 'opt_w', '50-100;step=5', 'e.g. 50-150;step=5', 'Win Increase % Range')}
+                ${dt_fieldWideHTML('Losses before reset', 'opt_l', '3-5;step=1', 'e.g. 3-8 (whole numbers)', 'Loss Reset (whole)')}
+                ${dt_fieldWideHTML('Safety margin %', 'opt_buf', '25,30,40', 'e.g. 20-40;step=2', 'Buffer % Range')}
+              </details>
             </div>
             <div class="dt-card">
-              <div class="dt-card-title">Progress</div>
+              <div class="dt-est" id="dt-opt_preview">&mdash;</div>
+              <button class="dt-btn dt-btn-primary dt-go dt-go-big" id="dt-opt_run">⚙️ Find strategies</button>
               <div class="dt-progress-wrap"><div class="dt-progress-bar" id="dt-opt_progress"></div></div>
-              <div class="dt-status-line" id="dt-opt_status">Idle</div>
-              <div class="dt-btn-row">
-                <button class="dt-btn" id="dt-opt_clear">Clear Results</button>
+              <div class="dt-status-line" id="dt-opt_status">Ready when you are.</div>
+              <div class="dt-btn-row" style="margin-top:9px;">
+                <button class="dt-btn" id="dt-opt_clear">Clear results</button>
                 <button class="dt-btn dt-btn-danger" id="dt-opt_stop" disabled>Stop</button>
               </div>
+              <button type="button" class="dt-next" id="dt-next_opt" data-goto="results" disabled>Run a search to continue</button>
             </div>
           </section>
         `;
@@ -3920,9 +4083,17 @@ self.onmessage = async (e) => {
     function dt_buildResultsPanel() {
         return `
           <section class="dt-panel" id="dt-panel-results">
+            ${dt_stepperHTML(2)}
+            <div class="dt-coach"><b>Pick a strategy.</b> We've highlighted the best one for you.</div>
+            <div id="dt-res_best"></div>
             <div class="dt-card">
-              <div class="dt-card-title">Optimizer Results</div>
-              <div class="dt-status-line" id="dt-res_status">No results yet. Run the Optimizer.</div>
+              <div class="dt-card-title">All results</div>
+              <div class="dt-card-sub">Ranked best-first. Tap a row to select it, then "Use selected".</div>
+              <div class="dt-res-toolbar">
+                <label class="dt-toggle"><input type="checkbox" id="dt-res_safe"> Hide risky</label>
+                <label class="dt-toggle"><input type="checkbox" id="dt-res_allcols"> All columns</label>
+              </div>
+              <div class="dt-status-line" id="dt-res_status">No results yet — run the Optimizer first.</div>
               <div class="dt-scroll">
                 <table class="dt-results" id="dt-res_table">
                   <thead><tr id="dt-res_head"></tr></thead>
@@ -3930,10 +4101,9 @@ self.onmessage = async (e) => {
                 </table>
               </div>
               <div class="dt-btn-row">
-                <button class="dt-btn" id="dt-res_apply">Apply Selected</button>
-                <button class="dt-btn" id="dt-res_csv">Save to CSV</button>
+                <button class="dt-btn dt-btn-primary" id="dt-res_apply">Use selected</button>
+                <button class="dt-btn" id="dt-res_csv">Export CSV</button>
               </div>
-              <div class="dt-hint" style="margin-top:8px;">Tap a row to select it, then "Apply Selected" to load those parameters into the Calculator.</div>
             </div>
           </section>
         `;
@@ -3942,6 +4112,7 @@ self.onmessage = async (e) => {
     function dt_buildSettingsPanel() {
         return `
           <section class="dt-panel" id="dt-panel-settings">
+            <div class="dt-coach"><b>All optional</b> — the defaults work fine.</div>
             <div class="dt-card">
               <div class="dt-card-title">Optimizer</div>
               <div class="dt-setting-row">
@@ -3963,7 +4134,7 @@ self.onmessage = async (e) => {
               <div class="dt-card-title">About</div>
               <div class="dt-setting-row">
                 <div class="dt-setting-label">Version</div>
-                <div style="opacity:0.7;">AiO 2.0 (Mobile)</div>
+                <div style="opacity:0.7;">Dice &amp; Limbo Tools v5.3 (Mobile)</div>
               </div>
               <button class="dt-btn dt-btn-block dt-btn-small" id="dt-reset_state">Reset All Saved Data</button>
             </div>
@@ -4225,28 +4396,157 @@ self.onmessage = async (e) => {
     function dt_renderResults() {
         const head = $dt('res_head');
         const body = $dt('res_body');
+        const best = $dt('res_best');
         if (!head) return;
-        head.innerHTML = DT_RES_COLS.map(c => `<th data-col="${c}">${c}${c === dt_resultsSortCol ? (dt_resultsSortAsc ? ' ▲' : ' ▼') : ''}</th>`).join('');
+        const cols = dt_showAllCols ? DT_RES_COLS : DT_RES_COLS_PRIMARY;
+        head.innerHTML = cols.map(c => {
+            const arrow = c === dt_resultsSortCol ? (dt_resultsSortAsc ? ' ▲' : ' ▼') : '';
+            return `<th data-col="${c}">${DT_RES_COL_LABELS[c] || c}${arrow}</th>`;
+        }).join('');
         if (!dt_optResults.length) {
             body.innerHTML = '';
-            $dt('res_status').textContent = 'No results yet. Run the Optimizer.';
+            if (best) best.innerHTML = '';
+            $dt('res_status').textContent = 'No results yet — run the Optimizer first.';
+            dt_updateStepper();
             return;
         }
-        $dt('res_status').textContent = dt_optResults.length + ' result' + (dt_optResults.length === 1 ? '' : 's');
-        const sorted = dt_optResults.slice().sort((a, b) => {
+        if (best) {
+            best.innerHTML = dt_renderBestCard();
+            const ab = $dt('res_best_apply');
+            if (ab) ab.onclick = dt_applyBestPick;
+        }
+        let sorted = dt_optResults.slice().sort((a, b) => {
             const av = a[dt_resultsSortCol], bv = b[dt_resultsSortCol];
             if (av == null && bv == null) return 0;
             const cmp = (typeof av === 'number' && typeof bv === 'number') ? av - bv : String(av).localeCompare(String(bv), undefined, { numeric: true });
             return dt_resultsSortAsc ? cmp : -cmp;
         });
+        if (dt_safeOnly) sorted = sorted.filter(r => (typeof r['Bust%'] === 'number' ? r['Bust%'] : 100) <= DT_SAFE_BUST_MAX);
+        $dt('res_status').textContent = dt_safeOnly
+            ? `${sorted.length} of ${dt_optResults.length} (Bust% ≤ ${DT_SAFE_BUST_MAX})`
+            : `${dt_optResults.length} result${dt_optResults.length === 1 ? '' : 's'}`;
         body.innerHTML = sorted.map(r => {
-            const cells = DT_RES_COLS.map(c => {
+            const cells = cols.map(c => {
                 const v = r[c];
-                return `<td>${typeof v === 'number' ? v.toFixed(2) : v}</td>`;
+                const cls = dt_resCellClass(c, v);
+                let inner = typeof v === 'number' ? v.toFixed(2) : v;
+                if (c === 'Bust%' && typeof v === 'number') {
+                    const w = Math.max(3, Math.min(24, v * 1.4));
+                    const bcls = v <= 5 ? 'good' : (v >= 20 ? 'bad' : 'mid');
+                    inner = `<span class="dt-riskbar ${bcls}" style="width:${w}px"></span>${v.toFixed(1)}`;
+                }
+                return `<td class="${cls}">${inner}</td>`;
             }).join('');
             const origIdx = dt_optResults.indexOf(r);
             return `<tr data-idx="${origIdx}" class="${origIdx === dt_selectedRowIdx ? 'selected' : ''}">${cells}</tr>`;
         }).join('');
+        dt_updateStepper();
+    }
+    function dt_resCellClass(col, v) {
+        if (typeof v !== 'number') return '';
+        if (col === 'Score') return v >= 1 ? 'dt-cell-good' : (v <= 0 ? 'dt-cell-bad' : 'dt-cell-mid');
+        if (col === 'Bust%') return v <= 5 ? 'dt-cell-good' : (v >= 20 ? 'dt-cell-bad' : 'dt-cell-mid');
+        if (col === 'CycleSuccess%') return v >= 60 ? 'dt-cell-good' : (v < 30 ? 'dt-cell-bad' : 'dt-cell-mid');
+        return '';
+    }
+    function dt_bestResultIdx() {
+        if (!dt_optResults.length) return -1;
+        let bi = 0;
+        for (let i = 1; i < dt_optResults.length; i++) {
+            const s = dt_optResults[i].Score, sb = dt_optResults[bi].Score;
+            if ((s == null ? -Infinity : s) > (sb == null ? -Infinity : sb)) bi = i;
+        }
+        return bi;
+    }
+    function dt_renderBestCard() {
+        const bi = dt_bestResultIdx();
+        if (bi < 0) return '';
+        const r = dt_optResults[bi];
+        const bust = +r['Bust%'], succ = +r['CycleSuccess%'], avg = +r.AvgHigh, start = +r.StartingBalance;
+        const risk = bust <= 5 ? 'very safe' : (bust <= 12 ? 'fairly safe' : (bust <= 25 ? 'moderately risky' : 'high-risk'));
+        const grow = (start > 0 && avg > start)
+            ? ('grows your $' + start.toFixed(0) + ' to about $' + avg.toFixed(0) + ' on average')
+            : 'is roughly break-even on average';
+        const verdict = 'This setup is <b>' + risk + '</b> (only <b>' + bust.toFixed(0) + '% chance</b> of busting) and ' + grow + ', winning <b>' + succ.toFixed(0) + '%</b> of its cycles.';
+        const bustCls = bust <= 5 ? 'good' : (bust >= 20 ? 'bad' : '');
+        const scoreCls = (+r.Score) >= 1 ? 'good' : ((+r.Score) <= 0 ? 'bad' : '');
+        const st = (cls, val, lbl) => '<div class="dt-rb-stat ' + cls + '"><b>' + val + '</b><i>' + lbl + '</i></div>';
+        return '<div class="dt-res-best">' +
+            '<div class="dt-rb-tag">★ Recommended for you</div>' +
+            '<div class="dt-rb-verdict">' + verdict + '</div>' +
+            '<div class="dt-rb-stats">' +
+            st(bustCls, bust.toFixed(0) + '%', 'Bust risk') +
+            st('', '$' + avg.toFixed(0), 'Avg high') +
+            st('', succ.toFixed(0) + '%', 'Win rate') +
+            st(scoreCls, (+r.Score).toFixed(2), 'Score') +
+            '</div>' +
+            '<button class="dt-btn dt-btn-primary dt-go" id="dt-res_best_apply">Use this setup →</button>' +
+            '</div>';
+    }
+    function dt_applyBestPick() {
+        const bi = dt_bestResultIdx();
+        if (bi < 0) return;
+        dt_selectedRowIdx = bi;
+        dt_applySelectedToCalculator();
+    }
+    /* Guided rail done-state + Optimizer "next" button (mirrors desktop updateStepper). */
+    function dt_updateStepper() {
+        const panel = document.getElementById(DT_PANEL_ID);
+        if (!panel) return;
+        const hasResults = Array.isArray(dt_optResults) && dt_optResults.length > 0;
+        const reviewed = hasResults && (dt_selectedRowIdx >= 0 || dt_bestResultIdx() >= 0);
+        panel.querySelectorAll('.dt-step[data-step="1"]').forEach(s => s.classList.toggle('done', hasResults));
+        panel.querySelectorAll('.dt-step[data-step="2"]').forEach(s => s.classList.toggle('done', reviewed));
+        const next = $dt('next_opt');
+        if (next) {
+            next.disabled = !hasResults;
+            next.textContent = hasResults ? 'See your results →' : 'Run a search to continue';
+        }
+    }
+    /* Optimizer presets — fill the range fields, then the existing engine runs. */
+    function dt_applyOptPreset(name) {
+        if (name === 'center') { dt_centerOptOnCalc(); return; }
+        const p = DT_OPT_PRESETS[name]; if (!p) return;
+        for (const k in p) { const el = $dt(k); if (el) el.value = p[k]; }
+        dt_updateOptPreview(); dt_saveState();
+        dt_toast(name.charAt(0).toUpperCase() + name.slice(1) + ' preset loaded');
+    }
+    function dt_centerOptOnCalc() {
+        const nv = id => { const el = $dt(id); const v = el ? parseFloat(el.value) : NaN; return Number.isFinite(v) ? v : null; };
+        const bal = nv('balance'), bd = nv('bet_div'), pm = nv('profit_mult'), wi = nv('win_inc'), bf = nv('buffer');
+        const lrEl = $dt('loss_reset'); const lr = lrEl ? parseInt(lrEl.value, 10) : NaN;
+        if ([bal, bd, pm, wi, bf].some(v => v == null) || !Number.isFinite(lr)) { dt_toast('Enter valid Calculator values first.'); return; }
+        const set = (id, v) => { const el = $dt(id); if (el) el.value = v; };
+        const r = Math.round;
+        set('opt_balance', String(+bal.toFixed(2)));
+        set('opt_betdiv', Math.max(1, r(bd / 2)) + ',' + r(bd) + ',' + r(bd * 2));
+        set('opt_profit', Math.max(1, r(pm / 2)) + ',' + r(pm) + ',' + r(pm * 2));
+        set('opt_w', Math.max(0, r(wi - 20)) + '-' + r(wi + 20) + ';step=10');
+        set('opt_l', Math.max(1, lr - 1) + '-' + (lr + 1) + ';step=1');
+        set('opt_buf', Math.max(0, r(bf - 10)) + ',' + r(bf) + ',' + r(bf + 10));
+        dt_updateOptPreview(); dt_saveState();
+        dt_toast('Ranges centered on your Calculator values');
+    }
+    function dt_updateOptPreview() {
+        const est = $dt('opt_preview'); if (!est) return;
+        const fields = [['opt_betdiv', false], ['opt_profit', false], ['opt_w', false], ['opt_l', true], ['opt_buf', false]];
+        let combos = 1, anyBad = false;
+        for (const [id, integer] of fields) {
+            const el = $dt(id); if (!el) continue;
+            const vals = dt_parseRange(el.value, integer);
+            if (!vals.length) anyBad = true; else combos *= vals.length;
+        }
+        const trialsEl = $dt('opt_trials');
+        const trials = parseInt(trialsEl ? trialsEl.value : '', 10);
+        if (anyBad || !Number.isFinite(trials) || trials < 1) {
+            est.textContent = 'Fix the ranges to size the run.';
+            est.classList.add('bad'); est.classList.remove('warn');
+            return;
+        }
+        const sims = combos * trials;
+        est.innerHTML = '<b>' + combos.toLocaleString() + '</b> setup' + (combos === 1 ? '' : 's') + ' × <b>' + trials + '</b> test' + (trials === 1 ? '' : 's') + ' = <b>' + sims.toLocaleString() + '</b> sims';
+        est.classList.remove('bad');
+        est.classList.toggle('warn', combos > 50000);
     }
     function dt_onResTableClick(e) {
         const th = e.target.closest('th');
@@ -4262,6 +4562,7 @@ self.onmessage = async (e) => {
             $$dt('#dt-res_body tr').forEach(r => r.classList.remove('selected'));
             tr.classList.add('selected');
             dt_selectedRowIdx = parseInt(tr.dataset.idx, 10);
+            dt_updateStepper();
         }
     }
     function dt_applySelectedToCalculator() {
@@ -4779,10 +5080,12 @@ self.onmessage = async (e) => {
     function dt_switchTab(name) {
         const panel = document.getElementById(DT_PANEL_ID);
         if (!panel) return;
+        panel.setAttribute('data-active-tab', name); // drives extend-downward sizing
         panel.querySelectorAll('.dt-tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === name));
         panel.querySelectorAll('.dt-panel').forEach(p => p.classList.toggle('active', p.id === 'dt-panel-' + name));
         const body = panel.querySelector('.dt-body');
         if (body) body.scrollTop = 0;
+        dt_updateStepper();
     }
 
     let _dt_ttCurrentTarget = null;
@@ -4894,6 +5197,22 @@ self.onmessage = async (e) => {
             dt_switchTab(btn.dataset.tab);
         });
 
+        // Guided rail (step pills) + Optimizer "next" button jump between tabs.
+        panelEl.addEventListener('click', (ev) => {
+            const step = ev.target.closest('.dt-step');
+            if (step && step.dataset.step) { dt_switchTab(DT_STEP_TABS[step.dataset.step]); return; }
+            const next = ev.target.closest('.dt-next');
+            if (next && !next.disabled && next.dataset.goto) dt_switchTab(next.dataset.goto);
+        });
+        // Optimizer presets fill the ranges; range edits re-estimate the run size.
+        panelEl.querySelectorAll('[data-preset]').forEach(b => b.addEventListener('click', () => {
+            panelEl.querySelectorAll('[data-preset]').forEach(x => x.classList.toggle('active', x === b));
+            dt_applyOptPreset(b.dataset.preset);
+        }));
+        ['opt_trials', 'opt_betdiv', 'opt_profit', 'opt_w', 'opt_l', 'opt_buf'].forEach(id => {
+            const el = $dt(id); if (el) el.addEventListener('input', dt_updateOptPreview);
+        });
+
         panelEl.querySelectorAll('.dt-help').forEach(btn => {
             const handle = (ev) => { ev.preventDefault(); ev.stopPropagation(); dt_showTooltip(btn); };
             btn.addEventListener('click', handle);
@@ -4915,6 +5234,8 @@ self.onmessage = async (e) => {
         $dt('res_apply').addEventListener('click', dt_applySelectedToCalculator);
         $dt('res_csv').addEventListener('click', dt_exportResultsCSV);
         document.getElementById('dt-res_table').addEventListener('click', dt_onResTableClick);
+        const _resSafe = $dt('res_safe'); if (_resSafe) _resSafe.addEventListener('change', () => { dt_safeOnly = _resSafe.checked; dt_renderResults(); });
+        const _resCols = $dt('res_allcols'); if (_resCols) _resCols.addEventListener('change', () => { dt_showAllCols = _resCols.checked; dt_renderResults(); });
 
         $dt('keep_prev').addEventListener('change', dt_saveState);
         $dt('worker_count').addEventListener('change', dt_saveState);
@@ -4929,6 +5250,8 @@ self.onmessage = async (e) => {
 
         dt_initStreakCounter();
         dt_renderResults();
+        dt_updateOptPreview();
+        dt_updateStepper();
     }
 
     /* ============================================================
@@ -6523,6 +6846,7 @@ self.onmessage = async (e) => {
     // Mobile's per-platform tool functions all build the same gui id
     // (e.g. #keno-preset-gui on any platform), so we map by registration id.
     function uiSelectorsFor(toolId) {
+        if (toolId === 'stake-7day-tracker') return ['#stk7w', '#stk7w-pill', '#stk7w-scrim', '#stk7w-sync', '#stk7w-gtip'];
         if (toolId.endsWith('-keno'))      return ['#keno-preset-gui'];
         if (toolId.endsWith('-mines'))     return ['#mines-auto-gui'];
         if (toolId.endsWith('-autovault')) return ['#autovault-floaty'];
@@ -6576,7 +6900,7 @@ self.onmessage = async (e) => {
        ===========================================================
        ============================================================ */
     const QUICK_TOGGLE_STYLE_ID = 'unified-tools-quick-toggle-css';
-    const AUTOVAULT_TOOL_IDS = new Set(['stake-autovault', 'shuffle-autovault', 'nuts-autovault']);
+    const AUTOVAULT_TOOL_IDS = new Set(['stake-autovault', 'shuffle-autovault', 'nuts-autovault', 'stake-7day-tracker']);
 
     function injectQuickToggleCss() {
         if (document.getElementById(QUICK_TOGGLE_STYLE_ID)) return;
@@ -8461,6 +8785,1799 @@ self.onmessage = async (e) => {
        to stay iOS-friendly).
        ===========================================================
        ============================================================ */
+/* === source: stake-7day-tracker (mobile) v2.20.2 — embedded as a bundle tool === */
+function tool_stake_7day_tracker() {
+    'use strict';
+    if (window.__stk7wToolBooted) return;
+    window.__stk7wToolBooted = true;
+
+    /* =========================================================================
+       Stake 7-Day Rolling Wager Tracker  (lifetime-counter model)
+       -------------------------------------------------------------------------
+       HOW IT WORKS  (v2.8: switched the TOTAL from the weekly raffle to Stake's
+       authoritative lifetime wager counter)
+       - TOTAL (authoritative): Stake's API exposes a lifetime, never-resetting
+         "amount wagered" per currency+scope via user{statisticScoped{betAmount
+         currency scope}}. On stake.us we read ONLY the SC row (currency "sweeps",
+         scope "house" = all casino incl. slots); GC is irrelevant and ignored.
+         On the crypto sites we sum betValue (USD-equiv) across currencies. We
+         snapshot this counter over time into "ltAnchors" and compute:
+            rolling 168h = lifetime(now) - lifetime(>=7d ago).
+         Because the counter never resets and isn't ticket-quantised, this removes
+         the old raffle model's two error sources (the weekly-reset carry-over and
+         ticket rounding). It is exact except for a sub-poll-interval sliver at the
+         7-day-ago edge.
+       - WHY ltAnchors (not the old `anchors`): the lifetime counter is on a totally
+         different scale than the old raffle everCum. We keep the new snapshots in a
+         separate field so an OLD script version left running in another tab can't
+         mix scales with us. On first run we BRIDGE the existing raffle anchors into
+         ltAnchors (offset-aligned to the current lifetime value) so the headline is
+         continuous and full-window immediately, then it heals to pinpoint as real
+         lifetime snapshots replace the bridged ones over the following 7 days.
+       - FALL-OFF CHART (v2.10): an interactive "conveyor" canvas chart. LIVE/now is the
+         LEFT edge; bets drift RIGHT as they age and fall off the RIGHT edge at 168h. Red
+         density bars (height = bet count per pixel-column) come from the bounded 1-min
+         gbins; true per-bet ticks (this session, from sessionTicks) overlay at deep zoom.
+         Stock-chart UX: scroll = zoom (5 min … 168h), drag = pan, ⟲ snaps back to live,
+         adaptive time axis scales to the minute. Hover → crosshair + a tooltip with the
+         exact date/time that wager falls off (= bet time + 168h). (The old v2.8 red "↓"
+         readout was removed — the chart conveys fall-off precisely now.)
+       - LIVE OVERLAY: per-bet motion captured from the feed (liveDelta) ticks the
+         headline between counter polls; each poll the counter catches up and draws
+         liveDelta down, so the number stays monotonic and converges to exact.
+       - RTP buckets: still a LABELED "live sample" from feed-captured bets, bucketed
+         by each game's API house edge, aggregated into bounded 10-min bins covering
+         the full 168h at fixed tiny size. NOT your true total (the counter gives no
+         RTP breakdown).
+       - The raffle is still polled, but ONLY to show your Tickets count.
+
+       MULTI-ACCOUNT: data is partitioned by the logged-in account (user id),
+       auto-detected. Switching accounts switches the tracked data.
+
+       MULTI-TAB: state shared via localStorage and merged (anchors by time, bins
+       per-writer). The lifetime counter is a server-side value, so every tab reads
+       the identical number -- the headline is robust to multiple tabs.
+
+       MULTI-DEVICE: the lifetime counter includes play from ALL devices (mobile app,
+       mobile web, desktop), so the "now" total is always complete the instant any tab
+       polls. localStorage can't sync across devices, so only the 7-day-ago baseline
+       is per-device; it stays accurate as long as that device snapshots near that
+       time. The old reset-seam corruption (often triggered by device-swapping) is gone.
+
+       PRIVACY: everything is stored locally in this browser. Nothing is sent out.
+       ========================================================================= */
+
+    var VERSION   = '2.20.2-m1';                       // bump on every change; surfaced in the HUD (data-ver) so the running build is verifiable
+    var WINDOW_MS = 7 * 24 * 60 * 60 * 1000;       // rolling window: 7 days
+    var KEEP_MS   = 8 * 24 * 60 * 60 * 1000;       // retain bets a little past the window
+    var STORE_KEY = 'stk7w:v5';   // v5: data partitioned per account (userId)
+    var GQL_RE    = /graphql/i;
+
+    // --- v2.10: fall-off chart zoom bounds --------------------------------------
+    // The chart's visible time span is continuously zoomable between these.
+    var GSPAN_MIN  = 5 * 60 * 1000;                // max zoom-IN: 5 minutes visible (minute / per-bet detail)
+    var GSPAN_MAX  = WINDOW_MS;                     // max zoom-OUT: the full 168h window
+    var GTICK_SPAN = 60 * 60 * 1000;               // overlay true per-bet session ticks when the span is <= 1h
+
+    // --- v2.7: bounded RTP buckets ---------------------------------------------
+    var BIN_MS         = 10 * 60 * 1000;                    // RTP-bucket bin size (10 min)
+    var GBIN_MS        = 1 * 60 * 1000;                     // v2.9 fall-off GRAPH bin size (1 min) — finer density, still bounded (~100KB)
+    var GTICKS_CAP     = 12000;                             // v2.9 in-memory per-bet ticks for the graph overlay (this session only; NOT persisted)
+    var BIN_KEEP_MS    = WINDOW_MS + 60 * 60 * 1000;        // keep bins ~1h past the window
+    var BETS_CAP       = 200;                               // raw bets now only a debug ring; buckets read bins, not this
+    var LIVEID_KEEP_MS = 10 * 60 * 1000;                    // de-dupe ids only need to outlive feed re-sends (sec–min), not 8 days
+    var WRITER_ID = (function () {
+        try {
+            var w = sessionStorage.getItem('stk7w:writer');
+            if (!w) { w = 'w' + Math.random().toString(36).slice(2, 9); sessionStorage.setItem('stk7w:writer', w); }
+            return w;
+        } catch (e) { return 'w' + Math.random().toString(36).slice(2, 9); }
+    })();
+
+    // Platform: stake.us is the social casino (SC/GC). Everything else (stake.com
+    // and its mirrors) is the crypto site, where we track a single COMBINED USD total.
+    var IS_SOCIAL = /(^|\.)stake\.us$/i.test(location.hostname);
+    var TRACK_CCY = IS_SOCIAL ? ['SC'] : ['USD'];   // social: SC ONLY (GC is irrelevant). crypto: combined USD
+    var rates = {};                                  // crypto: currency(lowercase) -> USD per unit
+    var liveDelta = 0;
+    var liveSince = Date.now();                      // ignore backfill (bets placed before tracking began)
+    var sessionTicks = [];                           // v2.9: {t,amt} of bets captured THIS session, for the graph's per-bet overlay (memory only, never persisted)
+    function getCookie(n) {
+        var m = document.cookie.match('(^|;)\\s*' + n + '\\s*=\\s*([^;]+)');
+        return m ? m.pop().replace(/"/g, '') : '';
+    }
+
+    /* ----------------------------- storage ------------------------------- */
+    function blankCur() {
+        return { bets: [], liveIds: {}, trackStart: 0, bins: {}, gbins: {} };   // bins: RTP (10-min){h,m,l,n}; gbins: graph density (1-min){n,w}; both bounded
+    }
+    function blankAccount() {
+        // total wager comes from the lifetime counter: ltAnchors are its snapshots,
+        // differenced for the rolling 168h. The old raffle fields (anchors/base/period)
+        // are vestigial (kept so a bridge/rollback is possible); tickets still shown.
+        return {
+            name: null, target: 0, targetAt: 0,
+            anchors: [], base: 0, periodStart: null, lastPeriodWager: 0, tickets: null,
+            ltAnchors: [], ltSeeded: false, ltStart: 0,   // v2.8 lifetime-counter snapshots
+            cur: {}, resetAt: {}
+        };
+    }
+    var EMPTY_REC = blankCur();  // read-only stand-in returned before an account is detected
+    var DEFAULTS = {
+        v: 5,
+        currency: 'SC',          // currency shown in the HUD
+        gameEdge: {},            // normalised game key -> house edge % (shared across accounts)
+        ui: { open: false, left: null, top: null, graphOpen: false, graphSpan: 604800000, graphLive: true },
+        accounts: {},            // userId -> blankAccount()
+        active: null,            // logged-in userId (auto-detected; switches with the account)
+        debug: [],               // notes (ring buffer)
+        diag: []                 // bet-owner samples (ring buffer)
+    };
+    var S = load();
+    function load() {
+        try {
+            var raw = localStorage.getItem(STORE_KEY);
+            if (raw) {
+                var p = JSON.parse(raw);
+                return Object.assign({}, DEFAULTS, p, { ui: Object.assign({}, DEFAULTS.ui, p.ui || {}) });
+            }
+        } catch (e) {}
+        return JSON.parse(JSON.stringify(DEFAULTS));
+    }
+    // Don't display a currency we no longer track (e.g. a stale 'GC' selection).
+    if (TRACK_CCY.indexOf(S.currency) < 0) S.currency = TRACK_CCY[0];
+
+    // One-time migration from the pre-multi-account stores (v3/v4, single-account S.cur).
+    var legacyMigrate = null;
+    (function detectLegacy() {
+        if (Object.keys(S.accounts || {}).length) return;   // already on the new model
+        ['stk7w:v4', 'stk7w:v3'].forEach(function (key) {
+            if (legacyMigrate) return;
+            try {
+                var p = JSON.parse(localStorage.getItem(key) || 'null');
+                if (p && p.cur && Object.keys(p.cur).some(function (c) { return p.cur[c] && (p.cur[c].bets || []).length; })) {
+                    legacyMigrate = { cur: p.cur, target: p.target || 0, resetAt: p.resetAt || {}, from: key };
+                }
+            } catch (e) {}
+        });
+    })();
+    function curHasBets(a) { return !!(a && a.cur && Object.keys(a.cur).some(function (c) { return (a.cur[c].bets || []).length; })); }
+    // --- multi-tab safe merge ----------------------------------------------
+    function mergeCur(a, b) {
+        a = a || blankCur(); b = b || blankCur();
+        var byK = {}, order = [];
+        function add(x) {
+            var key = x.k || ('t' + x.t + '_' + x.amt + '_' + (x.game || ''));
+            if (!(key in byK)) { byK[key] = x; order.push(key); }
+        }
+        (a.bets || []).forEach(add); (b.bets || []).forEach(add);
+        var bets = order.map(function (k) { return byK[k]; }).sort(function (x, y) { return x.t - y.t; });
+        if (bets.length > BETS_CAP) bets = bets.slice(bets.length - BETS_CAP);   // bets is now just a small debug ring
+        var bins = {};
+        [a.bins, b.bins].forEach(function (src) {
+            if (!src) return;
+            Object.keys(src).forEach(function (w) {
+                var dw = bins[w] || (bins[w] = {});
+                Object.keys(src[w]).forEach(function (bk) {
+                    var s = src[w][bk] || {}, d = dw[bk] || (dw[bk] = { h: 0, m: 0, l: 0, n: 0 });
+                    if ((s.h || 0) > d.h) d.h = s.h; if ((s.m || 0) > d.m) d.m = s.m;
+                    if ((s.l || 0) > d.l) d.l = s.l; if ((s.n || 0) > d.n) d.n = s.n;
+                });
+            });
+        });
+        // v2.9 graph bins (1-min {n,w}): same per-(writer,bin) max merge as RTP bins.
+        var gbins = {};
+        [a.gbins, b.gbins].forEach(function (src) {
+            if (!src) return;
+            Object.keys(src).forEach(function (w) {
+                var dw = gbins[w] || (gbins[w] = {});
+                Object.keys(src[w]).forEach(function (bk) {
+                    var s = src[w][bk] || {}, d = dw[bk] || (dw[bk] = { n: 0, w: 0 });
+                    if ((s.n || 0) > d.n) d.n = s.n; if ((s.w || 0) > d.w) d.w = s.w;
+                });
+            });
+        });
+        var ts = [a.trackStart, b.trackStart].filter(function (t) { return t; });
+        var liveIds = Object.assign({}, a.liveIds || {}, b.liveIds || {});
+        var liveMinT = Date.now() - LIVEID_KEEP_MS;
+        for (var lk in liveIds) { if (liveIds[lk] < liveMinT) delete liveIds[lk]; }
+        return {
+            bets: bets,
+            liveIds: liveIds,
+            trackStart: ts.length ? Math.min.apply(null, ts) : 0,
+            bins: bins,
+            gbins: gbins,
+            _mig: a._mig || b._mig || 0,      // carry the one-time legacy-migration flag through merges
+            _gseed: a._gseed || b._gseed || 0 // carry the one-time graph-bin seed flag through merges
+        };
+    }
+    // Union an anchor-style array (by timestamp), sorted ascending.
+    function unionAnchors(aArr, bArr) {
+        var byT = {}, ord = [];
+        function addP(p) { if (!p) return; var k = '' + p.t; if (!(k in byT)) { byT[k] = p; ord.push(k); } }
+        (aArr || []).forEach(addP); (bArr || []).forEach(addP);
+        return ord.map(function (k) { return byT[k]; }).sort(function (x, y) { return x.t - y.t; });
+    }
+    function mergeAccount(aa, bb) {
+        aa = aa || blankAccount(); bb = bb || blankAccount();
+        var cur = {}, ccys = {};
+        Object.keys(aa.cur || {}).forEach(function (c) { ccys[c] = 1; });
+        Object.keys(bb.cur || {}).forEach(function (c) { ccys[c] = 1; });
+        Object.keys(ccys).forEach(function (c) { cur[c] = mergeCur((aa.cur || {})[c], (bb.cur || {})[c]); });
+        var resetAt = {};
+        [aa.resetAt, bb.resetAt].forEach(function (r) {
+            if (r) Object.keys(r).forEach(function (c) { resetAt[c] = Math.max(resetAt[c] || 0, r[c] || 0); });
+        });
+        Object.keys(cur).forEach(function (c) {
+            var ra = resetAt[c] || 0; if (!ra) return;
+            var rec = cur[c];
+            rec.bets = (rec.bets || []).filter(function (x) { return x.t >= ra; });
+            rec.trackStart = rec.bets.length ? rec.bets[0].t : 0;
+        });
+        // everCum (legacy/raffle): keep base/period from whichever tab is fresher.
+        var aEver = (aa.base || 0) + (aa.lastPeriodWager || 0);
+        var bEver = (bb.base || 0) + (bb.lastPeriodWager || 0);
+        var fresher = bEver >= aEver ? bb : aa;
+        var anchors = unionAnchors(aa.anchors, bb.anchors);
+        // v2.8 lifetime snapshots: union by timestamp; bridged flag ORs; ltStart = earliest truthy.
+        var ltAnchors = unionAnchors(aa.ltAnchors, bb.ltAnchors);
+        var ltStarts = [aa.ltStart, bb.ltStart].filter(function (t) { return t; });
+        var tgtSide = (bb.targetAt || 0) >= (aa.targetAt || 0) ? bb : aa;
+        return {
+            name: bb.name || aa.name || null,
+            target: tgtSide.target || 0,
+            targetAt: Math.max(aa.targetAt || 0, bb.targetAt || 0),
+            base: fresher.base || 0,
+            periodStart: fresher.periodStart || null,
+            lastPeriodWager: fresher.lastPeriodWager || 0,
+            tickets: (fresher.tickets != null ? fresher.tickets : (bb.tickets != null ? bb.tickets : (aa.tickets != null ? aa.tickets : null))),
+            anchors: anchors,
+            ltAnchors: ltAnchors,
+            ltSeeded: !!(aa.ltSeeded || bb.ltSeeded),
+            ltStart: ltStarts.length ? Math.min.apply(null, ltStarts) : 0,
+            cur: cur,
+            resetAt: resetAt
+        };
+    }
+    function mergeState(a, b) {
+        a = (a && typeof a === 'object') ? a : {};
+        b = (b && typeof b === 'object') ? b : {};
+        var out = { v: 5, accounts: {} };
+        var ids = {};
+        Object.keys(a.accounts || {}).forEach(function (id) { ids[id] = 1; });
+        Object.keys(b.accounts || {}).forEach(function (id) { ids[id] = 1; });
+        Object.keys(ids).forEach(function (id) { out.accounts[id] = mergeAccount((a.accounts || {})[id], (b.accounts || {})[id]); });
+        out.gameEdge = Object.assign({}, a.gameEdge || {}, b.gameEdge || {});
+        out.active = b.active || a.active || null;
+        out.currency = b.currency || a.currency || 'SC';
+        out.ui = b.ui || a.ui || { open: true, left: null, top: null };
+        out.debug = (b.debug && b.debug.length ? b.debug : (a.debug || []));
+        out.diag = (b.diag && b.diag.length ? b.diag : (a.diag || []));
+        return out;
+    }
+    function readStored() { try { return JSON.parse(localStorage.getItem(STORE_KEY) || '{}'); } catch (e) { return {}; } }
+    function writeMerged() {
+        S = mergeState(readStored(), S);
+        try { localStorage.setItem(STORE_KEY, JSON.stringify(S)); } catch (e) {}
+    }
+    var saveQueued = false;
+    function save() {
+        if (saveQueued) return;
+        saveQueued = true;
+        setTimeout(function () { saveQueued = false; writeMerged(); }, 250);
+    }
+    function flushSave() { writeMerged(); }
+    try {
+        window.addEventListener('pagehide', flushSave);
+        document.addEventListener('visibilitychange', function () { if (document.visibilityState === 'hidden') flushSave(); });
+        window.addEventListener('storage', function (e) {
+            if (e.key && e.key !== STORE_KEY) return;
+            S = mergeState(S, readStored());
+            if (hud.target && document.activeElement !== hud.target) hud.target.value = getTarget() || '';
+            scheduleRender();
+        });
+    } catch (e) {}
+    function acct(create) {
+        if (!S.active) return null;
+        if (!S.accounts[S.active]) { if (!create) return null; S.accounts[S.active] = blankAccount(); }
+        return S.accounts[S.active];
+    }
+    function getTarget() { var a = acct(); return a ? (a.target || 0) : 0; }
+    function clearGoal() { var a = acct(true); if (a) { a.target = 0; a.targetAt = Date.now(); } if (hud.target) hud.target.value = ''; save(); render(); }
+    function curRec(c) {
+        c = c || S.currency;
+        var a = acct(true);
+        if (!a) return EMPTY_REC;          // no account yet -> read-only empty
+        if (!a.cur[c]) a.cur[c] = blankCur();
+        var r = a.cur[c];
+        if (!r.bets) r.bets = [];
+        if (!r.liveIds) r.liveIds = {};
+        if (!r.bins) r.bins = {};
+        return r;
+    }
+    // Stake's bet API uses SWEEPS / GOLD; the UI uses SC / GC.
+    function normalizeCurrency(c) {
+        if (!c) return '';
+        var u = String(c).toUpperCase();
+        if (u === 'SWEEPS') return 'SC';
+        if (u === 'GOLD') return 'GC';
+        return u;
+    }
+
+    /* ----------------------- USD rates (crypto site) --------------------- */
+    function applyRates(list) {
+        if (!Array.isArray(list)) return;
+        var changed = false;
+        list.forEach(function (x) {
+            if (x && x.currency && typeof x.baseRate === 'number') { rates[String(x.currency).toLowerCase()] = x.baseRate; changed = true; }
+        });
+        if (changed) reconvertUSD();
+    }
+    function fetchRates() {
+        if (IS_SOCIAL) return;
+        try {
+            fetch(location.origin + '/_api/graphql', {
+                method: 'POST', credentials: 'include',
+                headers: { 'content-type': 'application/json', 'x-access-token': getCookie('session'), 'x-language': 'en' },
+                body: JSON.stringify({ query: 'query($isAcp:Boolean!){currencyConfiguration(isAcp:$isAcp){baseRates{currency baseRate}}}', variables: { isAcp: false } })
+            }).then(function (r) { return r.json(); }).then(function (j) {
+                applyRates(j && j.data && j.data.currencyConfiguration && j.data.currencyConfiguration.baseRates);
+            }).catch(function () {});
+        } catch (e) {}
+    }
+    function reconvertUSD() {
+        if (IS_SOCIAL) return;
+        var changed = false, accs = S.accounts || {};
+        Object.keys(accs).forEach(function (id) {
+            var rec = accs[id].cur && accs[id].cur.USD;
+            if (!rec || !rec.bets) return;
+            rec.bets.forEach(function (b) {
+                if ((!b.amt || b.amt === 0) && b.raw && b.rc) {
+                    var rate = rates[String(b.rc).toLowerCase()];
+                    if (typeof rate === 'number' && rate > 0) { b.amt = b.raw * rate; changed = true; }
+                }
+            });
+        });
+        if (changed) { save(); scheduleRender(); }
+    }
+
+    /* --------------------------- RTP / edge ------------------------------ */
+    var ORIGINALS_EDGE = {
+        dice: 1, limbo: 1, mines: 1, hilo: 1, dragontower: 1, diamonds: 1,
+        keno: 1, plinko: 1, wheel: 1, blackjack: 0.5, baccarat: 1.06,
+        videopoker: 0.5, crash: 1, slide: 1, tower: 1, cricket: 1
+    };
+    function normGame(s) { return String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, ''); }
+    function currentGameSlug() {
+        var m = (location.pathname || '').match(/\/casino\/games\/([^/?#]+)/);
+        return m ? m[1] : '';
+    }
+    function edgeForGame(game) {
+        var k = normGame(game);
+        if (!k) return null;
+        if (S.gameEdge[k] != null) return S.gameEdge[k];
+        if (ORIGINALS_EDGE[k] != null) return ORIGINALS_EDGE[k];
+        return null;
+    }
+    function bucketOfEdge(edge) {
+        if (edge == null) return 'low';
+        var rtp = 100 - edge;
+        if (rtp >= 99 - 1e-9) return 'high';
+        if (rtp >= 98 - 1e-9) return 'mid';
+        return 'low';
+    }
+    function currentEdge() {
+        try {
+            var meta = document.querySelector('.game-meta-tags');
+            if (!meta) return null;
+            var m = (meta.textContent || '').match(/Edge:\s*([\d.]+)\s*%/i);
+            if (!m) return null;
+            var e = parseFloat(m[1]);
+            return isFinite(e) ? e : null;
+        } catch (e) { return null; }
+    }
+    function captureGameEdge() {
+        try {
+            var meta = document.querySelector('.game-meta-tags');
+            if (!meta) return;
+            var m = (meta.textContent || '').match(/Edge:\s*([\d.]+)\s*%/i);
+            if (!m) return;
+            var edge = parseFloat(m[1]);
+            if (!isFinite(edge)) return;
+            var keys = [];
+            var sm = location.pathname.match(/\/casino\/games\/([^/?#]+)/);
+            if (sm) keys.push(normGame(sm[1]));
+            var h1 = document.querySelector('h1[class*="ds-heading"]');
+            if (h1) keys.push(normGame(h1.textContent || ''));
+            var changed = false;
+            keys.forEach(function (k) { if (k && S.gameEdge[k] !== edge) { S.gameEdge[k] = edge; changed = true; } });
+            if (changed) { note('edge ' + (sm ? sm[1] : '') + ' = ' + edge + '%'); save(); scheduleRender(); }
+        } catch (e) {}
+    }
+
+    /* --------------------------- number helpers -------------------------- */
+    function parseNum(text) {
+        if (text == null) return NaN;
+        var raw = String(text).replace(/ /g, ' ').trim();
+        if (!raw) return NaN;
+        var m = raw.match(/-?\d[\d,.\s']*/);
+        if (!m) return NaN;
+        var t = m[0].replace(/[\s']/g, '');
+        var hasDot = t.indexOf('.') >= 0, hasComma = t.indexOf(',') >= 0;
+        if (hasDot && hasComma) {
+            if (t.lastIndexOf('.') > t.lastIndexOf(',')) t = t.replace(/,/g, '');
+            else t = t.replace(/\./g, '').replace(/,/g, '.');
+        } else if (hasComma && !hasDot) {
+            var parts = t.split(',');
+            if (parts.length === 2 && parts[1].length <= 2) t = parts[0] + '.' + parts[1];
+            else t = t.replace(/,/g, '');
+        }
+        var n = parseFloat(t);
+        return isFinite(n) ? n : NaN;
+    }
+    function fmt(n) {
+        if (!isFinite(n)) return '–';
+        return n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    }
+    function shortDate(t) {
+        if (!t) return '—';
+        try { return new Date(t).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) + ' ' +
+                     new Date(t).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' }); }
+        catch (e) { return '—'; }
+    }
+
+    /* ------------------------ rolling computation ------------------------ */
+    // TOTAL: rolling 168h = lifetime(now) - lifetime(>=7d ago), from ltAnchors.
+    function rolling() {
+        var a = acct();
+        var now = Date.now(), cutoff = now - WINDOW_MS;
+        var an = a && a.ltAnchors;
+        if (!a || !an || !an.length) {
+            return { ready: false, rolling: 0, full: false, realFull: false, coverMs: 0, realCoverMs: 0, since: 0, live: 0 };
+        }
+        var cur = an[an.length - 1].cum;
+        // Baseline = the OLDEST snapshot at/after the 7-day cutoff, so the measured window
+        // is always a SUBSET of the true trailing-168h window (a guaranteed lower bound).
+        var baseline = null;
+        for (var i = 0; i < an.length; i++) { if (an[i].t >= cutoff) { baseline = an[i]; break; } }
+        if (!baseline) baseline = an[an.length - 1];
+        // Exactness clock: time since the FIRST real (post-swap) lifetime snapshot. Bridged
+        // (seed) snapshots carry the old raffle method's error, so the figure is only
+        // guaranteed pinpoint once a genuine lifetime snapshot is the baseline (>=7d in).
+        var ltCoverMs = a.ltStart ? (now - a.ltStart) : 0;
+        return {
+            ready: true,
+            rolling: Math.max(0, cur - baseline.cum) + liveDelta,   // + real-time captured-bet overlay
+            full: ltCoverMs >= WINDOW_MS - 1000,
+            realFull: ltCoverMs >= WINDOW_MS - 1000,
+            coverMs: Math.min(now - baseline.t, WINDOW_MS),
+            realCoverMs: Math.min(ltCoverMs, WINDOW_MS),
+            since: an[0].t,
+            live: liveDelta
+        };
+    }
+    // RTP buckets. PREFER the server-sourced split (from Stake's own bet ledger -> identical on every
+    // device on the account); fall back to the local per-writer bins (the live WS sample) only until
+    // the first ledger poll lands. This is what makes the slots/originals split match across devices.
+    var BUCKET_CAP = 300, BUCKET_PAGE = 50, BUCKET_MS = 3 * 60 * 1000;   // recent-ledger sample size + poll cadence
+    var serverBuckets = null;   // {high, mid, low, count, t} from houseBetList; null until first successful poll
+    var bucketsBusy = false;
+    function rollingBuckets() {
+        if (serverBuckets && serverBuckets.count > 0) return serverBuckets;   // authoritative, cross-device-consistent
+        var b = { high: 0, mid: 0, low: 0, count: 0 };
+        var a = acct(); if (!a) return b;
+        var rec = a.cur && a.cur[S.currency]; if (!rec || !rec.bins) return b;
+        var minBin = Math.floor((Date.now() - WINDOW_MS) / BIN_MS);
+        Object.keys(rec.bins).forEach(function (w) {
+            var wb = rec.bins[w];
+            Object.keys(wb).forEach(function (bk) {
+                if (+bk < minBin) return;
+                var c = wb[bk];
+                b.high += c.h || 0; b.mid += c.m || 0; b.low += c.l || 0; b.count += c.n || 0;
+            });
+        });
+        return b;
+    }
+    // v2.15: ms until the rolling-7d wager would fall below `req` if you stop wagering now
+    // (i.e., when enough wager ages off the back of the 7d window). null if no usable history.
+    function eligTimeLeftMs(req) {
+        var a = acct(); if (!a || !a.ltAnchors || a.ltAnchors.length < 2) return null;
+        var an = a.ltAnchors, now = Date.now(), cur = an[an.length - 1].cum, target = cur - req;
+        if (target <= an[0].cum) return WINDOW_MS;                       // would take the full window (or more)
+        var lo = 0, hi = an.length - 1;                                  // first index with cum >= target
+        while (lo < hi) { var mid = (lo + hi) >> 1; if (an[mid].cum < target) lo = mid + 1; else hi = mid; }
+        var p1 = an[lo], p0 = an[lo - 1] || an[lo];
+        var tau = (p1.cum === p0.cum) ? p1.t : p0.t + (p1.t - p0.t) * ((target - p0.cum) / (p1.cum - p0.cum));
+        return Math.max(0, Math.min(WINDOW_MS, tau - (now - WINDOW_MS)));
+    }
+    function eligHrs(ms) {
+        if (ms >= WINDOW_MS - 60000) return '7d+';
+        var h = ms / 3600000;
+        if (h >= 48) return (h / 24).toFixed(1) + 'd';
+        if (h >= 10) return Math.round(h) + 'h';
+        return h.toFixed(1) + 'h';
+    }
+    // ---- v2.12 wager-activity chart: view-state (continuous zoom + pan, NOW on the RIGHT) ----
+    // gView.end = newest time shown (the RIGHT edge). Live tracks now; panned pins it.
+    // Persisted: S.ui.graphSpan (zoom) + S.ui.graphLive. hoverX/mx/my/drag* are interaction-only.
+    var gView = { end: 0, hoverX: null, mx: 0, my: 0, dragX: null, dragEnd: 0 };
+    function gSpan() { var s = S.ui && +S.ui.graphSpan; s = (s && isFinite(s)) ? s : GSPAN_MAX; return Math.max(GSPAN_MIN, Math.min(GSPAN_MAX, s)); }
+    function gEnd() {
+        var now = Date.now(), span = gSpan();
+        if (S.ui.graphLive) return now;
+        return Math.max(now - WINDOW_MS + span, Math.min(now, gView.end || now));   // no future, no panning past available data
+    }
+    function fmtShort(n) { if (!isFinite(n)) return '–'; var x = Math.abs(n); if (x >= 1e6) return (n / 1e6).toFixed(2) + 'M'; if (x >= 1e3) return (n / 1e3).toFixed(1) + 'k'; return Math.round(n) + ''; }
+    function formatDur(ms) {
+        if (ms <= 0) return '0m';
+        var d = Math.floor(ms / 86400000); ms -= d * 86400000;
+        var h = Math.floor(ms / 3600000); ms -= h * 3600000;
+        var m = Math.floor(ms / 60000);
+        return (d ? d + 'd ' : '') + ((d || h) ? h + 'h ' : '') + m + 'm';
+    }
+    // ---- v2.10 fall-off chart rendering ----------------------------------------
+    var GAXIS_STEPS = [60000, 120000, 300000, 600000, 900000, 1800000, 3600000, 7200000, 10800000, 21600000, 43200000, 86400000];
+    function gNiceStep(span) { for (var i = 0; i < GAXIS_STEPS.length; i++) if (span / GAXIS_STEPS[i] <= 6) return GAXIS_STEPS[i]; return GAXIS_STEPS[GAXIS_STEPS.length - 1]; }
+    // 12-hour clock with am/pm (used across the chart axis + hover tooltip)
+    function gTime12(d, withMin) {
+        var h = d.getHours(), ap = h < 12 ? 'am' : 'pm', hh = (h % 12) || 12;
+        return withMin ? (hh + ':' + ('0' + d.getMinutes()).slice(-2) + ap) : (hh + ap);
+    }
+    function gAxisLabel(t, step) {
+        var d = new Date(t);
+        if (step >= 86400000) return ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][d.getDay()] + ' ' + d.getDate();
+        if (step >= 3600000) return gTime12(d, false);
+        return gTime12(d, true);
+    }
+    function gClock(t) { try { var d = new Date(t); return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) + ' ' + gTime12(d, true); } catch (e) { return '—'; } }
+    function gClockSec(t) { try { var d = new Date(t); return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) + ' ' + gTime12(d, true).replace(/(am|pm)$/, ':' + ('0' + d.getSeconds()).slice(-2) + '$1'); } catch (e) { return '—'; } }
+    var gQueued = false;
+    function scheduleGraph() { if (gQueued) return; gQueued = true; requestAnimationFrame(function () { gQueued = false; drawGraph(); }); }
+    function gHideTip() { if (hud.gtip) hud.gtip.style.display = 'none'; }
+    function gTipAt() {
+        if (!hud.gtip) return;
+        var tw = hud.gtip.offsetWidth || 170, vx = gView.mx + 14, vy = gView.my + 14;
+        if (vx + tw > window.innerWidth - 8) vx = gView.mx - tw - 14;
+        if (vy + 72 > window.innerHeight - 8) vy = gView.my - 72;
+        hud.gtip.style.left = vx + 'px'; hud.gtip.style.top = vy + 'px'; hud.gtip.style.display = 'block';
+    }
+    function gShowTipBar(tc, dtPerPx, w) {
+        var single = dtPerPx <= 90000, C = ' ' + S.currency;
+        var when = single ? gClock(tc) : (gClock(tc - dtPerPx / 2) + ' – ' + gClock(tc + dtPerPx / 2));
+        hud.gtip.innerHTML = '<div class="gtl">wagered</div>'
+            + '<div class="gtv">' + fmt(w) + C + '</div>'
+            + '<div class="gtf">' + when + '</div>';
+        gTipAt();
+    }
+    // v2.12 wager-activity chart (trading-terminal style): bars = wager per period over time,
+    // NOW on the right; right SC axis; ticker (7d total + in-view total); crosshair readout.
+    // Continuous zoom (scroll) + pan (drag) + ⟲ live + ⤢ fit-to-7d. No derived price line.
+    function drawGraph() {
+        if (!hud.gcanvas || !S.ui.open || !hud.w || hud.w.style.display === 'none') return;
+        var cv = hud.gcanvas, ctx; try { ctx = cv.getContext('2d'); } catch (e) { return; }
+        if (!ctx) return;
+        var dpr = window.devicePixelRatio || 1;
+        var W = cv.clientWidth || 300, H = cv.clientHeight || 150;
+        if (cv.width !== Math.round(W * dpr) || cv.height !== Math.round(H * dpr)) { cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr); }
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        ctx.clearRect(0, 0, W, H);   // recessed well's dark bg shows through
+        var span = gSpan(), end = gEnd(), now = Date.now(), t0 = end - span;
+        var tkH = 2, axB = 15, axR = 30, padL = 2;
+        var plotW = W - padL - axR, pTop = tkH, pBot = H - axB, plotH = pBot - pTop;
+        function X(t) { return padL + (t - t0) / span * plotW; }
+        function T(x) { return t0 + (x - padL) / plotW * span; }
+        var a = acct(), rec = a && a.cur && a.cur[S.currency];
+
+        // wager per pixel column; plus in-view total
+        var colW = new Array(W), vmax = 0, sumW = 0;
+        if (rec && rec.gbins) { Object.keys(rec.gbins).forEach(function (wk) { var wb = rec.gbins[wk];
+            Object.keys(wb).forEach(function (bk) { var t = (+bk) * GBIN_MS; if (t < t0 || t > end) return;
+                var xi = Math.floor(X(t)); if (xi < padL || xi >= padL + plotW) return;
+                var w = wb[bk].w || 0;
+                colW[xi] = (colW[xi] || 0) + w; sumW += w;
+                if (colW[xi] > vmax) vmax = colW[xi]; }); }); }
+        if (vmax <= 0) vmax = 1;
+        function VY(v) { return pBot - (v / vmax) * (plotH - 2); }
+
+        ctx.font = '9px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace';
+        // value gridlines + right SC axis (wager per column)
+        for (var g = 0; g <= 2; g++) { var gv = vmax * g / 2, gy = Math.round(VY(gv)) + 0.5;
+            ctx.strokeStyle = 'rgba(255,255,255,.05)'; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(padL, gy); ctx.lineTo(padL + plotW, gy); ctx.stroke();
+            if (g > 0) { ctx.fillStyle = '#56707f'; ctx.textAlign = 'left'; ctx.fillText(fmtShort(gv), padL + plotW + 4, gy + 3); } }
+        // time gridlines + labels (now on the right)
+        var step = gNiceStep(span), gt = Math.ceil(t0 / step) * step; ctx.textAlign = 'center';
+        for (; gt <= end; gt += step) { var gx = X(gt);
+            ctx.strokeStyle = 'rgba(255,255,255,.04)'; ctx.beginPath(); ctx.moveTo(gx + 0.5, pTop); ctx.lineTo(gx + 0.5, pBot); ctx.stroke();
+            ctx.fillStyle = '#56707f'; ctx.fillText(gAxisLabel(gt, step), Math.max(13, Math.min(padL + plotW - 13, gx)), H - 3); }
+        ctx.strokeStyle = 'rgba(255,255,255,.10)'; ctx.beginPath(); ctx.moveTo(padL, pBot + 0.5); ctx.lineTo(padL + plotW, pBot + 0.5); ctx.stroke();
+
+        // wager bars (cyan volume, soft glow) — data tone, distinct from the green status accent
+        var grad = ctx.createLinearGradient(0, pTop, 0, pBot);
+        grad.addColorStop(0, 'rgba(110,214,245,.98)'); grad.addColorStop(.65, 'rgba(79,184,214,.6)'); grad.addColorStop(1, 'rgba(79,184,214,.12)');
+        var hxi = (gView.hoverX != null) ? Math.round(gView.hoverX) : -1;
+        if (hxi >= 0) {   // mobile: snap the crosshair to the nearest wager bar within a fingertip radius
+            var _snap = -1, _sd = 1e9, _R = 30;
+            for (var _sx = Math.max(padL, hxi - _R); _sx <= Math.min(padL + plotW - 1, hxi + _R); _sx++) {
+                if ((colW[_sx] || 0) > 0) { var _d = Math.abs(_sx - hxi); if (_d < _sd) { _sd = _d; _snap = _sx; } }
+            }
+            if (_snap >= 0) hxi = _snap;
+        }
+        ctx.save(); ctx.shadowColor = 'rgba(79,184,214,.5)'; ctx.shadowBlur = 4; ctx.fillStyle = grad;
+        for (var x = padL; x < padL + plotW; x++) { var w = colW[x] || 0; if (!w) continue;
+            var bh = Math.max(1.4, (plotH - 2) * (w / vmax));
+            ctx.globalAlpha = (x === hxi) ? 1 : 0.92; ctx.fillRect(x, pBot - bh, 1, bh); }
+        ctx.restore(); ctx.globalAlpha = 1;
+        if (sumW <= 0) { ctx.fillStyle = '#56707f'; ctx.textAlign = 'center'; ctx.fillText('no wager in this range', padL + plotW / 2, pTop + plotH / 2); }
+
+        // "now" marker (green dashed + node) when the present is in view
+        if (now >= t0 && now <= end + 1) { var nx = X(now);
+            ctx.strokeStyle = 'rgba(31,214,85,.55)'; ctx.setLineDash([2, 2]); ctx.beginPath(); ctx.moveTo(nx - 0.5, pTop); ctx.lineTo(nx - 0.5, pBot); ctx.stroke(); ctx.setLineDash([]);
+            ctx.fillStyle = '#1fd655'; ctx.beginPath(); ctx.arc(nx - 0.5, pTop + 3, 2.2, 0, 7); ctx.fill(); }
+
+        // in-view total (top-left); the hero number already carries the 7d total
+        var C = ' ' + S.currency;
+        ctx.textAlign = 'left'; ctx.font = '9px ui-monospace,Menlo,monospace'; ctx.fillStyle = '#6e8b9c';
+        ctx.fillText('view  Σ ' + fmtShort(sumW) + C + (S.ui.graphLive ? '' : '  · paused'), padL + 2, 9);
+
+        // crosshair + tooltip
+        if (gView.hoverX != null && hxi >= padL && hxi <= padL + plotW) {
+            ctx.strokeStyle = 'rgba(255,255,255,.30)'; ctx.setLineDash([3, 3]); ctx.beginPath(); ctx.moveTo(hxi + 0.5, pTop); ctx.lineTo(hxi + 0.5, pBot); ctx.stroke(); ctx.setLineDash([]);
+            var _cw = colW[hxi] || 0;
+            if (_cw > 0) { var _ny = VY(_cw); ctx.fillStyle = '#eafaff'; ctx.strokeStyle = 'rgba(110,214,245,.95)'; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(hxi + 0.5, _ny, 3.4, 0, 7); ctx.fill(); ctx.stroke(); ctx.lineWidth = 1; }
+            gShowTipBar(T(hxi), span / plotW, _cw);
+        } else if (gView.hoverX != null) gHideTip();
+    }
+
+    /* --------------------- lifetime wager (the total) -------------------- */
+    var KEEP_ANCHOR_MS = 9 * 24 * 60 * 60 * 1000;
+    // Record a lifetime snapshot (monotonic; throttle unchanged; prune past the window+margin).
+    function recordLt(a, cum) {
+        if (!isFinite(cum) || cum < 0) return;
+        if (!a.ltAnchors) a.ltAnchors = [];
+        var now = Date.now(), last = a.ltAnchors[a.ltAnchors.length - 1];
+        if (last) {
+            if (cum < last.cum - 1e-6) return;                                            // lifetime can't drop
+            if (Math.abs(cum - last.cum) < 1e-9 && (now - last.t) < 10 * 60 * 1000) return; // throttle unchanged
+        }
+        a.ltAnchors.push({ t: now, cum: cum });
+        var cutoff = now - WINDOW_MS, minT = now - KEEP_ANCHOR_MS, keepIdx = -1;
+        for (var i = 0; i < a.ltAnchors.length; i++) if (a.ltAnchors[i].t <= cutoff) keepIdx = i;
+        a.ltAnchors = a.ltAnchors.filter(function (p, idx) { return p.t >= minT || idx === keepIdx; });
+    }
+    // Fold the latest lifetime reading into ltAnchors. On first run, BRIDGE the legacy
+    // raffle anchors onto the lifetime scale (offset-aligned) so the headline is continuous
+    // and full-window immediately, kept in ltAnchors so old script versions can't mix scales.
+    function updateLifetime(L) {
+        var a = acct(true);
+        if (!a || !isFinite(L) || L < 0) return;
+        if (!a.ltAnchors) a.ltAnchors = [];
+        if (!a.ltSeeded) {
+            if (!a.ltAnchors.length && a.anchors && a.anchors.length) {
+                var last = a.anchors[a.anchors.length - 1];
+                var delta = L - last.cum;   // shift newest old anchor up to the current lifetime value
+                if (isFinite(delta)) {
+                    a.ltAnchors = a.anchors.map(function (p) { return { t: p.t, cum: p.cum + delta, seed: true }; });
+                }
+            }
+            a.ltSeeded = true;
+            note('lifetime seed @ ' + L.toFixed(2) + ' (bridged ' + ((a.ltAnchors && a.ltAnchors.length) || 0) + ' anchors)');
+        }
+        if (!a.ltStart) a.ltStart = Date.now();   // exactness clock starts at the first real reading
+        var prev = a.ltAnchors.length ? a.ltAnchors[a.ltAnchors.length - 1].cum : L;
+        // The counter just caught up by (L - prev): draw the live overlay down by that much,
+        // so the headline stays monotonic and never double-counts those bets.
+        if (L > prev + 1e-9) liveDelta = Math.max(0, liveDelta - (L - prev));
+        recordLt(a, L);
+        save(); scheduleRender();
+    }
+    // Map the tracked HUD currency to Stake's API currency name.
+    function apiCurrencyFor(c) {
+        var u = String(c || '').toUpperCase();
+        if (u === 'SC') return 'sweeps';
+        if (u === 'GC') return 'gold';
+        return u.toLowerCase();
+    }
+    // Reduce statisticScoped rows to the lifetime wager we track.
+    // SOCIAL (stake.us): the SC row ONLY (currency "sweeps", scope "house"); GC is ignored.
+    // CRYPTO: sum betValue (USD-equiv) across all currencies (scope "house").
+    function lifetimeFromStats(list) {
+        if (!Array.isArray(list)) return null;
+        if (IS_SOCIAL) {
+            var want = apiCurrencyFor(S.currency);   // 'sweeps'
+            var sum = null;
+            list.forEach(function (r) {
+                if (r && r.scope === 'house' && String(r.currency).toLowerCase() === want && typeof r.betAmount === 'number') {
+                    sum = (sum || 0) + r.betAmount;
+                }
+            });
+            return sum;
+        }
+        var usd = null;
+        list.forEach(function (r) {
+            if (r && r.scope === 'house' && typeof r.betValue === 'number') usd = (usd || 0) + r.betValue;
+        });
+        return usd;
+    }
+    // Authoritative lifetime wager total (never resets; not ticket-quantised).
+    function fetchLifetime() {
+        try {
+            fetch(location.origin + '/_api/graphql', {
+                method: 'POST', credentials: 'include',
+                headers: { 'content-type': 'application/json', 'x-access-token': getCookie('session'), 'x-language': 'en' },
+                body: JSON.stringify({ query: 'query{user{statisticScoped{betAmount betValue currency scope}}}', variables: {} })
+            }).then(function (r) { return r.json(); }).then(function (j) {
+                var list = j && j.data && j.data.user && j.data.user.statisticScoped;
+                var L = lifetimeFromStats(list);
+                if (L != null) updateLifetime(L);
+            }).catch(function () {});
+        } catch (e) {}
+    }
+    // Pick the weekly wager raffle from activeRaffles (kept only for the Tickets display).
+    function pickRaffle(list) {
+        if (!Array.isArray(list)) return null;
+        var cand = list.filter(function (r) { return r && r.raffleUser && r.ticketValue > 0; });
+        cand.sort(function (x, y) {
+            function wk(r) { var d = (Date.parse(r.endTime) - Date.parse(r.startTime)) / 86400000; return (d >= 5 && d <= 9) ? 0 : 1; }
+            if (wk(x) !== wk(y)) return wk(x) - wk(y);
+            return String(x.id) < String(y.id) ? -1 : 1;
+        });
+        return cand[0] || null;
+    }
+    function fetchRaffle() {
+        try {
+            fetch(location.origin + '/_api/graphql', {
+                method: 'POST', credentials: 'include',
+                headers: { 'content-type': 'application/json', 'x-access-token': getCookie('session'), 'x-language': 'en' },
+                body: JSON.stringify({ query: 'query{activeRaffles{id name ticketValue startTime endTime raffleUser{progress ticketCount}}}', variables: {} })
+            }).then(function (r) { return r.json(); }).then(function (j) {
+                var rf = pickRaffle(j && j.data && j.data.activeRaffles);
+                if (!rf || !rf.raffleUser) return;
+                var a = acct(); if (a) { a.tickets = rf.raffleUser.ticketCount; scheduleRender(); }   // Tickets display only
+            }).catch(function () {});
+        } catch (e) {}
+    }
+    function syncGameEdges() {
+        try {
+            fetch(location.origin + '/_api/graphql', {
+                method: 'POST', credentials: 'include',
+                headers: { 'content-type': 'application/json', 'x-access-token': getCookie('session'), 'x-language': 'en' },
+                body: JSON.stringify({ query: 'query{user{houseBetList(limit:50){game{name slug edge}}}}', variables: {} })
+            }).then(function (r) { return r.json(); }).then(function (j) {
+                var list = j && j.data && j.data.user && j.data.user.houseBetList;
+                if (!Array.isArray(list)) return;
+                var n = 0;
+                for (var i = 0; i < list.length; i++) { if (learnGameEdge(list[i] && list[i].game) != null) n++; }
+                if (n) { save(); scheduleRender(); note('synced game edges: ' + Object.keys(S.gameEdge).length + ' known'); }
+            }).catch(function () {});
+        } catch (e) {}
+    }
+    // Recompute the RTP split from Stake's authoritative bet ledger so every device derives the SAME
+    // slots/originals proportion. Amount-weighted, bucketed by each game's house edge. Paginated
+    // (the API hard-caps offset at 1000); a fresh snapshot each poll. Degrades to the local sample on error.
+    function bucketEdgePct(b) {
+        if (b && b.game && typeof b.game.edge === 'number') return b.game.edge * 100;   // API edge is a fraction
+        return edgeForGame(b && b.game && (b.game.slug || b.game.name));                 // cache fallback (null -> 'low')
+    }
+    function fetchBuckets() {
+        if (bucketsBusy) return;
+        bucketsBusy = true;
+        var acc = { high: 0, mid: 0, low: 0, count: 0 }, offset = 0;
+        function finish() {
+            bucketsBusy = false;
+            if (acc.count > 0) { serverBuckets = { high: acc.high, mid: acc.mid, low: acc.low, count: acc.count, t: Date.now() }; scheduleRender(); }
+        }
+        function add(b) {
+            var ccy = normalizeCurrency(b.currency), amt;
+            if (IS_SOCIAL) { if (TRACK_CCY.indexOf(ccy) < 0) return; amt = b.amount; }
+            else { var rate = rates[String(ccy).toLowerCase()]; amt = (typeof rate === 'number' && rate > 0) ? b.amount * rate : 0; }
+            if (!(amt > 0)) return;
+            acc[bucketOfEdge(bucketEdgePct(b))] += amt; acc.count++;
+        }
+        function step() {
+            if (offset >= BUCKET_CAP) return finish();
+            try {
+                fetch(location.origin + '/_api/graphql', {
+                    method: 'POST', credentials: 'include',
+                    headers: { 'content-type': 'application/json', 'x-access-token': getCookie('session'), 'x-language': 'en' },
+                    body: JSON.stringify({ query: 'query($l:Int,$o:Int){user{houseBetList(limit:$l,offset:$o){amount currency game{slug name edge}}}}', variables: { l: BUCKET_PAGE, o: offset } })
+                }).then(function (r) { return r.json(); }).then(function (j) {
+                    var list = j && j.data && j.data.user && j.data.user.houseBetList;
+                    if (!Array.isArray(list) || !list.length) return finish();
+                    list.forEach(add);
+                    offset += BUCKET_PAGE;
+                    if (list.length < BUCKET_PAGE) return finish();
+                    step();
+                }).catch(function () { finish(); });
+            } catch (e) { finish(); }
+        }
+        step();
+    }
+    function fetchSelf() {
+        try {
+            fetch(location.origin + '/_api/graphql', {
+                method: 'POST', credentials: 'include',
+                headers: { 'content-type': 'application/json', 'x-access-token': getCookie('session'), 'x-language': 'en' },
+                body: JSON.stringify({ query: 'query{user{id name}}', variables: {} })
+            }).then(function (r) { return r.json(); }).then(function (j) {
+                var u = j && j.data && j.data.user;
+                if (!u || u.id == null) return;
+                var id = String(u.id), isNew = (S.active !== id);
+                S.active = id;
+                if (!S.accounts[id]) S.accounts[id] = blankAccount();
+                if (u.name && S.accounts[id].name !== String(u.name)) S.accounts[id].name = String(u.name);
+                if (isNew) { liveDelta = 0; liveSince = Date.now(); note('account: ' + (u.name || id.slice(0, 8))); }
+                save(); scheduleRender();
+            }).catch(function () {});
+        } catch (e) {}
+    }
+
+    /* ------------------------- live bet ingestion ------------------------ */
+    function noteRing(arr, s, cap) { arr.push(Date.now() + ' ' + s); while (arr.length > (cap || 30)) arr.shift(); }
+    function note(s) { noteRing(S.debug, s, 30); }
+    function diag(s) { noteRing(S.diag, s, 24); save(); }
+
+    function pruneBets(r, now) {
+        var minT = now - KEEP_MS;
+        if (r.bets.length > 60) r.bets = r.bets.filter(function (b) { return b.t >= minT; });
+        if (r.bets.length > BETS_CAP) { r.bets.sort(function (a, b) { return a.t - b.t; }); r.bets = r.bets.slice(r.bets.length - BETS_CAP); }
+        var idMinT = now - LIVEID_KEEP_MS;
+        for (var k in r.liveIds) { if (r.liveIds[k] < idMinT) delete r.liveIds[k]; }
+        if (r.bins) {
+            var minBin = Math.floor((now - BIN_KEEP_MS) / BIN_MS);
+            Object.keys(r.bins).forEach(function (w) {
+                var wb = r.bins[w], any = false;
+                Object.keys(wb).forEach(function (bk) { if (+bk < minBin) delete wb[bk]; else any = true; });
+                if (!any) delete r.bins[w];
+            });
+        }
+        if (r.gbins) {
+            var minGBin = Math.floor((now - BIN_KEEP_MS) / GBIN_MS);
+            Object.keys(r.gbins).forEach(function (w) {
+                var wb = r.gbins[w], any = false;
+                Object.keys(wb).forEach(function (bk) { if (+bk < minGBin) delete wb[bk]; else any = true; });
+                if (!any) delete r.gbins[w];
+            });
+        }
+    }
+    function recordBet(bet) {
+        if (!S.active) return;            // no account detected yet
+        var rawCcy = normalizeCurrency(bet.currency);
+        if (!rawCcy) return;
+        var c, amt, rc, raw;
+        if (IS_SOCIAL) {
+            if (TRACK_CCY.indexOf(rawCcy) < 0) return;     // social: SC ONLY (GC ignored)
+            c = rawCcy; amt = bet.amt;
+        } else {
+            c = 'USD';                                     // crypto: combine into USD
+            rc = rawCcy; raw = bet.amt;
+            var rate = rates[rawCcy.toLowerCase()];
+            amt = (typeof rate === 'number' && rate > 0) ? bet.amt * rate : 0;  // 0 until rate loads; reconverted later
+        }
+        var r = curRec(c);
+        var now = Date.now();
+        var bt = (bet.t && isFinite(bet.t)) ? bet.t : now;   // real placement time
+        var id = bet.id != null ? String(bet.id) : ('x' + bet.amt + ':' + (bet.tn || '') + ':' + Math.round(bt / 1000));
+        if (r.liveIds[id]) return;            // de-dupe (the same bet re-appears in feed batches)
+        r.liveIds[id] = now;
+        if (!r.trackStart || bt < r.trackStart) r.trackStart = bt;   // earliest bet we've seen
+        var game = bet.game || currentGameSlug() || '';
+        var e = (bet.edge != null) ? bet.edge : edgeForGame(game);
+        if (e == null) e = currentEdge();
+        var rec = { k: id, t: bt, amt: amt, game: game, mult: bet.mult, tn: bet.tn || '', edge: (e != null ? e : undefined) };
+        if (rc) { rec.rc = rc; rec.raw = raw; }   // keep crypto amount for reconversion
+        r.bets.push(rec);
+        // Fold into the bounded RTP bins (the long-term, full-168h bucket store).
+        var bkt = bucketOfEdge(e), binKey = Math.floor(bt / BIN_MS);
+        if (!r.bins) r.bins = {};
+        var wbins = r.bins[WRITER_ID] || (r.bins[WRITER_ID] = {});
+        var cell = wbins[binKey] || (wbins[binKey] = { h: 0, m: 0, l: 0, n: 0 });
+        cell[bkt === 'high' ? 'h' : bkt === 'mid' ? 'm' : 'l'] += amt; cell.n += 1;
+        // v2.9: also fold into the finer 1-min GRAPH bins (count + wager) for the fall-off graph.
+        if (!r.gbins) r.gbins = {};
+        var gb = r.gbins[WRITER_ID] || (r.gbins[WRITER_ID] = {});
+        var gk = Math.floor(bt / GBIN_MS), gcell = gb[gk] || (gb[gk] = { n: 0, w: 0 });
+        gcell.n += 1; gcell.w += amt;
+        if (bt >= liveSince) {                    // this session's real bets -> true per-bet ticks at deep zoom (memory only)
+            sessionTicks.push({ t: bt, amt: amt });
+            if (sessionTicks.length > GTICKS_CAP) sessionTicks.shift();
+        }
+        if (bt >= liveSince) liveDelta += amt;   // live overlay: tick the headline per captured bet (reconciled by the counter)
+        pruneBets(r, now);
+        save();
+        scheduleRender();
+    }
+
+    function captureSelf(obj, depth) {
+        if (!obj || typeof obj !== 'object' || depth > 7) return false;
+        if (Array.isArray(obj)) {
+            for (var i = 0; i < obj.length; i++) { if (captureSelf(obj[i], depth + 1)) return true; }
+            return false;
+        }
+        if (obj.id != null && (('balances' in obj) || ('vault' in obj) || ('email' in obj) || ('hasTwoFactor' in obj))) {
+            var id = String(obj.id);
+            var name = obj.name != null ? String(obj.name) : null;
+            var isNew = (S.active !== id);
+            S.active = id;
+            if (!S.accounts[id]) S.accounts[id] = blankAccount();
+            if (name && S.accounts[id].name !== name) S.accounts[id].name = name;
+            if (legacyMigrate && !curHasBets(S.accounts[id])) {
+                S.accounts[id].cur = legacyMigrate.cur;
+                if (legacyMigrate.target) S.accounts[id].target = legacyMigrate.target;
+                S.accounts[id].resetAt = legacyMigrate.resetAt || {};
+                note('migrated wager from ' + legacyMigrate.from);
+                legacyMigrate = null;
+            }
+            if (isNew) { liveDelta = 0; liveSince = Date.now(); note('account: ' + (name || id.slice(0, 8))); }
+            save();
+            return true;
+        }
+        for (var k in obj) { if (obj[k] && typeof obj[k] === 'object') { if (captureSelf(obj[k], depth + 1)) return true; } }
+        return false;
+    }
+    function betIsMine(u) {
+        if (!S.active || !u) return false;
+        var uid = u.id != null ? String(u.id) : null;
+        var un = u.name != null ? String(u.name) : null;
+        var a = S.accounts[S.active];
+        var an = a && a.name;
+        return (uid && uid === S.active) || (un && an && un === an);
+    }
+
+    function collectBets(obj, depth, acc) {
+        if (!obj || typeof obj !== 'object' || depth > 9) return;
+        if (Array.isArray(obj)) {
+            for (var i = 0; i < obj.length; i++) collectBets(obj[i], depth + 1, acc);
+            return;
+        }
+        if (typeof obj.amount === 'number' && typeof obj.currency === 'string' && obj.amount > 0 &&
+            (('payoutMultiplier' in obj) || ('payout' in obj) ||
+             ('state' in obj && ('multiplier' in obj || 'payoutMultiplier' in obj)) ||
+             (/Bet$/.test(obj.__typename || '')))) {
+            acc.push(obj);
+        }
+        for (var k in obj) {
+            if (Object.prototype.hasOwnProperty.call(obj, k)) {
+                var v = obj[k];
+                if (v && typeof v === 'object') collectBets(v, depth + 1, acc);
+            }
+        }
+    }
+    function gameNameOf(o) {
+        var g = o.game;
+        if (typeof g === 'string') return g;
+        if (g && typeof g === 'object') return g.name || g.title || g.slug || g.gameName || '';
+        return o.gameName || o.gameId || '';
+    }
+    function learnGameEdge(g) {
+        if (!g || typeof g !== 'object' || typeof g.edge !== 'number' || !isFinite(g.edge)) return null;
+        var pct = g.edge * 100;
+        [g.slug, g.name, g.title].forEach(function (s) { var k = normGame(s); if (k) S.gameEdge[k] = pct; });
+        return pct;
+    }
+    function betTime(o) {
+        var t = o.createdAt != null ? o.createdAt : (o.updatedAt != null ? o.updatedAt : (o.time != null ? o.time : null));
+        if (t != null) {
+            var n = (typeof t === 'number') ? t : Date.parse(t);
+            if (isFinite(n) && n > 0) { if (n < 1e12) n *= 1000; return n; }   // seconds -> ms
+        }
+        return Date.now();
+    }
+
+    var nameSamples = 0;
+    function handlePayload(text) {
+        if (!text || text.length > 1500000) return;
+        if (!IS_SOCIAL && text.indexOf('baseRate') >= 0) {
+            try { var d0 = JSON.parse(text); var cc = d0 && d0.data && d0.data.currencyConfiguration; if (cc && cc.baseRates) applyRates(cc.baseRates); } catch (e) {}
+        }
+        if (text.indexOf('amount') < 0) return;     // cheap pre-filter
+        var data;
+        try { data = JSON.parse(text); } catch (e) { return; }
+        if (text.indexOf('balances') >= 0 || text.indexOf('"vault"') >= 0 || text.indexOf('"email"') >= 0 || text.indexOf('hasTwoFactor') >= 0) {
+            try { captureSelf(data, 0); } catch (e) {}
+        }
+        var acc = [];
+        try { collectBets(data, 0, acc); } catch (e) { return; }
+        if (!acc.length) return;
+
+        var uniq = [], seen = {};
+        for (var i = 0; i < acc.length; i++) {
+            var o = acc[i];
+            var key = o.id != null ? ('id:' + o.id) : (o.iid != null ? ('iid:' + o.iid) : ('k:' + i));
+            if (seen[key]) continue;
+            seen[key] = 1; uniq.push(o);
+        }
+
+        for (var j = 0; j < uniq.length; j++) {
+            var b = uniq[j], u = b.user;
+            var mine = betIsMine(u);
+            if (nameSamples < 14 && u && (u.id != null || u.name != null)) {
+                nameSamples++;
+                diag('owner ' + b.amount + normalizeCurrency(b.currency) + ' :: ' +
+                     (u.name ? String(u.name).slice(0, 14) : 'id:' + String(u.id).slice(0, 6)) + (mine ? ' <SELF>' : ''));
+            }
+            if (mine) {
+                recordBet({
+                    id: b.id != null ? b.id : (b.iid != null ? b.iid : null),
+                    amt: b.amount,
+                    currency: b.currency,
+                    game: gameNameOf(b),
+                    mult: typeof b.payoutMultiplier === 'number' ? b.payoutMultiplier : undefined,
+                    tn: b.__typename || '',
+                    t: betTime(b),
+                    edge: learnGameEdge(b.game)          // API house edge (%), also cached in S.gameEdge
+                });
+            }
+        }
+    }
+
+    /* ----------------------------- net hooks ----------------------------- */
+    (function installHooks(window) {   /* window = the REAL page window (unsafeWindow) so fetch/WS hooks reach the site */
+        try {
+            var of = window.fetch;
+            if (of) {
+                window.fetch = function () {
+                    var args = arguments;
+                    var isGql = false;
+                    try {
+                        var u = args[0] && args[0].url ? args[0].url : args[0];
+                        isGql = (typeof u === 'string' && GQL_RE.test(u));
+                    } catch (e) {}
+                    var p = of.apply(this, args);
+                    if (isGql) {
+                        p.then(function (res) {
+                            try { res.clone().text().then(handlePayload).catch(function () {}); } catch (e) {}
+                        }).catch(function () {});
+                    }
+                    return p;
+                };
+            }
+        } catch (e) {}
+
+        try {
+            var oOpen = window.XMLHttpRequest.prototype.open;
+            var oSend = window.XMLHttpRequest.prototype.send;
+            window.XMLHttpRequest.prototype.open = function (m, u) { this.__stk_url = u; return oOpen.apply(this, arguments); };
+            window.XMLHttpRequest.prototype.send = function () {
+                try {
+                    if (GQL_RE.test(this.__stk_url || '')) {
+                        var self = this;
+                        this.addEventListener('load', function () {
+                            try { handlePayload(self.responseText); } catch (e) {}
+                        });
+                    }
+                } catch (e) {}
+                return oSend.apply(this, arguments);
+            };
+        } catch (e) {}
+
+        try {
+            var OWS = window.WebSocket;
+            if (OWS) {
+                var WS = function (url, protos) {
+                    var s = protos !== undefined ? new OWS(url, protos) : new OWS(url);
+                    try {
+                        s.addEventListener('message', function (ev) {
+                            if (typeof ev.data === 'string' && ev.data.indexOf('amount') >= 0) handlePayload(ev.data);
+                        });
+                    } catch (e) {}
+                    return s;
+                };
+                WS.prototype = OWS.prototype;
+                WS.CONNECTING = OWS.CONNECTING; WS.OPEN = OWS.OPEN; WS.CLOSING = OWS.CLOSING; WS.CLOSED = OWS.CLOSED;
+                window.WebSocket = WS;
+            }
+        } catch (e) {}
+    })(typeof unsafeWindow !== 'undefined' && unsafeWindow ? unsafeWindow : window);
+
+    /* ------------------- cross-device baseline sync ---------------------- */
+    // rolling = lifetime(now) - lifetime(7d ago). lifetime(now) is a server value
+    // (already identical on every device); only the 7d-ago baseline is local. This
+    // exports/imports a small downsampled set of the lifetime snapshots (ltAnchors)
+    // as a copy-paste code, so a second device on the SAME account is pinpoint
+    // immediately instead of after a 7-day warm-up. Nothing is sent anywhere: data
+    // only moves when YOU copy a code and paste it on your other device.
+    var SYNC_PREFIX = 'STK7W-B1.';
+    function b64enc(s) { try { return btoa(unescape(encodeURIComponent(s))); } catch (e) { return btoa(s); } }
+    function b64dec(s) { try { return decodeURIComponent(escape(atob(s))); } catch (e) { return atob(s); } }
+    // downsample ltAnchors over the trailing window (denser near the 7d-ago edge)
+    function baselineAnchors(an, now) {
+        var out = [], lastT = -Infinity, minT = now - (WINDOW_MS + 18 * 3600 * 1000), edge = now - WINDOW_MS;
+        for (var i = 0; i < an.length; i++) {
+            var p = an[i]; if (!p || p.t < minT) continue;
+            var gap = (Math.abs(p.t - edge) <= 12 * 3600 * 1000) ? (30 * 60 * 1000) : (60 * 60 * 1000);
+            if (p.t - lastT >= gap) { out.push(p); lastT = p.t; }
+        }
+        if (an.length) { var L = an[an.length - 1]; if (!out.length || out[out.length - 1].t !== L.t) out.push(L); }
+        return out;
+    }
+    function exportBaselineCode() {
+        var a = acct(); if (!a || !a.ltAnchors || !a.ltAnchors.length) return null;
+        var now = Date.now(), pts = baselineAnchors(a.ltAnchors, now);
+        if (!pts.length) return null;
+        var d = [], pt = 0, pc = 0;   // delta-encoded [t0sec,cum0],[dt,dcum],...
+        for (var i = 0; i < pts.length; i++) {
+            var ts = Math.round(pts[i].t / 1000), cu = Math.round(pts[i].cum);
+            d.push(i === 0 ? [ts, cu] : [ts - pt, cu - pc]); pt = ts; pc = cu;
+        }
+        var payload = { v: 1, u: String(S.active || ''), n: (a.name || ''), c: S.currency, g: Math.round(now / 1000), d: d };
+        return SYNC_PREFIX + b64enc(JSON.stringify(payload));
+    }
+    function importBaselineCode(str) {
+        if (!str) return { ok: false, msg: 'Paste a code first.' };
+        str = String(str).trim(); var i = str.indexOf(SYNC_PREFIX);
+        if (i < 0) return { ok: false, msg: 'That does not look like a sync code.' };
+        var json; try { json = JSON.parse(b64dec(str.slice(i + SYNC_PREFIX.length))); } catch (e) { return { ok: false, msg: 'Code is corrupted or incomplete.' }; }
+        if (!json || json.v !== 1 || !Array.isArray(json.d) || !json.d.length) return { ok: false, msg: 'Unrecognised code.' };
+        var anchors = [], pt = 0, pc = 0;
+        for (var k = 0; k < json.d.length; k++) {
+            var e = json.d[k]; if (!e || e.length < 2) continue;
+            if (k === 0) { pt = e[0]; pc = e[1]; } else { pt += e[0]; pc += e[1]; }
+            anchors.push({ t: pt * 1000, cum: pc });
+        }
+        if (!anchors.length) return { ok: false, msg: 'No snapshots in code.' };
+        var id = json.u || S.active;
+        if (!id) return { ok: false, msg: 'No account detected yet — open Stake first.' };
+        if (S.active && json.u && String(json.u) !== String(S.active)) return { ok: false, msg: 'That code is from a different Stake account.' };
+        if (!S.accounts[id]) S.accounts[id] = blankAccount();
+        var a = S.accounts[id], before = (a.ltAnchors || []).length;
+        a.ltAnchors = unionAnchors(a.ltAnchors, anchors);
+        a.ltSeeded = true;
+        var oldest = a.ltAnchors.length ? a.ltAnchors[0].t : Date.now();
+        a.ltStart = a.ltStart ? Math.min(a.ltStart, oldest) : oldest;   // claim coverage back to the imported history -> pinpoint now
+        if (json.n && !a.name) a.name = String(json.n);
+        flushSave(); scheduleRender();
+        var added = a.ltAnchors.length - before;
+        return { ok: true, msg: 'Imported ' + anchors.length + ' snapshots (' + (added > 0 ? ('+' + added + ' new') : 'already current') + '). Baseline updated.' };
+    }
+    // self-contained sync dialog (shared by desktop + mobile; inline-styled, no CSS deps)
+    function openSyncDialog() {
+        if (document.getElementById('stk7w-sync')) return;
+        var code = null; try { code = exportBaselineCode(); } catch (e) {}
+        var ov = document.createElement('div'); ov.id = 'stk7w-sync';
+        ov.style.cssText = 'position:fixed;inset:0;z-index:2147483646;display:flex;align-items:center;justify-content:center;background:rgba(3,8,12,.62);-webkit-backdrop-filter:blur(3px);backdrop-filter:blur(3px);padding:14px;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;';
+        var btn = 'border:0;border-radius:9px;padding:11px 15px;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit;-webkit-appearance:none;';
+        var ta = 'width:100%;box-sizing:border-box;background:#06121b;border:1px solid #2f4553;color:#cfe0ec;border-radius:9px;padding:10px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11px;line-height:1.4;resize:none;-webkit-user-select:text;user-select:text;';
+        var lbl = 'font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:#65808f;font-weight:700;margin:0 0 6px;';
+        var card = document.createElement('div');
+        card.style.cssText = 'width:min(460px,94vw);max-height:90vh;overflow:auto;background:linear-gradient(180deg,#102433,#0a1620);border:1px solid #26404e;border-radius:16px;box-shadow:0 30px 70px -18px rgba(0,0,0,.82);color:#e8f0f5;padding:18px;';
+        card.innerHTML =
+            '<div style="font-size:15px;font-weight:800;margin-bottom:4px;">Cross-device sync</div>'
+          + '<div style="font-size:12px;color:#9fb4c1;line-height:1.5;margin-bottom:15px;">Same Stake account on another device? Copy this code there and tap <b>Apply</b> to calibrate its 7-day total right away — no week-long warm-up.</div>'
+          + '<div style="' + lbl + '">This device&rsquo;s code</div>'
+          + '<textarea id="stk7w-sc-out" readonly rows="3" style="' + ta + '"></textarea>'
+          + '<button id="stk7w-sc-copy" style="' + btn + 'background:#1fd655;color:#062c14;margin-top:8px;">Copy code</button>'
+          + '<div style="height:1px;background:rgba(255,255,255,.08);margin:16px 0;"></div>'
+          + '<div style="' + lbl + '">Paste a code from your other device</div>'
+          + '<textarea id="stk7w-sc-in" rows="3" placeholder="Paste STK7W-B1… code here" style="' + ta + '"></textarea>'
+          + '<div style="display:flex;gap:8px;margin-top:8px;align-items:center;flex-wrap:wrap;">'
+          + '<button id="stk7w-sc-apply" style="' + btn + 'background:#2a4d63;color:#fff;">Apply</button>'
+          + '<button id="stk7w-sc-close" style="' + btn + 'background:transparent;color:#9fb4c1;border:1px solid #2f4553;">Close</button>'
+          + '<span id="stk7w-sc-msg" style="font-size:11.5px;color:#9fb4c1;"></span>'
+          + '</div>';
+        ov.appendChild(card); document.body.appendChild(ov);
+        function close() { if (ov.parentNode) ov.parentNode.removeChild(ov); }
+        ov.addEventListener('click', function (e) { if (e.target === ov) close(); });
+        var out = card.querySelector('#stk7w-sc-out'), msg = card.querySelector('#stk7w-sc-msg'), copyBtn = card.querySelector('#stk7w-sc-copy');
+        if (code) { out.value = code; }
+        else { out.value = ''; out.placeholder = 'No baseline yet — let the tracker run a little, then come back.'; copyBtn.disabled = true; copyBtn.style.opacity = '.5'; copyBtn.style.cursor = 'default'; }
+        copyBtn.addEventListener('click', function () {
+            if (!code) return;
+            out.focus(); out.select();
+            var done = function () { msg.textContent = 'Copied!'; msg.style.color = '#1fd655'; };
+            try { navigator.clipboard.writeText(out.value).then(done, function () { try { document.execCommand('copy'); done(); } catch (e) { msg.textContent = 'Select all, then copy'; msg.style.color = '#ffb020'; } }); }
+            catch (e) { try { document.execCommand('copy'); done(); } catch (e2) { msg.textContent = 'Select all, then copy'; msg.style.color = '#ffb020'; } }
+        });
+        card.querySelector('#stk7w-sc-apply').addEventListener('click', function () {
+            var r = importBaselineCode(card.querySelector('#stk7w-sc-in').value);
+            msg.textContent = r.msg; msg.style.color = r.ok ? '#1fd655' : '#ff6b76';
+            if (r.ok) { try { render(); } catch (e) {} setTimeout(close, 1500); }
+        });
+        card.querySelector('#stk7w-sc-close').addEventListener('click', close);
+    }
+
+    /* ------------------------------- HUD --------------------------------- */
+    var hud = {};
+    var renderQueued = false;
+    function scheduleRender() {
+        if (renderQueued) return;
+        renderQueued = true;
+        requestAnimationFrame(function () { renderQueued = false; render(); });
+    }
+
+    function injectStyle() {
+        var css = `
+        /* ===== collapsed readout pill (top-right, draggable) ===== */
+        #stk7w-pill{position:fixed;z-index:2147483600;top:calc(env(safe-area-inset-top, 0px) + 60px);right:12px;
+          display:inline-flex;align-items:center;gap:8px;padding:8px 12px;touch-action:none;cursor:pointer;
+          background:linear-gradient(180deg,#11283a,#0a1722);border:1px solid rgba(31,214,85,.5);border-radius:13px;
+          box-shadow:0 10px 26px -10px rgba(0,0,0,.72),0 0 0 1px rgba(255,255,255,.03) inset;
+          color:#e8f0f5;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+          opacity:1;transition:opacity .2s ease,transform .2s ease;}
+        #stk7w-pill.hide{opacity:0;transform:scale(.9);pointer-events:none;}
+        #stk7w-pill .dl{width:8px;height:8px;border-radius:50%;background:#1fd655;box-shadow:0 0 9px #1fd655;flex:none;animation:stk7wpulse 1.9s infinite ease-in-out;}
+        #stk7w-pill .pv{font-size:14px;font-weight:700;color:#fff;font-variant-numeric:tabular-nums;}
+        #stk7w-pill .pv i{font-style:normal;color:#8aa0b0;font-weight:600;font-size:10px;margin-left:3px;}
+        #stk7w-pill .cv{color:#5f7585;font-size:10px;}
+
+        /* ===== scrim ===== */
+        #stk7w-scrim{position:fixed;inset:0;z-index:2147483599;background:rgba(3,8,12,.55);
+          opacity:0;pointer-events:none;transition:opacity .25s ease;-webkit-backdrop-filter:blur(2px);backdrop-filter:blur(2px);touch-action:none;}
+        #stk7w-scrim.show{opacity:1;pointer-events:auto;}
+
+        /* ===== expanded bottom sheet ===== */
+        #stk7w{position:fixed;z-index:2147483601;left:0;right:0;bottom:0;max-height:93vh;display:flex;flex-direction:column;
+          color:#e8f0f5;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;font-size:13px;
+          background:
+            radial-gradient(140% 90% at 12% -6%,rgba(31,214,85,.09),transparent 42%),
+            radial-gradient(130% 100% at 100% 0%,rgba(79,184,214,.07),transparent 48%),
+            linear-gradient(180deg,#102433,#0a1620);
+          border:1px solid #26404e;border-bottom:none;border-radius:22px 22px 0 0;
+          box-shadow:0 -24px 60px -12px rgba(0,0,0,.8);
+          transform:translateY(102%);transition:transform .3s cubic-bezier(.22,1,.36,1);overflow:hidden;overscroll-behavior:none;}
+        #stk7w.show{transform:translateY(0);}
+        #stk7w *{box-sizing:border-box;}
+        #stk7w .mono{font-family:ui-monospace,SFMono-Regular,"SF Mono","JetBrains Mono",Menlo,Consolas,monospace;font-variant-numeric:tabular-nums;}
+        @keyframes stk7wpulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.4;transform:scale(.8)}}
+
+        #stk7w .grab{padding:9px 0 3px;display:flex;justify-content:center;flex:none;touch-action:none;}
+        #stk7w .grab i{width:38px;height:4px;border-radius:3px;background:rgba(255,255,255,.22);}
+        #stk7w .hd{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:5px 16px 12px;
+          border-bottom:1px solid rgba(255,255,255,.06);flex:none;touch-action:none;}
+        #stk7w .who{display:flex;align-items:center;gap:9px;min-width:0;}
+        #stk7w .live{display:inline-flex;align-items:center;gap:6px;font-size:9px;letter-spacing:.14em;color:#1fd655;text-transform:uppercase;font-weight:700;flex:none;}
+        #stk7w .live i{width:7px;height:7px;border-radius:50%;background:#1fd655;box-shadow:0 0 9px #1fd655;animation:stk7wpulse 1.9s infinite ease-in-out;}
+        #stk7w .acct{font-size:14px;font-weight:600;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+        #stk7w .tix{font-size:11.5px;color:#8aa0b0;white-space:nowrap;flex:none;}
+        #stk7w .rt{display:flex;align-items:center;gap:9px;flex:none;}
+        #stk7w .badge{font-size:10px;font-weight:800;letter-spacing:.06em;color:#1fd655;background:rgba(31,214,85,.13);border:1px solid rgba(31,214,85,.27);padding:4px 9px;border-radius:7px;}
+        #stk7w .x{width:30px;height:30px;border-radius:9px;display:flex;align-items:center;justify-content:center;background:rgba(255,255,255,.05);color:#8aa0b0;font-size:18px;cursor:pointer;}
+        #stk7w .x:active{background:rgba(255,255,255,.1);color:#fff;}
+
+        #stk7w .bd{overflow-y:auto;-webkit-overflow-scrolling:touch;overscroll-behavior:contain;padding:14px 16px calc(20px + env(safe-area-inset-bottom, 0px));}
+        #stk7w .bd::-webkit-scrollbar{width:0;height:0;}
+
+        #stk7w .lbl{font-size:9.5px;letter-spacing:.18em;color:#6a8493;text-transform:uppercase;font-weight:700;}
+        #stk7w .herowrap{text-align:left;}
+        #stk7w .hero{display:flex;align-items:baseline;gap:8px;margin-top:8px;}
+        #stk7w .hnum{font-size:44px;font-weight:800;line-height:.9;letter-spacing:-2px;color:#fff;text-shadow:0 0 34px rgba(31,214,85,.3);}
+        #stk7w .hu{font-size:16px;color:#8aa0b0;font-weight:600;}
+        #stk7w .pin{margin-top:10px;font-size:11.5px;color:#1fd655;font-family:ui-monospace,Menlo,monospace;}
+        #stk7w .pin.wait{color:#ffb020;}
+        #stk7w .pin b{font-weight:800;}
+
+        #stk7w .card{margin-top:14px;background:#0a1822;border:1px solid rgba(255,255,255,.05);border-radius:15px;padding:14px;box-shadow:inset 0 2px 12px rgba(0,0,0,.4);}
+        #stk7w .card .ct{display:flex;justify-content:space-between;align-items:center;margin-bottom:11px;}
+        #stk7w .card .ct .lbl{margin:0;}
+
+        #stk7w .gbar{height:9px;border-radius:6px;background:#06121b;box-shadow:inset 0 1px 3px rgba(0,0,0,.6);overflow:hidden;}
+        #stk7w .gbar>i{display:block;height:100%;border-radius:6px;width:0;background:linear-gradient(90deg,#00a838,#1fd655);box-shadow:0 0 12px rgba(31,214,85,.6);transition:width .3s;}
+        #stk7w .gmeta{display:flex;justify-content:space-between;margin-top:10px;font-size:12px;color:#9fb4c1;cursor:pointer;}
+        #stk7w .gmeta .pc{color:#1fd655;font-weight:700;}
+        #stk7w .gmeta .rem-ok{color:#1fd655;font-weight:700;}
+        #stk7w .gedit{display:none;width:100%;margin-top:10px;background:#06121b;border:1px solid #2f4553;color:#fff;border-radius:8px;padding:9px 11px;font-size:15px;font-family:ui-monospace,Menlo,monospace;}
+
+        #stk7w .ctrls{display:flex;gap:6px;}
+        #stk7w .ctrls button{min-width:36px;height:32px;padding:0 9px;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.1);color:#9fb4c1;border-radius:8px;font-size:13px;font-weight:600;font-family:inherit;cursor:pointer;-webkit-appearance:none;}
+        #stk7w .ctrls button:active{background:rgba(255,255,255,.1);color:#fff;}
+        #stk7w .ctrls button.on{color:#1fd655;border-color:rgba(31,214,85,.5);background:rgba(31,214,85,.1);}
+        #stk7w .well{background:#07121a;border:1px solid rgba(255,255,255,.045);border-radius:11px;box-shadow:inset 0 2px 10px rgba(0,0,0,.55);padding:9px 8px 4px;}
+        #stk7w #stk7w-gcanvas{width:100%;height:160px;display:block;touch-action:none;}
+
+        #stk7w .meter{display:flex;height:11px;border-radius:7px;overflow:hidden;background:#06121b;box-shadow:inset 0 1px 3px rgba(0,0,0,.6);}
+        #stk7w .meter>i{height:100%;width:0;transition:width .3s;}
+        #stk7w .rline{display:flex;justify-content:space-between;align-items:center;margin-top:11px;font-size:12px;}
+        #stk7w .rline .rk{display:flex;align-items:center;gap:8px;color:#aebecb;min-width:0;}
+        #stk7w .rline .rk i{width:9px;height:9px;border-radius:3px;flex:none;}
+        #stk7w .rline .rval{font-weight:700;color:#eef4f8;margin-left:10px;white-space:nowrap;}
+
+        #stk7w .egp{display:flex;justify-content:space-between;align-items:center;margin:2px 0 4px;}
+        #stk7w .egp:not(:first-child){margin-top:16px;}
+        #stk7w .egn{font-size:12.5px;font-weight:800;color:#dce6ec;}
+        #stk7w .egn span{color:#65808f;font-weight:600;font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;margin-left:6px;}
+        #stk7w .egc{font-size:10px;font-weight:800;padding:3px 10px;border-radius:20px;}
+        #stk7w .egc.ok{background:rgba(31,214,85,.15);color:#1fd655;}
+        #stk7w .egc.no{background:rgba(255,91,104,.14);color:#ff6b76;}
+        #stk7w .egc.part{background:rgba(255,176,32,.15);color:#ffb020;}
+        #stk7w .et{display:flex;align-items:center;gap:11px;padding:9px 0;border-top:1px solid rgba(255,255,255,.045);}
+        #stk7w .ep{width:11px;height:11px;border-radius:50%;flex:none;}
+        #stk7w .ep.ok{background:#1fd655;box-shadow:0 0 9px rgba(31,214,85,.7);}
+        #stk7w .ep.no{background:transparent;border:1.5px solid #ff5b68;}
+        #stk7w .etn{font-size:13px;color:#cdd9e2;}
+        #stk7w .etn b{color:#fff;font-weight:700;}
+        #stk7w .etn .rq{color:#5f7585;font-size:11px;margin-left:6px;}
+        #stk7w .es{margin-left:auto;font-size:12.5px;font-weight:700;text-align:right;}
+        #stk7w .es .q{color:#65808f;font-size:10px;font-weight:600;margin-left:3px;}
+
+        /* ===== chart hover/scrub tooltip ===== */
+        #stk7w-gtip{position:fixed;z-index:2147483647;pointer-events:none;display:none;background:#0a1822;border:1px solid rgba(79,184,214,.4);border-radius:8px;padding:7px 10px;box-shadow:0 8px 24px rgba(0,0,0,.6);}
+        #stk7w-gtip .gtl{color:#65808f;font-size:9px;letter-spacing:.06em;text-transform:uppercase;font-family:ui-monospace,Menlo,monospace;}
+        #stk7w-gtip .gtv{color:#fff;font-size:12.5px;font-weight:700;margin-top:2px;font-family:ui-monospace,Menlo,monospace;}
+        #stk7w-gtip .gtf{color:#9fd0e0;font-size:10px;margin-top:3px;font-family:ui-monospace,Menlo,monospace;}
+        `;
+        var st = document.createElement('style');
+        st.textContent = css;
+        (document.head || document.documentElement).appendChild(st);
+    }
+
+    // compact (no-decimal) value for the glanceable pill
+    function fmtPill(n) { return isFinite(n) ? n.toLocaleString('en-US', { maximumFractionDigits: 0 }) : '–'; }
+
+    // keep the draggable pill inside the viewport (after rotation / resize)
+    function clampPill() {
+        var p = hud.pill; if (!p) return;
+        if (S.ui.left == null || S.ui.top == null) return;   // still default-anchored (top-right)
+        var w = p.offsetWidth || 120, h = p.offsetHeight || 40;
+        var nl = Math.max(6, Math.min(window.innerWidth - w - 6, S.ui.left));
+        var nt = Math.max(6, Math.min(window.innerHeight - h - 6, S.ui.top));
+        p.style.left = nl + 'px'; p.style.top = nt + 'px'; p.style.right = 'auto';
+    }
+    function positionPill() {
+        var p = hud.pill; if (!p) return;
+        if (S.ui.left != null && S.ui.top != null) clampPill();   // restore saved spot
+        // else: CSS default (top-right) applies
+    }
+
+    function buildHud() {
+        if (document.getElementById('stk7w')) return;
+        injectStyle();
+
+        // ---- collapsed readout pill ----
+        var pill = document.createElement('div');
+        pill.id = 'stk7w-pill';
+        pill.innerHTML = '<span class="dl"></span><span class="pv mono" id="stk7w-pv">–</span><span class="cv">▾</span>';
+        document.body.appendChild(pill);
+        hud.pill = pill;
+        hud.pv = pill.querySelector('#stk7w-pv');
+
+        // ---- scrim ----
+        var scrim = document.createElement('div');
+        scrim.id = 'stk7w-scrim';
+        document.body.appendChild(scrim);
+        hud.scrim = scrim;
+
+        // ---- sheet ----
+        var w = document.createElement('div');
+        w.id = 'stk7w';
+        w.setAttribute('data-ver', VERSION);
+        w.innerHTML =
+            '<div class="grab" id="stk7w-grab"><i></i></div>'
+          + '<div class="hd" id="stk7w-hd">'
+          + '  <div class="who"><span class="live"><i></i>Live</span><span class="acct" id="stk7w-acct">—</span><span class="tix" id="stk7w-tix">· — tickets</span></div>'
+          + '  <div class="rt"><span class="x" id="stk7w-sync-btn" title="cross-device sync" style="font-size:17px;">⇄</span><span class="badge" id="stk7w-cur">' + S.currency + '</span><span class="x" id="stk7w-x">✕</span></div>'
+          + '</div>'
+          + '<div class="bd" id="stk7w-bd">'
+          + '  <div class="herowrap">'
+          + '    <div class="lbl">Rolling 7-Day Wager</div>'
+          + '    <div class="hero"><span class="hnum mono" id="stk7w-roll">–</span><span class="hu" id="stk7w-hu">' + S.currency + '</span></div>'
+          + '    <div class="pin" id="stk7w-cover">—</div>'
+          + '  </div>'
+          + '  <div class="card">'
+          + '    <div class="ct"><div class="lbl">Goal</div><div class="lbl" id="stk7w-gpct" style="color:#1fd655"></div></div>'
+          + '    <div class="gbar"><i id="stk7w-fill"></i></div>'
+          + '    <div class="gmeta" id="stk7w-gmeta"><span id="stk7w-gleft">No goal set</span><span class="mono" id="stk7w-gright">tap to set →</span></div>'
+          + '    <input class="gedit mono" id="stk7w-target" type="number" inputmode="decimal" min="0" step="any" placeholder="goal (' + S.currency + ')">'
+          + '  </div>'
+          + '  <div class="card">'
+          + '    <div class="ct"><div class="lbl">Wager Activity · 7d</div>'
+          + '      <div class="ctrls"><button class="on" id="stk7w-glive" title="snap to live">⟲</button><button id="stk7w-gout" title="zoom out">−</button><button id="stk7w-gin" title="zoom in">+</button><button id="stk7w-gfit" title="fit 7 days">⛶</button></div>'
+          + '    </div>'
+          + '    <div class="well"><canvas id="stk7w-gcanvas"></canvas></div>'
+          + '  </div>'
+          + '  <div class="card">'
+          + '    <div class="ct"><div class="lbl">RTP Distribution</div></div>'
+          + '    <div class="meter"><i id="stk7w-mhi" style="background:linear-gradient(90deg,#16b045,#1fd655)"></i><i id="stk7w-mmid" style="background:#ffb020"></i><i id="stk7w-mlow" style="background:linear-gradient(90deg,#ff5b68,#c43d48)"></i></div>'
+          + '    <div class="rline"><span class="rk"><i style="background:#1fd655"></i>Originals (99%&lt;)</span><span class="rval mono" id="stk7w-bhi">—</span></div>'
+          + '    <div class="rline"><span class="rk"><i style="background:#ffb020"></i>Originals / Table (98–99%)</span><span class="rval mono" id="stk7w-bmid">—</span></div>'
+          + '    <div class="rline"><span class="rk"><i style="background:#ff5b68"></i>Slots (98%&gt;)</span><span class="rval mono" id="stk7w-blow">—</span></div>'
+          + '  </div>'
+          + '  <div class="card">'
+          + '    <div class="ct" style="margin-bottom:4px"><div class="lbl">Code Eligibility</div></div>'
+          + '    <div id="stk7w-elig"></div>'
+          + '  </div>'
+          + '</div>';
+        document.body.appendChild(w);
+        hud.w = w;
+        hud.acct = w.querySelector('#stk7w-acct');
+        hud.tix = w.querySelector('#stk7w-tix');
+        hud.cur = w.querySelector('#stk7w-cur');
+        hud.roll = w.querySelector('#stk7w-roll');
+        hud.hu = w.querySelector('#stk7w-hu');
+        hud.cover = w.querySelector('#stk7w-cover');
+        hud.fill = w.querySelector('#stk7w-fill');
+        hud.gpct = w.querySelector('#stk7w-gpct');
+        hud.gmeta = w.querySelector('#stk7w-gmeta');
+        hud.gleft = w.querySelector('#stk7w-gleft');
+        hud.gright = w.querySelector('#stk7w-gright');
+        hud.target = w.querySelector('#stk7w-target');
+        hud.mhi = w.querySelector('#stk7w-mhi');
+        hud.mmid = w.querySelector('#stk7w-mmid');
+        hud.mlow = w.querySelector('#stk7w-mlow');
+        hud.bhi = w.querySelector('#stk7w-bhi');
+        hud.bmid = w.querySelector('#stk7w-bmid');
+        hud.blow = w.querySelector('#stk7w-blow');
+        hud.bd = w.querySelector('#stk7w-bd');
+
+        // ---- chart tooltip ----
+        hud.gtip = document.createElement('div'); hud.gtip.id = 'stk7w-gtip'; document.body.appendChild(hud.gtip);
+        hud.gcanvas = w.querySelector('#stk7w-gcanvas');
+        hud.glive = w.querySelector('#stk7w-glive');
+        if (S.ui.graphLive == null) S.ui.graphLive = true;
+        gView.end = Date.now();
+
+        // ---- chart zoom / live helpers (shared with touch + buttons) ----
+        function setLiveBtn() { if (hud.glive) hud.glive.classList.toggle('on', !!S.ui.graphLive); }
+        function applyZoom(ns, ne) {
+            var now = Date.now();
+            S.ui.graphSpan = Math.max(GSPAN_MIN, Math.min(GSPAN_MAX, ns));
+            if (ne >= now - 500) { S.ui.graphLive = true; gView.end = now; }
+            else { S.ui.graphLive = false; gView.end = ne; }
+            setLiveBtn(); scheduleGraph();
+        }
+        function zoomBy(factor, atX) {
+            var W = hud.gcanvas.clientWidth || 300, span = gSpan(), end = gEnd();
+            var cx = (atX == null) ? W / 2 : atX, tc = (end - span) + (cx / W) * span;
+            var ns = span * factor;
+            applyZoom(ns, tc + ns * (1 - cx / W)); save();
+        }
+        hud.glive.addEventListener('click', function () { S.ui.graphLive = true; gView.end = Date.now(); save(); setLiveBtn(); scheduleGraph(); });
+        w.querySelector('#stk7w-gout').addEventListener('click', function () { zoomBy(1 / 0.7); });
+        w.querySelector('#stk7w-gin').addEventListener('click', function () { zoomBy(0.7); });
+        w.querySelector('#stk7w-gfit').addEventListener('click', function () { S.ui.graphSpan = GSPAN_MAX; S.ui.graphLive = true; gView.end = Date.now(); save(); setLiveBtn(); scheduleGraph(); });
+        setLiveBtn();
+
+        // ---- chart touch: 1 finger = pan / scrub (axis-decided), 2 fingers = pinch-zoom ----
+        var ct = { mode: null, moved: false, sx0: 0, sy0: 0, sx: 0, end0: 0, span0: 0, cx0: 0, pinch0: 0, hideT: 0 };
+        function tdist(t) { var dx = t[0].clientX - t[1].clientX, dy = t[0].clientY - t[1].clientY; return Math.sqrt(dx * dx + dy * dy); }
+        function tmid(t) { return (t[0].clientX + t[1].clientX) / 2; }
+        function clearScrub() { if (ct.hideT) { clearTimeout(ct.hideT); ct.hideT = 0; } gView.hoverX = null; gHideTip(); }
+        function scrubAt(clientX, clientY) {
+            var rect = hud.gcanvas.getBoundingClientRect();
+            gView.hoverX = clientX - rect.left; gView.mx = clientX; gView.my = clientY - 54; scheduleGraph();   // lift tooltip above the fingertip
+        }
+        var cv = hud.gcanvas;
+        cv.addEventListener('touchstart', function (e) {
+            if (ct.hideT) { clearTimeout(ct.hideT); ct.hideT = 0; }
+            if (e.touches.length >= 2) {
+                ct.mode = 'pinch'; ct.pinch0 = tdist(e.touches); ct.span0 = gSpan(); ct.end0 = gEnd();
+                ct.cx0 = tmid(e.touches) - cv.getBoundingClientRect().left; gView.hoverX = null; gHideTip();
+            } else {
+                ct.mode = 'maybe'; ct.moved = false;
+                ct.sx0 = e.touches[0].clientX; ct.sy0 = e.touches[0].clientY; ct.sx = ct.sx0; ct.end0 = gEnd();
+            }
+            e.preventDefault();
+        }, { passive: false });
+        cv.addEventListener('touchmove', function (e) {
+            var W = cv.clientWidth || 300, now = Date.now();
+            if (ct.mode === 'pinch' && e.touches.length >= 2) {
+                var d = tdist(e.touches);
+                if (ct.pinch0 > 0 && d > 0) {
+                    var ns = ct.span0 * (ct.pinch0 / d), tc = (ct.end0 - ct.span0) + (ct.cx0 / W) * ct.span0;
+                    applyZoom(ns, tc + ns * (1 - ct.cx0 / W));
+                }
+            } else if (e.touches.length === 1) {
+                var t = e.touches[0], dx = t.clientX - ct.sx0, dy = t.clientY - ct.sy0;
+                if (ct.mode === 'maybe' && (Math.abs(dx) > 6 || Math.abs(dy) > 6)) {
+                    ct.mode = (Math.abs(dx) >= Math.abs(dy)) ? 'pan' : 'scrub'; ct.moved = true;
+                    if (ct.mode === 'pan') { ct.end0 = gEnd(); ct.sx = t.clientX; clearScrub(); }
+                }
+                if (ct.mode === 'pan') {
+                    var span = gSpan(), ne = ct.end0 - ((t.clientX - ct.sx) / W) * span;
+                    ne = Math.max(now - WINDOW_MS + span, Math.min(now, ne));
+                    S.ui.graphLive = (ne >= now - 500); gView.end = ne; setLiveBtn(); scheduleGraph();
+                } else if (ct.mode === 'scrub') {
+                    scrubAt(t.clientX, t.clientY);
+                }
+            }
+            e.preventDefault();
+        }, { passive: false });
+        cv.addEventListener('touchend', function (e) {
+            if (ct.mode === 'pan' || ct.mode === 'pinch') save();
+            if (ct.mode === 'maybe' && !ct.moved) scrubAt(ct.sx0, ct.sy0);   // a tap → read that point
+            if (ct.mode === 'scrub' || (ct.mode === 'maybe' && !ct.moved)) {
+                ct.hideT = setTimeout(clearScrub, 2600);                      // linger, then clear
+            }
+            if (!e.touches.length) ct.mode = null;
+        });
+
+        // ---- pill: tap to open, drag to reposition ----
+        var pd = { on: false, moved: false, sx: 0, sy: 0, ox: 0, oy: 0 };
+        pill.addEventListener('touchstart', function (e) {
+            var t = e.touches[0]; pd.on = true; pd.moved = false; pd.sx = t.clientX; pd.sy = t.clientY;
+            var r = pill.getBoundingClientRect(); pd.ox = r.left; pd.oy = r.top;
+        }, { passive: true });
+        pill.addEventListener('touchmove', function (e) {
+            if (!pd.on) return;
+            var t = e.touches[0], dx = t.clientX - pd.sx, dy = t.clientY - pd.sy;
+            if (Math.abs(dx) + Math.abs(dy) > 6) pd.moved = true;
+            if (pd.moved) {
+                e.preventDefault();
+                var nl = Math.max(6, Math.min(window.innerWidth - pill.offsetWidth - 6, pd.ox + dx));
+                var nt = Math.max(6, Math.min(window.innerHeight - pill.offsetHeight - 6, pd.oy + dy));
+                pill.style.left = nl + 'px'; pill.style.top = nt + 'px'; pill.style.right = 'auto';
+            }
+        }, { passive: false });
+        pill.addEventListener('touchend', function () {
+            if (!pd.on) return; pd.on = false;
+            if (pd.moved) { var r = pill.getBoundingClientRect(); S.ui.left = Math.round(r.left); S.ui.top = Math.round(r.top); save(); }
+        });
+        pill.addEventListener('click', function () {
+            if (pd.moved) { pd.moved = false; return; }   // a drag, not a tap
+            S.ui.open = true; save(); applyOpen();
+        });
+
+        // ---- close: scrim tap, ✕, swipe the grab/header down ----
+        scrim.addEventListener('click', function () { S.ui.open = false; save(); applyOpen(); });
+        w.querySelector('#stk7w-x').addEventListener('click', function () { S.ui.open = false; save(); applyOpen(); });
+        w.querySelector('#stk7w-sync-btn').addEventListener('click', openSyncDialog);
+        // swipe-down to close: works from the grabber/header anywhere, OR from the body once it's
+        // scrolled to the top. Overscroll is contained + the page is locked while open, so a swipe
+        // can never fall through to the browser's pull-to-refresh. Chart/controls are excluded.
+        var grabEl = w.querySelector('#stk7w-grab'), hdEl = w.querySelector('#stk7w-hd');
+        var sd = { armed: false, active: false, fromHandle: false, startY: 0, dy: 0 };
+        function inNode(t, el) { return el && (t === el || el.contains(t)); }
+        function sheetStart(e) {
+            if (e.touches.length !== 1) { sd.armed = false; return; }
+            var t = e.touches[0], tg = e.target;
+            if (inNode(tg, hud.gcanvas) || (tg.closest && tg.closest('.ctrls, input, textarea, button'))) { sd.armed = false; return; }
+            sd.fromHandle = inNode(tg, grabEl) || inNode(tg, hdEl);
+            sd.armed = sd.fromHandle || (hud.bd.scrollTop <= 0);
+            sd.active = false; sd.startY = t.clientY; sd.dy = 0;
+        }
+        function sheetMove(e) {
+            if (!sd.armed || e.touches.length !== 1) return;
+            var dy = e.touches[0].clientY - sd.startY;
+            if (!sd.active) {
+                if (dy > 7 && (sd.fromHandle || hud.bd.scrollTop <= 0)) { sd.active = true; w.style.transition = 'none'; }
+                else return;   // not a downward-from-top gesture -> let the body scroll normally
+            }
+            if (dy < 0) dy = 0;
+            sd.dy = dy; w.style.transform = 'translateY(' + dy + 'px)';
+            e.preventDefault();   // we own this gesture now: no body scroll, no pull-to-refresh
+        }
+        function sheetEnd() {
+            if (!sd.active) { sd.armed = false; return; }
+            sd.active = false; sd.armed = false; w.style.transition = ''; w.style.transform = '';
+            if (sd.dy > 90) { S.ui.open = false; save(); applyOpen(); }
+        }
+        w.addEventListener('touchstart', sheetStart, { passive: true });
+        w.addEventListener('touchmove', sheetMove, { passive: false });
+        w.addEventListener('touchend', sheetEnd);
+        w.addEventListener('touchcancel', sheetEnd);
+
+        // ---- goal: tap the meta line to edit inline ----
+        var editing = false;
+        function showEdit() { editing = true; hud.target.value = getTarget() || ''; hud.gmeta.style.display = 'none'; hud.target.style.display = 'block'; hud.target.focus(); }
+        function hideEdit() { if (!editing) return; editing = false; hud.target.style.display = 'none'; hud.gmeta.style.display = 'flex'; render(); }
+        hud.gmeta.addEventListener('click', showEdit);
+        hud.target.addEventListener('input', function () { var a = acct(true); if (a) { a.target = parseFloat(hud.target.value) || 0; a.targetAt = Date.now(); save(); } });
+        hud.target.addEventListener('keydown', function (e) { if (e.key === 'Enter' || e.key === 'Escape') { hud.target.blur(); } });
+        hud.target.addEventListener('blur', hideEdit);
+
+        // ---- currency badge (crypto sites cycle; social is SC-only) ----
+        if (TRACK_CCY.length > 1) hud.cur.addEventListener('click', cycleCurrency);
+        else hud.cur.style.cursor = 'default';
+
+        // ---- Code Eligibility ladder ----
+        var DROPS = [
+            { name: 'Daily', tiers: [{ v: '$1', req: 4000 }, { v: '$2', req: 8000 }, { v: '$3', req: 12000 }] },
+            { name: 'High Roller', tiers: [{ v: '$12.50', req: 50000 }, { v: '$25', req: 100000 }, { v: '$50', req: 200000 }] }
+        ];
+        hud.elig = w.querySelector('#stk7w-elig');
+        hud.drops = [];
+        DROPS.forEach(function (grp) {
+            var head = document.createElement('div'); head.className = 'egp';
+            var nm = document.createElement('div'); nm.className = 'egn'; nm.innerHTML = grp.name + '<span>Drops</span>';
+            var cnt = document.createElement('div'); cnt.className = 'egc'; cnt.textContent = '0/' + grp.tiers.length;
+            head.appendChild(nm); head.appendChild(cnt); hud.elig.appendChild(head);
+            var tiers = [];
+            grp.tiers.forEach(function (ti) {
+                var row = document.createElement('div'); row.className = 'et';
+                var pip = document.createElement('span'); pip.className = 'ep no';
+                var name = document.createElement('span'); name.className = 'etn mono';
+                name.innerHTML = '<b>' + ti.v + '</b><span class="rq">' + fmtShort(ti.req) + '</span>';
+                var es = document.createElement('span'); es.className = 'es mono'; es.textContent = '—';
+                row.appendChild(pip); row.appendChild(name); row.appendChild(es); hud.elig.appendChild(row);
+                tiers.push({ pip: pip, es: es, req: ti.req });
+            });
+            hud.drops.push({ cnt: cnt, tiers: tiers, total: grp.tiers.length });
+        });
+
+        window.addEventListener('resize', function () { clampPill(); scheduleRender(); });
+        if (S.ui.open == null) S.ui.open = false;
+        positionPill();
+        applyOpen();
+        render();
+    }
+
+    function applyOpen() {
+        if (!hud.w) return;
+        if (S.ui.open) {
+            hud.w.classList.add('show'); hud.scrim.classList.add('show'); hud.pill.classList.add('hide');
+            document.documentElement.style.overscrollBehaviorY = 'none';   // block page pull-to-refresh while open
+        } else {
+            hud.w.classList.remove('show'); hud.scrim.classList.remove('show'); hud.pill.classList.remove('hide');
+            document.documentElement.style.overscrollBehaviorY = '';
+            if (hud.gtip) { gView.hoverX = null; hud.gtip.style.display = 'none'; }
+        }
+        render();
+    }
+
+    function cycleCurrency() {
+        var idx = TRACK_CCY.indexOf(S.currency);
+        S.currency = TRACK_CCY[(idx + 1) % TRACK_CCY.length];
+        save(); render();
+    }
+
+    function render() {
+        if (!hud.w) return;
+        var C = ' ' + S.currency;
+        if (hud.cur) hud.cur.textContent = S.currency;
+        if (hud.hu) hud.hu.textContent = S.currency;
+
+        var a = acct();
+        hud.acct.textContent = a ? (a.name || (S.active || '').slice(0, 12) + '…') : 'detecting…';
+        hud.tix.textContent = '· ' + ((a && a.tickets != null) ? a.tickets : '—') + ' tickets';
+
+        var info = rolling();
+        var rollStr = info.ready ? fmt(info.rolling) : '–';
+        hud.roll.textContent = rollStr;
+        if (hud.pv) hud.pv.innerHTML = (info.ready ? fmtPill(info.rolling) : '–') + '<i>' + S.currency + '</i>';
+
+        // header: pinpoint / coverage status
+        if (!a) { hud.cover.textContent = 'detecting account…'; hud.cover.className = 'pin wait'; }
+        else if (!info.ready) { hud.cover.textContent = 'reading lifetime…'; hud.cover.className = 'pin wait'; }
+        else if (info.realFull) { hud.cover.innerHTML = '✓ <b>calibrated</b>'; hud.cover.className = 'pin'; }
+        else {
+            var bridged = !!(a.ltAnchors && a.ltAnchors.some(function (p) { return p.seed; }));
+            hud.cover.innerHTML = '◷ ' + (bridged ? 'calibrated in ' : 'full window in ') + '<b>' + formatDur(WINDOW_MS - info.realCoverMs) + '</b>';
+            hud.cover.className = 'pin wait';
+        }
+
+        // RTP distribution (sample proportions scaled to the authoritative rolling total)
+        var bk = rollingBuckets(), bst = bk.high + bk.mid + bk.low;
+        if (bst > 0 && info.ready) {
+            var roll = info.rolling || 0, vh = roll * bk.high / bst, vm = roll * bk.mid / bst, vl = roll * bk.low / bst, tot = (vh + vm + vl) || 1;
+            hud.bhi.textContent = fmtShort(vh); hud.bmid.textContent = fmtShort(vm); hud.blow.textContent = fmtShort(vl);
+            hud.mhi.style.width = (vh / tot * 100) + '%'; hud.mmid.style.width = (vm / tot * 100) + '%'; hud.mlow.style.width = (vl / tot * 100) + '%';
+        } else {
+            hud.bhi.textContent = hud.bmid.textContent = hud.blow.textContent = '—';
+            hud.mhi.style.width = hud.mmid.style.width = hud.mlow.style.width = '0%';
+        }
+
+        // goal progress
+        var tgt = getTarget();
+        if (tgt > 0 && info.ready) {
+            var pct = Math.max(0, Math.min(1, info.rolling / tgt)), rem = tgt - info.rolling;
+            hud.fill.style.width = (pct * 100) + '%';
+            hud.gpct.textContent = Math.round(pct * 100) + '%';
+            if (rem <= 0) { hud.gleft.innerHTML = '<span class="rem-ok">✓ goal complete</span>'; hud.gright.textContent = fmtShort(tgt) + C; }
+            else { hud.gleft.innerHTML = '<span class="pc">' + Math.round(pct * 100) + '%</span> of ' + fmtShort(tgt) + ' goal'; hud.gright.textContent = fmtShort(rem) + ' to go'; }
+        } else {
+            hud.fill.style.width = '0%'; hud.gpct.textContent = '';
+            hud.gleft.textContent = 'No goal set'; hud.gright.textContent = 'tap to set →';
+        }
+
+        // Code Eligibility
+        if (hud.drops) {
+            hud.drops.forEach(function (g) {
+                var n = 0;
+                g.tiers.forEach(function (t) {
+                    if (!a || !info.ready) { t.es.textContent = '—'; t.es.style.color = '#65808f'; t.pip.className = 'ep no'; return; }
+                    if (info.rolling >= t.req) {
+                        n++;
+                        var ems = eligTimeLeftMs(t.req);
+                        t.es.innerHTML = '<b>' + (ems == null ? '—' : eligHrs(ems)) + '</b><span class="q">left</span>';
+                        t.es.style.color = '#1fd655'; t.pip.className = 'ep ok';
+                    } else {
+                        t.es.innerHTML = '<b>+' + fmtShort(t.req - info.rolling) + '</b>';
+                        t.es.style.color = '#ff6b76'; t.pip.className = 'ep no';
+                    }
+                });
+                g.cnt.textContent = n + '/' + g.total;
+                g.cnt.className = 'egc ' + ((!a || !info.ready) ? '' : (n === 0 ? 'no' : (n === g.total ? 'ok' : 'part')));
+            });
+        }
+
+        if (S.ui.open) drawGraph();
+    }
+
+    /* ------------------------------ startup ------------------------------ */
+    function cleanupOversizedStore() {
+        try {
+            var stored = readStored();
+            if (!stored || !stored.accounts) return;
+            var now = Date.now(), idMinT = now - LIVEID_KEEP_MS;
+            var minBin = Math.floor((now - BIN_KEEP_MS) / BIN_MS), winMinT = now - WINDOW_MS, changed = false;
+            Object.keys(stored.accounts).forEach(function (id) {
+                var acc = stored.accounts[id]; if (!acc || !acc.cur) return;
+                Object.keys(acc.cur).forEach(function (c) {
+                    var rec = acc.cur[c]; if (!rec) return;
+                    if (!rec.bins) rec.bins = {};
+                    if (!rec._mig && rec.bets && rec.bets.length) {
+                        var mw = rec.bins['migrated'] || (rec.bins['migrated'] = {});
+                        rec.bets.forEach(function (bt0) {
+                            if (!bt0 || bt0.t < winMinT) return;
+                            var e = (bt0.edge != null) ? bt0.edge : edgeForGame(bt0.game);
+                            var bk = bucketOfEdge(e), key = Math.floor(bt0.t / BIN_MS);
+                            var cell = mw[key] || (mw[key] = { h: 0, m: 0, l: 0, n: 0 });
+                            cell[bk === 'high' ? 'h' : bk === 'mid' ? 'm' : 'l'] += (bt0.amt || 0); cell.n += 1;
+                        });
+                        rec._mig = 1; changed = true;
+                    }
+                    if (rec.bets && rec.bets.length > BETS_CAP) { rec.bets = rec.bets.slice(rec.bets.length - BETS_CAP); changed = true; }
+                    if (rec.liveIds) {
+                        var kept = {}, before = 0, after = 0;
+                        for (var k in rec.liveIds) { before++; if (rec.liveIds[k] >= idMinT) { kept[k] = rec.liveIds[k]; after++; } }
+                        if (after !== before) { rec.liveIds = kept; changed = true; }
+                    }
+                    Object.keys(rec.bins).forEach(function (w) {
+                        var wb = rec.bins[w], any = false;
+                        Object.keys(wb).forEach(function (bk2) { if (+bk2 < minBin) { delete wb[bk2]; changed = true; } else any = true; });
+                        if (!any) { delete rec.bins[w]; changed = true; }
+                    });
+                    // v2.9: one-time SEED of the 1-min graph bins from the existing 10-min RTP bins
+                    // (remap each 10-min bin to its first 1-min slot) so the graph shows history
+                    // immediately — blocky for the pre-upgrade week, sharp going forward.
+                    if (!rec.gbins) rec.gbins = {};
+                    if (!rec._gseed) {
+                        var gseed = rec.gbins['seed'] || (rec.gbins['seed'] = {});
+                        Object.keys(rec.bins).forEach(function (w) {
+                            var wb = rec.bins[w];
+                            Object.keys(wb).forEach(function (bk2) {
+                                var c = wb[bk2], gk = (+bk2) * (BIN_MS / GBIN_MS);   // 10-min slot -> first 1-min slot
+                                var d = gseed[gk] || (gseed[gk] = { n: 0, w: 0 });
+                                d.n += (c.n || 0); d.w += (c.h || 0) + (c.m || 0) + (c.l || 0);
+                            });
+                        });
+                        rec._gseed = 1; changed = true;
+                    }
+                    var minGBin2 = Math.floor((now - BIN_KEEP_MS) / GBIN_MS);
+                    Object.keys(rec.gbins).forEach(function (w) {
+                        var wb = rec.gbins[w], any = false;
+                        Object.keys(wb).forEach(function (bk2) { if (+bk2 < minGBin2) { delete wb[bk2]; changed = true; } else any = true; });
+                        if (!any) { delete rec.gbins[w]; changed = true; }
+                    });
+                });
+                // v2.19: prune dead raffle-era fields once the lifetime counter is seeded (frees ~35% of the blob)
+                if (acc.ltSeeded && ((acc.anchors && acc.anchors.length) || acc.base || acc.lastPeriodWager || acc.periodStart != null)) {
+                    acc.anchors = []; acc.base = 0; acc.periodStart = null; acc.lastPeriodWager = 0; changed = true;
+                }
+            });
+            if (!changed) return;
+            try { localStorage.setItem(STORE_KEY, JSON.stringify(stored)); } catch (e) {}
+            S = mergeState(stored, S);
+            note('cleanup: migrated bets->bins, trimmed log, freed localStorage');
+        } catch (e) {}
+    }
+
+    function start() {
+        if (!document.body) { setTimeout(start, 80); return; }
+        cleanupOversizedStore();      // self-heal a bloated bet log so it can't keep the origin's localStorage maxed out
+        S.diag = []; save();          // fresh diagnostics each load
+        buildHud();
+        fetchSelf();                           // resolve account id -> username for the HUD label
+        setInterval(fetchSelf, 2 * 60 * 1000);
+        syncGameEdges();                       // authoritative per-game house edge from the API (RTP buckets)
+        setInterval(syncGameEdges, 3 * 60 * 1000);
+        captureGameEdge();
+        setInterval(captureGameEdge, 2500);   // legacy DOM Edge tag (fallback only; usually absent now)
+        if (!IS_SOCIAL) { fetchRates(); setInterval(fetchRates, 4 * 60 * 1000); }  // crypto USD rates (live sample)
+        fetchLifetime();                       // authoritative wager total (lifetime counter snapshot)
+        setInterval(fetchLifetime, 30 * 1000); // refresh ~every 30s (reconciles the live overlay sooner)
+        fetchRaffle();                         // Tickets display only
+        setInterval(fetchRaffle, 60 * 1000);
+        fetchBuckets();                        // server-sourced RTP split (consistent across devices)
+        setInterval(fetchBuckets, BUCKET_MS);
+        document.addEventListener('visibilitychange', function () { if (!document.hidden) { fetchLifetime(); fetchRaffle(); fetchBuckets(); } });
+        setInterval(render, 1000);             // keep the rolling window + fall-off current
+    }
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', start);
+    } else {
+        start();
+    }
+}
+
     function isOnAnyCasinoPage() {
         // AutoVault doesn't need a specific game page — works site-wide
         return isShuffle() || isNuts() || /stake\./.test(location.hostname);
@@ -9207,6 +11324,12 @@ self.onmessage = async (e) => {
             } else if (!isToolIdEnabled(toolIdForCurrentSite('autovault'))) {
                 const av = document.getElementById('autovault-floaty');
                 if (av) av.remove();
+            }
+            // 7-day wager tracker — account-wide on Stake; boots once (self-guards re-boot), CSS-hidden when off.
+            const _trk = TOOLS.find(t => t.id === 'stake-7day-tracker');
+            if (_trk && urlMatches(_trk, location.href) && isToolIdEnabled('stake-7day-tracker')) {
+                try { tool_stake_7day_tracker(); markToolRan('stake-7day-tracker'); }
+                catch (e) { console.error('[unified-mobile] tool_stake_7day_tracker failed:', e); }
             }
         }
         setTimeout(maybeBootPerPageTools, 1200);
