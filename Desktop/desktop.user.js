@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Desktop
 // @namespace    http://tampermonkey.net/
-// @version      2.46
+// @version      2.47
 // @description  .
 // @author       .
 // @match        https://nuts.gg/*
@@ -28,7 +28,7 @@
 (function () {
     'use strict';
 
-    console.log('%c🎲 Dice & Limbo Tools — desktop v2.46 — FIX: Nuts (nuts.gg) dice + limbo HUD was squished into a narrow ~122px rail. getHudHost now climbs to the full-width game stage (>=600px) and stays there, so buildHUD no longer re-parents the HUD into the narrow grid cell (verified live on nuts.gg dice + target). Includes v2.45 Shuffle multiplier fix. Settings>Hotkeys + chat protection intact.', 'color:#17c7b8;font-weight:800;font-size:13px');
+    console.log('%c🎲 Dice & Limbo Tools — desktop v2.47 — FIX: the session profit graph no longer renders as a dead black box when there are no bets yet — it now always draws a grid + zero baseline (and "waiting for first bet"), and plots your profit curve as soon as you bet. Includes v2.46 Nuts HUD layout fix + v2.45 Shuffle multiplier fix.', 'color:#17c7b8;font-weight:800;font-size:13px');
 
     /* =========================================================
        PRE-STITCH UI HIDER
@@ -3972,7 +3972,21 @@ Bets</span><span id="h-total-bets" class="hud-val">0</span></div>
         const width = canvas.width = canvas.offsetWidth;
         const height = canvas.height = canvas.offsetHeight;
         ctx.clearRect(0, 0, width, height);
-        if (profitHistory.length < 2) return;
+        if (!width || !height) return;
+        // Always paint a faint grid + zero baseline so the panel reads as a live chart
+        // even before any bets. (It used to bail to a dead black box when empty, which
+        // looked like the graph was broken.)
+        ctx.strokeStyle = 'rgba(255,255,255,0.05)'; ctx.lineWidth = 1;
+        for (let gi = 1; gi < 5; gi++) { const gy = Math.round(height * gi / 5) + 0.5; ctx.beginPath(); ctx.moveTo(0, gy); ctx.lineTo(width, gy); ctx.stroke(); }
+        for (let gi = 1; gi < 6; gi++) { const gx = Math.round(width * gi / 6) + 0.5; ctx.beginPath(); ctx.moveTo(gx, 0); ctx.lineTo(gx, height); ctx.stroke(); }
+        if (profitHistory.length < 2) {
+            const zY = Math.round(height / 2) + 0.5;
+            ctx.strokeStyle = 'rgba(255,255,255,0.18)'; ctx.setLineDash([4, 4]);
+            ctx.beginPath(); ctx.moveTo(0, zY); ctx.lineTo(width, zY); ctx.stroke(); ctx.setLineDash([]);
+            ctx.fillStyle = 'rgba(255,255,255,0.30)'; ctx.font = '12px system-ui, sans-serif'; ctx.textAlign = 'center';
+            ctx.fillText('Waiting for first bet…', width / 2, zY - 8);
+            return;
+        }
         let maxVal = Math.max(...profitHistory, 0);
         let minVal = Math.min(...profitHistory, 0);
         const range = (maxVal - minVal) || 1;
@@ -5945,7 +5959,7 @@ self.onmessage = async (e) => {
               <div class="dt-card-title">About</div>
               <div class="dt-setting-row">
                 <div class="dt-setting-label">Version</div>
-                <div style="opacity:0.7;">Dice &amp; Limbo Tools v2.46 (Desktop)</div>
+                <div style="opacity:0.7;">Dice &amp; Limbo Tools v2.47 (Desktop)</div>
               </div>
               <button class="dt-btn dt-btn-block dt-btn-small" id="dt-reset_state">Reset all saved data</button>
             </div>
@@ -10433,7 +10447,21 @@ let isRunning = false;
         const width = canvas.width = canvas.offsetWidth;
         const height = canvas.height = canvas.offsetHeight;
         ctx.clearRect(0, 0, width, height);
-        if (profitHistory.length < 2) return;
+        if (!width || !height) return;
+        // Always paint a faint grid + zero baseline so the panel reads as a live chart
+        // even before any bets. (It used to bail to a dead black box when empty, which
+        // looked like the graph was broken.)
+        ctx.strokeStyle = 'rgba(255,255,255,0.05)'; ctx.lineWidth = 1;
+        for (let gi = 1; gi < 5; gi++) { const gy = Math.round(height * gi / 5) + 0.5; ctx.beginPath(); ctx.moveTo(0, gy); ctx.lineTo(width, gy); ctx.stroke(); }
+        for (let gi = 1; gi < 6; gi++) { const gx = Math.round(width * gi / 6) + 0.5; ctx.beginPath(); ctx.moveTo(gx, 0); ctx.lineTo(gx, height); ctx.stroke(); }
+        if (profitHistory.length < 2) {
+            const zY = Math.round(height / 2) + 0.5;
+            ctx.strokeStyle = 'rgba(255,255,255,0.18)'; ctx.setLineDash([4, 4]);
+            ctx.beginPath(); ctx.moveTo(0, zY); ctx.lineTo(width, zY); ctx.stroke(); ctx.setLineDash([]);
+            ctx.fillStyle = 'rgba(255,255,255,0.30)'; ctx.font = '12px system-ui, sans-serif'; ctx.textAlign = 'center';
+            ctx.fillText('Waiting for first bet…', width / 2, zY - 8);
+            return;
+        }
         let maxVal = Math.max(...profitHistory, 0);
         let minVal = Math.min(...profitHistory, 0);
         const range = (maxVal - minVal) || 1;
