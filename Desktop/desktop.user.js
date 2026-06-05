@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Desktop
 // @namespace    http://tampermonkey.net/
-// @version      2.52
+// @version      2.53
 // @description  .
 // @author       .
 // @match        https://nuts.gg/*
@@ -2495,6 +2495,16 @@ let ACTIVE_MODE = 'smart';
         }
         #ratchet-master-container .hud-native-game-footer-slot > .game-footer .right { margin-left: auto !important;
         }
+        /* stake.com dice control row (Multiplier / Roll Over / Win Chance),
+           relocated into its own slot at the bottom of the HUD so the player can
+           see and change the multiplier — on stake.com it natively lives in the
+           game stage the HUD overlays. Hidden when empty (e.g. stake.us, where
+           those inputs ride inside the relocated sidebar). */
+        #ratchet-master-container .hud-stake-native-controls-slot { display: flex; flex: 0 0 auto; min-width: 0; padding: 8px 10px; margin: 6px 0 0; background: var(--hud-panel); border: 1px solid var(--hud-border-soft); border-radius: 12px; }
+        #ratchet-master-container .hud-stake-native-controls-slot:empty { display: none !important; }
+        #ratchet-master-container .hud-stake-native-controls-slot > .footer { display: flex; gap: 8px; width: 100%; align-items: flex-end; flex-wrap: nowrap; }
+        #ratchet-master-container .hud-stake-native-controls-slot label { flex: 1 1 0; min-width: 0; }
+        #ratchet-master-container .hud-stake-native-controls-slot input { width: 100%; box-sizing: border-box; }
         @media (max-width: 980px) {
             #ratchet-master-container { padding: 6px !important;
             }
@@ -2916,6 +2926,21 @@ let ACTIVE_MODE = 'smart';
         }
         return null;
     }
+    function findStakeDiceControls() {
+        // The Stake dice control row — Multiplier (payout) / Roll Over
+        // (reverse-roll) / Win Chance (chance). On stake.com it lives in a
+        // `.footer` inside game-content; on stake.us those inputs sit inside
+        // .game-sidebar (already relocated by the sidebar slot). Returns the
+        // enclosing `.footer` only when the row is OUTSIDE the HUD, so:
+        //   - stake.us  -> already inside the HUD via the sidebar -> null (no-op)
+        //   - relocated -> already inside the HUD -> null (idempotent; never
+        //                  displaced once moved)
+        const hud = document.getElementById('ratchet-master-container');
+        const ctrl = document.querySelector('input[data-testid="payout"], input[data-testid="chance"], button[data-testid="reverse-roll"]');
+        if (!ctrl) return null;
+        if (hud && hud.contains(ctrl)) return null;
+        return ctrl.closest('.footer') || null;
+    }
     function mountSingleElement(slot, element) {
         if (!slot || !element) return;
         if (slot.childElementCount === 1 && slot.firstElementChild === element) return;
@@ -2947,20 +2972,30 @@ let ACTIVE_MODE = 'smart';
         }
         mountSingleElement(document.getElementById('hud-native-sidebar-slot'), findNativeElement('.game-sidebar'));
         mountSingleElement(document.getElementById('hud-native-past-bets-slot'), findNativeElement('.past-bets'));
-        // stake.com's dice Multiplier / Roll Over / Win Chance row is itself a
-        // `.footer` *inside* game-content (on stake.us those inputs live in
-        // .game-sidebar instead, so they ride along with the sidebar relocation
-        // above). stake.com's dice is a Svelte app, and reparenting that footer
-        // node into the HUD makes Svelte tear it out on its next render — which
-        // deletes the payout/chance inputs the Advanced IOW create/update flow
-        // needs (and that the player needs to change the multiplier). So never
-        // relocate a footer that holds the dice controls: leave it in place
-        // (behind the HUD) so it stays in the DOM and remains settable.
+        // The generic `.footer` slot must NOT grab the Stake dice control row
+        // (Multiplier / Roll Over / Win Chance) — that's relocated separately
+        // below into its own visible slot. If we let it land here, the next
+        // tick's findNativeElement('.footer') (which skips in-HUD nodes) would
+        // pick a *different* footer and mountSingleElement's replaceChildren()
+        // would kick the dice-control row out of the DOM entirely.
         const _nativeFooter = findNativeElement('.footer');
         if (_nativeFooter && !_nativeFooter.querySelector('input[data-testid="payout"], input[data-testid="chance"], button[data-testid="reverse-roll"]')) {
             mountSingleElement(document.getElementById('hud-footer-slot'), _nativeFooter);
         }
         mountSingleElement(document.getElementById('hud-native-game-footer-slot'), findNativeElement('.game-footer'));
+        // Relocate the Stake dice Multiplier / Roll Over / Win Chance row into its
+        // own visible slot. On stake.com that row lives in game-content (behind
+        // the opaque HUD), so without this the player can't see or change the
+        // multiplier; on stake.us those inputs ride inside .game-sidebar (already
+        // relocated), so findStakeDiceControls returns null there and this no-ops.
+        // It also returns null once the row is already in the HUD, so this is
+        // idempotent — and Stake's Svelte app does NOT recreate the row in
+        // game-content after it's moved, so a plain appendChild keeps it stable.
+        const _diceControls = findStakeDiceControls();
+        const _diceCtrlSlot = document.getElementById('hud-stake-native-controls-slot');
+        if (_diceControls && _diceCtrlSlot && _diceControls.parentElement !== _diceCtrlSlot) {
+            _diceCtrlSlot.appendChild(_diceControls);
+        }
         syncFooterFieldStyles();
     }
     function buildHUD() {
@@ -3011,6 +3046,7 @@ let ACTIVE_MODE = 'smart';
                         </div>
                         <div id="hud-content"></div>
                         <div id="hud-footer-slot" class="hud-footer-slot"></div>
+                        <div id="hud-stake-native-controls-slot" class="hud-stake-native-controls-slot"></div>
 
              </div>
                 </div>
