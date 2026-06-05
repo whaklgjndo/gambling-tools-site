@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Desktop
 // @namespace    http://tampermonkey.net/
-// @version      2.50
+// @version      2.51
 // @description  .
 // @author       .
 // @match        https://nuts.gg/*
@@ -6563,6 +6563,37 @@ self.onmessage = async (e) => {
     }
 
     /* ---- Stake.us / Stake.com ---- */
+    // Stake's bet-amount field differs by domain: stake.com (and the .bet/.games/
+    // staketr* family) use a contenteditable #text-field-container; stake.us still
+    // uses the legacy <input data-testid="input-game-amount">. Mirror setBet()'s
+    // proven dual approach so the strategy import/update works on every domain.
+    async function setStakeBetAmount(val) {
+        const targetStr = String(val);
+        const container = document.getElementById('text-field-container');
+        if (container) {
+            container.focus(); container.click();
+            await sleep(60);
+            const display = document.querySelector('#text-field-container #editing-view-port > div') || document.querySelector('#editing-view-port > div');
+            if (display) {
+                display.focus();
+                try { document.execCommand('selectAll', false, null); document.execCommand('insertText', false, targetStr); } catch (e) {}
+            }
+            ['input','change','blur','keydown','keyup','focus'].forEach(type => {
+                const e = new Event(type, { bubbles: true });
+                container.dispatchEvent(e); if (display) display.dispatchEvent(e);
+            });
+            return true;
+        }
+        const input = document.querySelector('input[data-testid="input-game-amount"]');
+        if (input) {
+            try { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, targetStr); }
+            catch (e) { input.value = targetStr; }
+            input.dispatchEvent(new Event('input', { bubbles: true }));
+            input.dispatchEvent(new Event('change', { bubbles: true }));
+            return true;
+        }
+        return false;
+    }
     async function stake_exportBalance() {
         const el = document.querySelector('span.ds-body-md-strong[data-ds-text="true"][style*="max-width: 16ch"]') ||
                    document.querySelector('span.ds-body-md-strong[data-ds-text="true"]');
@@ -6587,8 +6618,9 @@ self.onmessage = async (e) => {
             // the value we write into its threshold input is Balance Target
             // (not Profit Stop, which lives elsewhere).
             if (!betSize || !balanceTarget || betSize === 'Invalid' || balanceTarget === 'Invalid') { toast('Missing bet_size or balance_target.'); return; }
-            const betInput = await waitFor('input[data-testid="input-game-amount"]');
-            betInput.value = betSize; trigger(betInput);
+            await waitFor('#text-field-container, input[data-testid="input-game-amount"]');
+            await setStakeBetAmount(betSize);
+            await sleep(200);
             const cond4BlockBtn = await waitFor('button[data-testid="block-condition-4"]');
             cond4BlockBtn.click();
             await sleep(600);
@@ -6610,8 +6642,8 @@ self.onmessage = async (e) => {
             await sleep(600);
             const chanceEl = await waitFor('input[data-testid="chance"]');
             const winChance = chanceEl.value;
-            const betInput = document.querySelector('input[data-testid="input-game-amount"]');
-            if (betInput) { betInput.value = bet_size; trigger(betInput); }
+            await setStakeBetAmount(bet_size);
+            await sleep(200);
             const advBtn = await waitFor('svg[data-ds-icon="BetAdvanced"]');
             advBtn.closest('button').click();
             await sleep(800);
