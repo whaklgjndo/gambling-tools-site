@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Desktop
 // @namespace    http://tampermonkey.net/
-// @version      2.54
+// @version      2.55
 // @description  .
 // @author       .
 // @match        https://nuts.gg/*
@@ -2495,14 +2495,6 @@ let ACTIVE_MODE = 'smart';
         }
         #ratchet-master-container .hud-native-game-footer-slot > .game-footer .right { margin-left: auto !important;
         }
-        /* stake.com dice control row (Multiplier / Roll Over / Win Chance) moved
-           INTO the relocated bet slip's scrollable content so it sits integrated
-           under Bet Amount / Profit in the left panel, matching stake.us. (On
-           stake.com it natively lives in the game stage the HUD overlays; the
-           data-hud-dice-controls attr is set by syncNativeHudElements on move.) */
-        #ratchet-master-container .scrollable-content > .footer[data-hud-dice-controls] { display: flex; gap: 6px; width: 100%; align-items: flex-end; flex-wrap: nowrap; margin-top: 8px; }
-        #ratchet-master-container .scrollable-content > .footer[data-hud-dice-controls] label { flex: 1 1 0; min-width: 0; }
-        #ratchet-master-container .scrollable-content > .footer[data-hud-dice-controls] input { width: 100%; box-sizing: border-box; }
         @media (max-width: 980px) {
             #ratchet-master-container { padding: 6px !important;
             }
@@ -2970,34 +2962,17 @@ let ACTIVE_MODE = 'smart';
         }
         mountSingleElement(document.getElementById('hud-native-sidebar-slot'), findNativeElement('.game-sidebar'));
         mountSingleElement(document.getElementById('hud-native-past-bets-slot'), findNativeElement('.past-bets'));
-        // The generic `.footer` slot must NOT grab the Stake dice control row
-        // (Multiplier / Roll Over / Win Chance) — that's relocated separately
-        // below into its own visible slot. If we let it land here, the next
-        // tick's findNativeElement('.footer') (which skips in-HUD nodes) would
-        // pick a *different* footer and mountSingleElement's replaceChildren()
-        // would kick the dice-control row out of the DOM entirely.
-        const _nativeFooter = findNativeElement('.footer');
-        if (_nativeFooter && !_nativeFooter.querySelector('input[data-testid="payout"], input[data-testid="chance"], button[data-testid="reverse-roll"]')) {
-            mountSingleElement(document.getElementById('hud-footer-slot'), _nativeFooter);
-        }
+        // Put the Stake dice control row (Multiplier / Roll Over / Win Chance)
+        // full-width across the bottom of the workspace via hud-footer-slot —
+        // exactly where stake.us shows it. Target THE multiplier footer by its
+        // payout/chance inputs (findStakeDiceControls), NOT findNativeElement
+        // ('.footer'): stake.com has a second, empty footer that the generic
+        // lookup would let replaceChildren() swap in next tick, deleting the dice
+        // row. findStakeDiceControls returns null once the row is in the HUD, so
+        // mountSingleElement no-ops and the row is never displaced. (On stake.us
+        // it resolves to the same footer the generic lookup used.)
+        mountSingleElement(document.getElementById('hud-footer-slot'), findStakeDiceControls());
         mountSingleElement(document.getElementById('hud-native-game-footer-slot'), findNativeElement('.game-footer'));
-        // Move the Stake dice Multiplier / Roll Over / Win Chance row INTO the
-        // relocated bet slip's scrollable content, so it appears integrated under
-        // Bet Amount / Profit in the left panel — matching stake.us, where those
-        // inputs natively live in the bet slip. On stake.com that row otherwise
-        // sits in game-content behind the opaque HUD (invisible/unchangeable).
-        // findStakeDiceControls returns the row only while it's OUTSIDE the HUD,
-        // so once integrated this no-ops (idempotent, never displaced); verified
-        // live that the row stays put + stays linked to the slider across bet/
-        // slider re-renders, and Stake does not recreate it in game-content.
-        const _diceControls = findStakeDiceControls();
-        if (_diceControls) {
-            const _betslipScroll = document.querySelector('#hud-native-sidebar-slot .game-sidebar .scrollable-content');
-            if (_betslipScroll && _diceControls.parentElement !== _betslipScroll) {
-                _diceControls.setAttribute('data-hud-dice-controls', '1');
-                _betslipScroll.appendChild(_diceControls);
-            }
-        }
         syncFooterFieldStyles();
     }
     function buildHUD() {
