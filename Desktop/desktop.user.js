@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Desktop
 // @namespace    http://tampermonkey.net/
-// @version      2.53
+// @version      2.54
 // @description  .
 // @author       .
 // @match        https://nuts.gg/*
@@ -2495,16 +2495,14 @@ let ACTIVE_MODE = 'smart';
         }
         #ratchet-master-container .hud-native-game-footer-slot > .game-footer .right { margin-left: auto !important;
         }
-        /* stake.com dice control row (Multiplier / Roll Over / Win Chance),
-           relocated into its own slot at the bottom of the HUD so the player can
-           see and change the multiplier — on stake.com it natively lives in the
-           game stage the HUD overlays. Hidden when empty (e.g. stake.us, where
-           those inputs ride inside the relocated sidebar). */
-        #ratchet-master-container .hud-stake-native-controls-slot { display: flex; flex: 0 0 auto; min-width: 0; padding: 8px 10px; margin: 6px 0 0; background: var(--hud-panel); border: 1px solid var(--hud-border-soft); border-radius: 12px; }
-        #ratchet-master-container .hud-stake-native-controls-slot:empty { display: none !important; }
-        #ratchet-master-container .hud-stake-native-controls-slot > .footer { display: flex; gap: 8px; width: 100%; align-items: flex-end; flex-wrap: nowrap; }
-        #ratchet-master-container .hud-stake-native-controls-slot label { flex: 1 1 0; min-width: 0; }
-        #ratchet-master-container .hud-stake-native-controls-slot input { width: 100%; box-sizing: border-box; }
+        /* stake.com dice control row (Multiplier / Roll Over / Win Chance) moved
+           INTO the relocated bet slip's scrollable content so it sits integrated
+           under Bet Amount / Profit in the left panel, matching stake.us. (On
+           stake.com it natively lives in the game stage the HUD overlays; the
+           data-hud-dice-controls attr is set by syncNativeHudElements on move.) */
+        #ratchet-master-container .scrollable-content > .footer[data-hud-dice-controls] { display: flex; gap: 6px; width: 100%; align-items: flex-end; flex-wrap: nowrap; margin-top: 8px; }
+        #ratchet-master-container .scrollable-content > .footer[data-hud-dice-controls] label { flex: 1 1 0; min-width: 0; }
+        #ratchet-master-container .scrollable-content > .footer[data-hud-dice-controls] input { width: 100%; box-sizing: border-box; }
         @media (max-width: 980px) {
             #ratchet-master-container { padding: 6px !important;
             }
@@ -2983,18 +2981,22 @@ let ACTIVE_MODE = 'smart';
             mountSingleElement(document.getElementById('hud-footer-slot'), _nativeFooter);
         }
         mountSingleElement(document.getElementById('hud-native-game-footer-slot'), findNativeElement('.game-footer'));
-        // Relocate the Stake dice Multiplier / Roll Over / Win Chance row into its
-        // own visible slot. On stake.com that row lives in game-content (behind
-        // the opaque HUD), so without this the player can't see or change the
-        // multiplier; on stake.us those inputs ride inside .game-sidebar (already
-        // relocated), so findStakeDiceControls returns null there and this no-ops.
-        // It also returns null once the row is already in the HUD, so this is
-        // idempotent — and Stake's Svelte app does NOT recreate the row in
-        // game-content after it's moved, so a plain appendChild keeps it stable.
+        // Move the Stake dice Multiplier / Roll Over / Win Chance row INTO the
+        // relocated bet slip's scrollable content, so it appears integrated under
+        // Bet Amount / Profit in the left panel — matching stake.us, where those
+        // inputs natively live in the bet slip. On stake.com that row otherwise
+        // sits in game-content behind the opaque HUD (invisible/unchangeable).
+        // findStakeDiceControls returns the row only while it's OUTSIDE the HUD,
+        // so once integrated this no-ops (idempotent, never displaced); verified
+        // live that the row stays put + stays linked to the slider across bet/
+        // slider re-renders, and Stake does not recreate it in game-content.
         const _diceControls = findStakeDiceControls();
-        const _diceCtrlSlot = document.getElementById('hud-stake-native-controls-slot');
-        if (_diceControls && _diceCtrlSlot && _diceControls.parentElement !== _diceCtrlSlot) {
-            _diceCtrlSlot.appendChild(_diceControls);
+        if (_diceControls) {
+            const _betslipScroll = document.querySelector('#hud-native-sidebar-slot .game-sidebar .scrollable-content');
+            if (_betslipScroll && _diceControls.parentElement !== _betslipScroll) {
+                _diceControls.setAttribute('data-hud-dice-controls', '1');
+                _betslipScroll.appendChild(_diceControls);
+            }
         }
         syncFooterFieldStyles();
     }
@@ -3046,7 +3048,6 @@ let ACTIVE_MODE = 'smart';
                         </div>
                         <div id="hud-content"></div>
                         <div id="hud-footer-slot" class="hud-footer-slot"></div>
-                        <div id="hud-stake-native-controls-slot" class="hud-stake-native-controls-slot"></div>
 
              </div>
                 </div>
