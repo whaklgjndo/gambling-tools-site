@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Desktop
 // @namespace    http://tampermonkey.net/
-// @version      2.48
+// @version      2.49
 // @description  .
 // @author       .
 // @match        https://nuts.gg/*
@@ -6408,11 +6408,27 @@ self.onmessage = async (e) => {
                 advancedTab.click();
                 await sleep(800);
             }
-            const betInfoInputs = document.querySelectorAll('input#betInfo');
-            if (betInfoInputs.length < 2) throw 'betInfo inputs not found';
-            setNativeValue(betInfoInputs[0], multiplier);
+            // Shuffle dropped id="betInfo"; locate the Multiplier (to set) and
+            // Chance (to read) inputs by their labeled InfoBetInput containers
+            // — same robust approach as getUserSetMultiplier — and keep the old
+            // id selector as a fallback in case a future deploy restores it.
+            const _shfInputByLabel = (re) => {
+                for (const c of document.querySelectorAll('[class*="InfoBetInput_inputContainer"]')) {
+                    const lt = (c.querySelector('label, span, p')?.textContent || '').trim();
+                    if (re.test(lt)) { const inp = c.querySelector('input'); if (inp) return inp; }
+                }
+                return null;
+            };
+            let multInput = _shfInputByLabel(/^multiplier$/i);
+            let chanceInput = _shfInputByLabel(/chance/i);
+            if (!multInput || !chanceInput) {
+                const legacy = document.querySelectorAll('input#betInfo');
+                if (legacy.length >= 2) { multInput = multInput || legacy[0]; chanceInput = chanceInput || legacy[1]; }
+            }
+            if (!multInput || !chanceInput) throw 'betInfo inputs not found';
+            setNativeValue(multInput, multiplier);
             await sleep(600);
-            const winChance = betInfoInputs[1].value;
+            const winChance = chanceInput.value;
             const betInput = document.querySelector('input[data-testid="bet-amount"]');
             if (betInput) setNativeValue(betInput, bet_size);
             const createBtn = await waitForText('button', 'Create strategy');
