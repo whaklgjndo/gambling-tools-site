@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Desktop
 // @namespace    http://tampermonkey.net/
-// @version      2.49
+// @version      2.50
 // @description  .
 // @author       .
 // @match        https://nuts.gg/*
@@ -6343,11 +6343,34 @@ self.onmessage = async (e) => {
        ========================================================= */
 
     /* ---- Close the strategy popup after updating. Just clicks the X. ---- */
+    // Shuffle's strategy modal ignores a plain .click() on its controls — its
+    // handlers fire on pointer/mouse events — so dispatch the full sequence.
+    function shfPointerClick(el) {
+        if (!el) return false;
+        ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click'].forEach(t => {
+            try { el.dispatchEvent(new MouseEvent(t, { bubbles: true, cancelable: true, view: window })); } catch (e) {}
+        });
+        return true;
+    }
     async function closeStrategyPopup_shuffle() {
         await sleep(400);
         const btn = document.querySelector('button[aria-label*="close" i]');
-        if (btn) { btn.click(); return true; }
+        if (btn) { shfPointerClick(btn); return true; }
         return false;
+    }
+    // Persist the strategy (Save Strategy) then make sure the popup is closed,
+    // so after a create/update the user lands back on the game ready to play
+    // instead of being left staring at the strategy editor.
+    async function saveAndCloseStrategy_shuffle() {
+        await sleep(400);
+        let saveBtn = await waitForText('button', 'Save Strategy', 4000);
+        if (!saveBtn) saveBtn = Array.from(document.querySelectorAll('button')).find(b => /^save strategy$/i.test((b.textContent || '').trim()) && b.offsetParent);
+        if (!saveBtn) return false; // no Save button found — leave the editor open rather than risk discarding the strategy
+        shfPointerClick(saveBtn);
+        await sleep(800);
+        // Saved — if the editor is still open, close it (safe now that it's saved).
+        if (document.querySelector('[class*="AdvancedDiceCondition_root"]')) await closeStrategyPopup_shuffle();
+        return true;
     }
     async function closeStrategyPopup_stake() {
         await sleep(400);
@@ -6394,8 +6417,9 @@ self.onmessage = async (e) => {
             const conditionDiv = cond4.closest('.AdvancedDiceCondition_root__CaIQo');
             const inputs = conditionDiv ? conditionDiv.querySelectorAll('input[type="number"]') : [];
             if (inputs[0]) setNativeValue(inputs[0], balanceTarget);
-            const closed = await closeStrategyPopup_shuffle();
-            toast(closed ? 'Strategy updated & saved.' : 'Strategy updated — close the popup manually.');
+            let _saved = await saveAndCloseStrategy_shuffle();
+            if (!_saved) _saved = await closeStrategyPopup_shuffle(); // existing-strategy edits apply in place; just close out
+            toast(_saved ? 'Strategy updated & saved — ready to play.' : 'Strategy updated — close the popup manually.');
         } catch (err) { toast('Update failed: ' + err); console.error(err); }
     }
     async function shuffle_importNew() {
@@ -6453,10 +6477,11 @@ self.onmessage = async (e) => {
             getStartedBtn.click();
             const addBtn = await waitForText('button', 'Add new condition block', 10000);
             if (!addBtn) throw 'Add condition block button not found';
-            // "Get Started" auto-creates Condition 1, so 4 adds yields 5
-            // total conditions. We configure 1-4 below, then delete the
-            // empty Condition 5 at the end.
-            for (let i = 0; i < 4; i++) { addBtn.click(); await sleep(500); }
+            // "Get Started" auto-creates Condition 1, so 3 adds yields the 4
+            // conditions this strategy actually uses — no useless 5th condition
+            // is created at all. (The Condition-5 cleanup below stays as a
+            // safety net in case the platform ever pre-creates extras.)
+            for (let i = 0; i < 3; i++) { addBtn.click(); await sleep(500); }
             await sleep(1000);
             const headers = document.querySelectorAll('.AdvancedDiceCondition_header__jDZzw');
             if (headers.length < 4) throw `Only ${headers.length} conditions created.`;
@@ -6532,7 +6557,8 @@ self.onmessage = async (e) => {
                 }
             } catch (e) { console.warn('[shuffle_importNew] Condition 5 cleanup skipped:', e); }
 
-            toast(`"${multiplier}x" strategy created. Click "Save Strategy".`);
+            const _saved = await saveAndCloseStrategy_shuffle();
+            toast(_saved ? `"${multiplier}x" strategy created & saved — ready to play.` : `"${multiplier}x" strategy created — click "Save Strategy".`);
         } catch (err) { toast('Import failed: ' + err); console.error(err); }
     }
 

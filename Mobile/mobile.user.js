@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mobile 
 // @namespace    https://whaklgjndo.github.io/gambling-tools/
-// @version      5.8
+// @version      5.9
 // @description  .
 // @author       .
 // @match        https://stake.com/*
@@ -4617,11 +4617,32 @@ self.onmessage = async (e) => {
     /* ============================================================
        GAME INTEGRATION — site-aware (Stake + Shuffle)
        ============================================================ */
+    // Shuffle's strategy modal ignores a plain .click(); its controls fire on
+    // pointer/mouse events, so dispatch the full sequence.
+    function dt_shfPointerClick(el) {
+        if (!el) return false;
+        ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click'].forEach(t => {
+            try { el.dispatchEvent(new MouseEvent(t, { bubbles: true, cancelable: true, view: window })); } catch (e) {}
+        });
+        return true;
+    }
     async function dt_closeStrategyPopup_shuffle() {
         await dt_sleep(400);
         const btn = document.querySelector('button[aria-label*="close" i]');
-        if (btn) { btn.click(); return true; }
+        if (btn) { dt_shfPointerClick(btn); return true; }
         return false;
+    }
+    // Persist the strategy (Save Strategy) then ensure the popup is closed, so
+    // after a create/update the user lands back on the game ready to play.
+    async function dt_saveAndCloseStrategy_shuffle() {
+        await dt_sleep(400);
+        let saveBtn = await dt_waitForText('button', 'Save Strategy', 4000);
+        if (!saveBtn) saveBtn = Array.from(document.querySelectorAll('button')).find(b => /^save strategy$/i.test((b.textContent || '').trim()) && b.offsetParent);
+        if (!saveBtn) return false; // no Save button — leave the editor open rather than risk discarding the strategy
+        dt_shfPointerClick(saveBtn);
+        await dt_sleep(800);
+        if (document.querySelector('[class*="AdvancedDiceCondition_root"]')) await dt_closeStrategyPopup_shuffle();
+        return true;
     }
     async function dt_closeStrategyPopup_stake() {
         await dt_sleep(400);
@@ -4664,8 +4685,9 @@ self.onmessage = async (e) => {
             const conditionDiv = cond4.closest('.AdvancedDiceCondition_root__CaIQo');
             const inputs = conditionDiv ? conditionDiv.querySelectorAll('input[type="number"]') : [];
             if (inputs[0]) dt_setNativeValue(inputs[0], balanceTarget);
-            const closed = await dt_closeStrategyPopup_shuffle();
-            dt_toast(closed ? 'Strategy updated & saved.' : 'Strategy updated — close the popup manually.');
+            let _saved = await dt_saveAndCloseStrategy_shuffle();
+            if (!_saved) _saved = await dt_closeStrategyPopup_shuffle(); // existing-strategy edits apply in place; just close out
+            dt_toast(_saved ? 'Strategy updated & saved — ready to play.' : 'Strategy updated — close the popup manually.');
         } catch (err) { dt_toast('Update failed: ' + err); console.error(err); }
     }
     async function dt_shuffle_importNew() {
@@ -4722,7 +4744,7 @@ self.onmessage = async (e) => {
             getStartedBtn.click();
             const addBtn = await dt_waitForText('button', 'Add new condition block', 10000);
             if (!addBtn) throw 'Add condition block button not found';
-            for (let i = 0; i < 4; i++) { addBtn.click(); await dt_sleep(500); }
+            for (let i = 0; i < 3; i++) { addBtn.click(); await dt_sleep(500); }
             await dt_sleep(1000);
             const headers = document.querySelectorAll('.AdvancedDiceCondition_header__jDZzw');
             if (headers.length < 4) throw `Only ${headers.length} conditions created.`;
@@ -4786,7 +4808,8 @@ self.onmessage = async (e) => {
                     if (del) { del.click(); await dt_sleep(400); }
                 }
             } catch (e) {}
-            dt_toast(`"${multiplier}x" strategy created. Click "Save Strategy".`);
+            const _saved = await dt_saveAndCloseStrategy_shuffle();
+            dt_toast(_saved ? `"${multiplier}x" strategy created & saved — ready to play.` : `"${multiplier}x" strategy created — click "Save Strategy".`);
         } catch (err) { dt_toast('Import failed: ' + err); console.error(err); }
     }
 
