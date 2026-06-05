@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Desktop
 // @namespace    http://tampermonkey.net/
-// @version      2.51
+// @version      2.52
 // @description  .
 // @author       .
 // @match        https://nuts.gg/*
@@ -2947,7 +2947,19 @@ let ACTIVE_MODE = 'smart';
         }
         mountSingleElement(document.getElementById('hud-native-sidebar-slot'), findNativeElement('.game-sidebar'));
         mountSingleElement(document.getElementById('hud-native-past-bets-slot'), findNativeElement('.past-bets'));
-        mountSingleElement(document.getElementById('hud-footer-slot'), findNativeElement('.footer'));
+        // stake.com's dice Multiplier / Roll Over / Win Chance row is itself a
+        // `.footer` *inside* game-content (on stake.us those inputs live in
+        // .game-sidebar instead, so they ride along with the sidebar relocation
+        // above). stake.com's dice is a Svelte app, and reparenting that footer
+        // node into the HUD makes Svelte tear it out on its next render — which
+        // deletes the payout/chance inputs the Advanced IOW create/update flow
+        // needs (and that the player needs to change the multiplier). So never
+        // relocate a footer that holds the dice controls: leave it in place
+        // (behind the HUD) so it stays in the DOM and remains settable.
+        const _nativeFooter = findNativeElement('.footer');
+        if (_nativeFooter && !_nativeFooter.querySelector('input[data-testid="payout"], input[data-testid="chance"], button[data-testid="reverse-roll"]')) {
+            mountSingleElement(document.getElementById('hud-footer-slot'), _nativeFooter);
+        }
         mountSingleElement(document.getElementById('hud-native-game-footer-slot'), findNativeElement('.game-footer'));
         syncFooterFieldStyles();
     }
