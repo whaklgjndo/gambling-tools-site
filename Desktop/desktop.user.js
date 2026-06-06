@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Desktop
 // @namespace    http://tampermonkey.net/
-// @version      2.56
+// @version      2.57
 // @description  .
 // @author       .
 // @match        https://nuts.gg/*
@@ -6378,7 +6378,15 @@ self.onmessage = async (e) => {
     }
     async function closeStrategyPopup_shuffle() {
         await sleep(400);
-        const btn = document.querySelector('button[aria-label*="close" i]');
+        // Target the strategy modal's OWN X specifically. A bare
+        // button[aria-label*="close"] search grabs the WRONG "Close" control on
+        // shuffle.com (a different one sits earlier in the DOM), so the editor
+        // stays open. The modal's X is .ModalClose_closeButton — pointer-clicking
+        // that one closes it (verified live). Fall back to a dialog-scoped close,
+        // then the bare aria-label, for other skins.
+        const btn = document.querySelector('[class*="ModalClose_closeButton"]')
+                 || document.querySelector('[role="dialog"] button[aria-label*="close" i]')
+                 || document.querySelector('button[aria-label*="close" i]');
         if (btn) { shfPointerClick(btn); return true; }
         return false;
     }
@@ -6581,8 +6589,12 @@ self.onmessage = async (e) => {
                 }
             } catch (e) { console.warn('[shuffle_importNew] Condition 5 cleanup skipped:', e); }
 
-            const _saved = await saveAndCloseStrategy_shuffle();
-            toast(_saved ? `"${multiplier}x" strategy created & saved — ready to play.` : `"${multiplier}x" strategy created — click "Save Strategy".`);
+            let _saved = await saveAndCloseStrategy_shuffle();
+            // shuffle.com has no "Save Strategy" button — the built strategy is
+            // applied in place — so close the editor out so the user lands back
+            // on the game ready to play (update flow does the same).
+            if (!_saved) _saved = await closeStrategyPopup_shuffle();
+            toast(_saved ? `"${multiplier}x" strategy created — ready to play.` : `"${multiplier}x" strategy created — close the editor manually.`);
         } catch (err) { toast('Import failed: ' + err); console.error(err); }
     }
 
