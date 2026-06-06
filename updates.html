@@ -56,46 +56,10 @@
             <span class="chip">Desktop</span>
             <span class="rel-date">June 4, 2026</span>
           </div>
-          <h2 class="rel-title">Shuffle — strategy editor now closes after create/update</h2>
+          <h2 class="rel-title">Stake &amp; Shuffle — Advanced IOW strategies now work on every domain</h2>
           <ul class="changes">
-            <li><span class="tag fixed">Fixed</span><span class="ctxt"><b>Advanced IOW</b> (Shuffle): after “Create a fresh strategy” or “Update strategy” on shuffle.com, the strategy editor stayed open — the close-button lookup was grabbing the wrong “Close” control, and create had no close fallback. Both now reliably close the editor (targeting the modal’s own X), so you land back on the game ready to play.</span></li>
-            <li><span class="tag fixed">Fixed</span><span class="ctxt"><b>Advanced IOW</b> (Shuffle): the <b>Update Strategy</b> button on the Stats tab now runs correctly on shuffle.com.</span></li>
-          </ul>
-        </article>
-
-        <article class="release" data-reveal>
-          <div class="release-head">
-            <span class="ver-badge">v2.56</span>
-            <span class="chip">Desktop</span>
-            <span class="rel-date">June 4, 2026</span>
-          </div>
-          <h2 class="rel-title">Shuffle strategy tools now work on shuffle.com</h2>
-          <ul class="changes">
-            <li><span class="tag fixed">Fixed</span><span class="ctxt"><b>Advanced IOW</b> (Shuffle Dice &amp; Limbo): on <b>shuffle.com</b>, “Create a fresh strategy” (and Update strategy, balance sync, stop, and the bet counter) were running the <i>Stake</i> versions — the site check only recognised shuffle.us — so Create a fresh strategy failed with a <i>“payout not found”</i> timeout. The check now matches every Shuffle domain, so the Shuffle strategy flow runs correctly on shuffle.com too.</span></li>
-          </ul>
-        </article>
-
-        <article class="release" data-reveal>
-          <div class="release-head">
-            <span class="ver-badge">v2.55</span>
-            <span class="chip">Desktop</span>
-            <span class="rel-date">June 4, 2026</span>
-          </div>
-          <h2 class="rel-title">Stake .com — Multiplier row now matches stake.us</h2>
-          <ul class="changes">
-            <li><span class="tag fixed">Fixed</span><span class="ctxt"><b>Advanced IOW</b> (Stake Dice &amp; Limbo): on <b>stake.com</b> (and the .bet / .games / staketr family) the Multiplier / Roll&nbsp;Over / Win&nbsp;Chance row sits in the game area rather than the bet slip like stake.us, and the HUD was relocating it in a way that deleted it — so the multiplier was “not available to change” and Create / Update strategy failed. The HUD now shows that row full-width across the bottom — exactly where stake.us puts it — fully editable, and the strategy tools read and set the multiplier on every Stake domain.</span></li>
-          </ul>
-        </article>
-
-        <article class="release" data-reveal>
-          <div class="release-head">
-            <span class="ver-badge">v2.51</span>
-            <span class="chip">Desktop</span>
-            <span class="rel-date">June 4, 2026</span>
-          </div>
-          <h2 class="rel-title">Stake strategy bet field — works on all domains</h2>
-          <ul class="changes">
-            <li><span class="tag fixed">Fixed</span><span class="ctxt"><b>Advanced IOW</b> (Stake Dice &amp; Limbo): “Create / Update strategy” was timing out (<i>“input-game-amount not found”</i>) on stake.com and the .bet / .games / staketr domains — it only knew the stake.us bet field. It now sets the bet amount correctly on every Stake domain.</span></li>
+            <li><span class="tag fixed">Fixed</span><span class="ctxt"><b>Stake</b> (Dice &amp; Limbo): Create / Update strategy now works on <b>stake.com</b> and the .bet / .games / staketr family, not just stake.us — the bet amount and the Multiplier / Roll&nbsp;Over / Win&nbsp;Chance row are set correctly on every Stake domain, with the Multiplier shown full-width just like stake.us.</span></li>
+            <li><span class="tag fixed">Fixed</span><span class="ctxt"><b>Shuffle</b> (Dice &amp; Limbo): Create / Update strategy now works on <b>shuffle.com</b> (it had been running the Stake flow), and the strategy editor closes itself after create/update so you land back on the game ready to play.</span></li>
           </ul>
         </article>
 
@@ -108,20 +72,6 @@
           <h2 class="rel-title">Stake strategy create/update — works on all domains</h2>
           <ul class="changes">
             <li><span class="tag fixed">Fixed</span><span class="ctxt"><b>Advanced IOW</b> (Stake Dice &amp; Limbo): “Create / Update strategy” was timing out on stake.com and the .bet / .games / staketr domains (it only knew the stake.us bet field). It now sets the bet amount correctly on every Stake domain.</span></li>
-          </ul>
-        </article>
-
-        <article class="release" data-reveal>
-          <div class="release-head">
-            <span class="ver-badge">v2.50</span>
-            <span class="chip">Desktop</span>
-            <span class="rel-date">June 4, 2026</span>
-          </div>
-          <h2 class="rel-title">Shuffle strategy create/update fixes</h2>
-          <ul class="changes">
-            <li><span class="tag fixed">Fixed</span><span class="ctxt"><b>Advanced IOW</b> (Shuffle Dice &amp; Limbo): “Create a fresh strategy” was failing with <i>“betInfo inputs not found”</i> after a Shuffle markup change. It now locates the Multiplier and Chance inputs reliably.</span></li>
-            <li><span class="tag changed">Changed</span><span class="ctxt"><b>Advanced IOW</b> (Shuffle): creating a strategy now builds exactly the 4 conditions it uses — no leftover empty 5th condition.</span></li>
-            <li><span class="tag changed">Changed</span><span class="ctxt"><b>Advanced IOW</b> (Shuffle): after creating or updating a strategy, the tool saves and closes the strategy editor for you, so you land back on the game ready to play instead of stuck on the editor.</span></li>
           </ul>
         </article>
 
