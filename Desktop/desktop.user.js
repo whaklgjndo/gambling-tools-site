@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Desktop
 // @namespace    http://tampermonkey.net/
-// @version      2.55
+// @version      2.56
 // @description  .
 // @author       .
 // @match        https://nuts.gg/*
@@ -6771,15 +6771,15 @@ self.onmessage = async (e) => {
 
     /* Pick the right site's implementation */
     function gameExport() {
-        if (location.hostname.includes('shuffle.us')) return shuffle_exportBalance();
+        if (location.hostname.includes('shuffle.')) return shuffle_exportBalance();
         return stake_exportBalance();
     }
     function gameUpdate() {
-        if (location.hostname.includes('shuffle.us')) return shuffle_updateExisting();
+        if (location.hostname.includes('shuffle.')) return shuffle_updateExisting();
         return stake_updateExisting();
     }
     function gameImport() {
-        if (location.hostname.includes('shuffle.us')) return shuffle_importNew();
+        if (location.hostname.includes('shuffle.')) return shuffle_importNew();
         return stake_importNew();
     }
     /* Combined one-click flow: scrape balance → recompute → push new bet size
@@ -6890,7 +6890,7 @@ self.onmessage = async (e) => {
         if (btn && !btn.disabled) btn.click();
     }
     function stopAutoplayAction() {
-        if (location.hostname.includes('shuffle.us')) return stopAutoplay_shuffle();
+        if (location.hostname.includes('shuffle.')) return stopAutoplay_shuffle();
         return stopAutoplay_stake();
     }
     function onWinDetected() {
@@ -6986,7 +6986,7 @@ self.onmessage = async (e) => {
     }
 
     function initStreakCounter() {
-        const initFn = location.hostname.includes('shuffle.us') ? initCounter_shuffle : initCounter_stake;
+        const initFn = location.hostname.includes('shuffle.') ? initCounter_shuffle : initCounter_stake;
         if (initFn()) return;
         _counterInitPoll = setInterval(() => {
             if (initFn()) { clearInterval(_counterInitPoll); _counterInitPoll = null; }
