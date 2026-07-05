@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Desktop
 // @namespace    http://tampermonkey.net/
-// @version      2.57
+// @version      2.62
 // @description  .
 // @author       .
 // @match        https://nuts.gg/*
@@ -2605,13 +2605,19 @@ let ACTIVE_MODE = 'smart';
         #ratchet-master-container.shuffle-theme .hud-rapid-btn.start:hover { background: var(--hud-green-dark); }
         #ratchet-master-container.shuffle-theme input[type="number"]:focus { border-color: var(--hud-green); box-shadow: 0 0 0 2px rgba(108, 71, 255, 0.18); }
         #ratchet-master-container.shuffle-theme .hud-control-group input[type="range"] { accent-color: var(--hud-green); }
-        /* Shuffle native footer relocated into the HUD slot */
-        #ratchet-master-container .hud-footer-slot [class*="TBYuRq__footer"] {
+        /* Shuffle native footer relocated into the HUD slot. Match the current
+           module names (MultiplierWinChanceFooter = Limbo, DiceGameFooter = Dice)
+           as well as the legacy hashed class, so the relocated row fills the slot
+           instead of staying absolutely positioned at the bottom of the game. */
+        #ratchet-master-container .hud-footer-slot [class*="TBYuRq__footer"],
+        #ratchet-master-container .hud-footer-slot [class*="MultiplierWinChanceFooter"],
+        #ratchet-master-container .hud-footer-slot [class*="DiceGameFooter"] {
             width: 100% !important; position: relative !important; left: auto !important;
             right: auto !important; bottom: auto !important; border-radius: 10px !important;
             overflow: hidden !important; flex: 1 1 auto !important;
         }
-        #ratchet-master-container .hud-footer-slot [class*="DimmedWrapper"] { opacity: 1 !important; pointer-events: auto !important; }
+        #ratchet-master-container .hud-footer-slot [class*="DimmedWrapper"],
+        #ratchet-master-container .hud-footer-slot [class*="DimOverlay"] { opacity: 1 !important; pointer-events: auto !important; }
         #ratchet-master-container .hud-footer-slot [data-sharkid] { color: #fff !important; background: transparent !important; }
 
         /* ---- Shuffle dice info panel (roll-over bar) ---- */
@@ -2878,34 +2884,72 @@ let ACTIVE_MODE = 'smart';
         }
         return bestBottom;
     }
+    // True when el is inside our own HUD, a native modal/dialog, or the chat
+    // drawer — OR when it CONTAINS a chat subtree. Stake renders Hotkeys/Game-Info
+    // as .game-modal / [data-modal-root] (NOT role=dialog), and wraps chat's
+    // message box in a bare `.footer` whose only chat marker (.chat-input) is a
+    // DESCENDANT — so both an ancestor and a descendant check are needed. Used to
+    // stop HUD relocation from yanking overlay DOM in (which broke chat/settings).
+    function isOverlayNode(el) {
+        if (!el) return true;
+        // Also exclude the Advanced IOW tool's own panel (#dt-aio-panel / .dt-body):
+        // its calculator has ~46 inputs and a "Multiplier" label, which the Shuffle
+        // footer's label fallback would otherwise grab and rip into the footer slot.
+        if (el.closest('#ratchet-master-container, #dt-aio-panel, #dt-aio-button, .dt-body, ' +
+                       '[role="dialog"], [aria-modal="true"], [data-modal-root], ' +
+                       '.game-modal, [class*="game-modal" i], ' +
+                       '[data-testid*="chat" i], [data-test*="chat" i], [class*="chat" i]')) return true;
+        if (el.querySelector('.chat-input, [class*="chat-input" i], [data-testid*="chat" i]')) return true;
+        return false;
+    }
     function findNativeElement(selector) {
-        // Never adopt elements inside our own HUD, a native modal/dialog, or the
-        // chat drawer — otherwise opening chat/settings yanks their DOM into the
-        // HUD and breaks them (and us). If only overlay/HUD matches exist, return
-        // null so mountSingleElement leaves the slot untouched.
-        const inOverlay = el => el.closest('[role="dialog"], [aria-modal="true"], [data-testid*="chat" i], [data-test*="chat" i], [class*="chat" i]');
-        const ok = el => !el.closest('#ratchet-master-container') && !inOverlay(el);
+        // Only adopt native game chrome — never HUD-internal nodes, a modal, or the
+        // chat drawer. If the only matches are overlay/HUD, return null so
+        // mountSingleElement leaves the slot untouched (idempotent, no false grab).
         const host = getHudHost();
         const scope = host || document;
-        const scoped = Array.from(scope.querySelectorAll(selector)).filter(ok);
+        const scoped = Array.from(scope.querySelectorAll(selector)).filter(el => !isOverlayNode(el));
         if (scoped.length) return scoped[0];
-        const fallback = Array.from(document.querySelectorAll(selector)).filter(ok);
+        const fallback = Array.from(document.querySelectorAll(selector)).filter(el => !isOverlayNode(el));
         return fallback[0] || null;
     }
     function findShuffleFooter() {
-        // Shuffle's CSS module hashes change on every deploy — use broad
-        // selectors that catch most variants, with a label-based fallback.
-        // Skip anything inside the chat drawer or a modal so we never grab those.
-        const inOverlay = el => el.closest('[role="dialog"], [aria-modal="true"], [data-testid*="chat" i], [data-test*="chat" i], [class*="chat" i]');
+        // Shuffle's CSS-module hashes change on every deploy, so anchor on stable
+        // module *names* and on the actual Multiplier/Chance inputs rather than
+        // volatile hashes. Verified against shuffle.us (2026-07):
+        //   - Limbo -> MultiplierWinChanceFooter_footer___<hash>  (2 inputs)
+        //   - Dice  -> DiceGameFooter_footer___<hash>             (3 inputs)
+        // The old broad selector matched OriginalGameRuntime_gameFooter (the
+        // settings/fairness toolbar, 0 inputs) via [class*="gameFooter"], which
+        // is why the Multiplier / Chance row went missing from the HUD.
+        const inOverlay = isOverlayNode; // shared guard: dialog/.game-modal/chat (+chat descendant)
+        // 1) Limbo's dedicated Multiplier/Win-Chance footer (stable module name).
+        const mwc = document.querySelector('[class*="MultiplierWinChanceFooter"]');
+        if (mwc && !inOverlay(mwc)) return mwc;
+        // 2) Anchor on the bet-input wrappers (Multiplier/Chance live inside
+        //    InfoBetInput_inputContainer) and walk up to the nearest ancestor
+        //    holding both inputs — the game footer — with no hash dependency.
+        //    Catches Dice's DiceGameFooter_footer (Multiplier / Roll Over / Chance).
+        const wrap = document.querySelector('[class*="InfoBetInput_inputContainer"]');
+        if (wrap && !inOverlay(wrap)) {
+            let p = wrap.parentElement;
+            for (let i = 0; i < 6 && p && p !== document.body; i++, p = p.parentElement) {
+                if (inOverlay(p)) break;
+                if (p.querySelectorAll('input').length >= 2) return p;
+            }
+        }
+        // 3) Legacy class selectors for older Shuffle skins. Deliberately EXCLUDE
+        //    the generic gameFooter (the toolbar), which is not the control row.
         const byClass = document.querySelector(
             '[class*="footer"][class*="dice"], [class*="Dice"][class*="footer"], ' +
-            '[class*="TBYuRq__footer"], [class*="gameFooter"], [class*="GameFooter"], ' +
-            '[class*="betControls"], [class*="BetControls"], [class*="gameControls"], [class*="GameControls"]'
+            '[class*="TBYuRq__footer"], [class*="betControls"], [class*="BetControls"], ' +
+            '[class*="gameControls"], [class*="GameControls"]'
         );
         if (byClass && !inOverlay(byClass)) return byClass;
-        // Fallback: find the element containing a "Multiplier" label + ≥2 inputs
+        // 4) Last resort: an exact "Multiplier" / "Target Multiplier" label + ≥2 inputs.
         for (const el of document.querySelectorAll('label, p, span, div')) {
-            if ((el.textContent || '').trim() === 'Multiplier' && !inOverlay(el)) {
+            const t = (el.textContent || '').trim();
+            if ((t === 'Multiplier' || t === 'Target Multiplier') && !inOverlay(el)) {
                 let p = el.parentElement;
                 for (let i = 0; i < 7; i++) {
                     if (!p || p === document.body) break;
@@ -2917,19 +2961,29 @@ let ACTIVE_MODE = 'smart';
         return null;
     }
     function findStakeDiceControls() {
-        // The Stake dice control row — Multiplier (payout) / Roll Over
-        // (reverse-roll) / Win Chance (chance). On stake.com it lives in a
-        // `.footer` inside game-content; on stake.us those inputs sit inside
-        // .game-sidebar (already relocated by the sidebar slot). Returns the
-        // enclosing `.footer` only when the row is OUTSIDE the HUD, so:
-        //   - stake.us  -> already inside the HUD via the sidebar -> null (no-op)
-        //   - relocated -> already inside the HUD -> null (idempotent; never
-        //                  displaced once moved)
+        // The Stake dice/limbo control row — Multiplier (payout) / Roll Over
+        // (reverse-roll) / Win Chance (chance) on Dice, and Target Multiplier /
+        // Win Chance on Limbo — located by anchoring on a control input and
+        // returning the enclosing `.footer`. Anchoring on the inputs (NOT
+        // findNativeElement('.footer')) avoids stake.com's second, EMPTY `.footer`,
+        // which the generic lookup would let replaceChildren() swap in and delete
+        // the row. Superset selector covers Dice (payout/chance) AND Limbo
+        // (target-multiplier/win-chance) — verified live on stake.us. Returns null
+        // once the row is in the HUD (idempotent) or when only overlay copies
+        // exist (chat/settings), so the row is never displaced.
         const hud = document.getElementById('ratchet-master-container');
-        const ctrl = document.querySelector('input[data-testid="payout"], input[data-testid="chance"], button[data-testid="reverse-roll"]');
-        if (!ctrl) return null;
-        if (hud && hud.contains(ctrl)) return null;
-        return ctrl.closest('.footer') || null;
+        const ctrls = document.querySelectorAll(
+            'input[data-testid="payout"], input[data-testid="target-multiplier"], ' +
+            'input[data-testid="chance"], input[data-testid="win-chance"], ' +
+            'button[data-testid="reverse-roll"], [data-testid="reverse-roll"]'
+        );
+        for (const ctrl of ctrls) {
+            if (hud && hud.contains(ctrl)) return null; // row already in the HUD -> no-op
+            if (isOverlayNode(ctrl)) continue;          // skip chat/settings/modal copies
+            const footer = ctrl.closest('.footer');
+            if (footer && !isOverlayNode(footer)) return footer;
+        }
+        return null;
     }
     function mountSingleElement(slot, element) {
         if (!slot || !element) return;
@@ -3840,9 +3894,17 @@ Bets</span><span id="h-total-bets" class="hud-val">0</span></div>
                     // Win/loss from inline background-color. Looks at the
                     // node itself OR a child button (Shuffle wraps results
                     // either way across deploys).
+                    // Win/loss from the badge color. Shuffle sets it via --badge-bg
+                    // on an inner span, so read the span's COMPUTED background (the
+                    // button's inline background is empty -> everything read as a
+                    // loss). Win = rgb(61,209,121); loss = rgb(42,46,56). Verified live
+                    // on shuffle.us. Green-dominant fallback survives palette tweaks.
                     const target = node.querySelector('button') || node;
-                    const bg = (target.style.backgroundColor || '').trim();
-                    const isWinResult = bg.includes('61, 209, 121') || bg.includes('rgb(61,209,121)');
+                    const badgeSpan = target.querySelector('span[class*="badgeBackground"]') || target.querySelector('span');
+                    const bg = badgeSpan ? getComputedStyle(badgeSpan).backgroundColor
+                                         : (target.style.backgroundColor || getComputedStyle(target).backgroundColor);
+                    let isWinResult = bg === 'rgb(61, 209, 121)' || bg.includes('61, 209, 121');
+                    if (!isWinResult) { const cm = bg.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/); if (cm) isWinResult = (+cm[2] > +cm[1] + 60 && +cm[2] > 130); }
                     const betAmt = getCurrentBet() || minBaseBet;
                     if (initialBalance === 0) {
                         const curBal = getCurrentBalance();
@@ -6951,7 +7013,16 @@ self.onmessage = async (e) => {
             const currentText = button.innerText;
             if (currentText === _sh_lastSeenText) return;
             _sh_lastSeenText = currentText;
-            const isWin = button.style.backgroundColor === 'rgb(61, 209, 121)';
+            // Win detection: Shuffle colors the result badge via --badge-bg on an
+            // inner span, NOT the button's inline background, so read the span's
+            // computed background. Win = rgb(61,209,121) (green), loss = rgb(42,46,56)
+            // (gray) — verified live on shuffle.us dice. Green-dominant fallback keeps
+            // wins classified if the exact palette shifts.
+            const badgeSpan = button.querySelector('span[class*="badgeBackground"]') || button.querySelector('span');
+            const badgeBg = badgeSpan ? getComputedStyle(badgeSpan).backgroundColor
+                                      : (button.style.backgroundColor || getComputedStyle(button).backgroundColor);
+            let isWin = badgeBg === 'rgb(61, 209, 121)';
+            if (!isWin) { const m = badgeBg.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/); if (m) isWin = (+m[2] > +m[1] + 60 && +m[2] > 130); }
             if (isWin) onWinDetected(); else onLossDetected();
         });
         resultsObs.observe(resultsWrapper, { childList: true, subtree: true, attributes: true });
