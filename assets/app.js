@@ -157,7 +157,7 @@
     const targets = document.querySelectorAll('[data-ver-target="' + key + '"]');
     if (!targets.length) return;
     try {
-      const res = await fetch(file, { headers: { Range: "bytes=0-2047" } });
+      const res = await fetch(file + "?v=" + Date.now(), { cache: "no-store", headers: { Range: "bytes=0-2047" } });
       if (!res.ok && res.status !== 206) throw new Error("status " + res.status);
       const m = (await res.text()).match(/@version\s+([0-9][0-9A-Za-z.\-]*)/);
       if (!m) throw new Error("no @version");
