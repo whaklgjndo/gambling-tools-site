@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mobile 
 // @namespace    https://whaklgjndo.github.io/gambling-tools/
-// @version      5.14
+// @version      5.15
 // @description  .
 // @author       .
 // @match        https://stake.com/*
@@ -7610,15 +7610,17 @@ self.onmessage = async (e) => {
         /* ---- Per-platform tile + risk accessors ---- */
         function getTiles() {
             if (isNuts()) {
-                // Content-based: button with 2 children where first span is 1-40
-                const all = document.querySelectorAll('button');
+                // nuts.gg redesigned the tile from 2 children (span + cover) to 3
+                // (span + cover div + hidden haptic input); match on the numbered
+                // first <span> rather than a fixed child count. children[1] stays
+                // the purple/gray cover for readPicksFromDOM.
                 const byNum = new Map();
-                for (const b of all) {
-                    if (b.children.length !== 2) continue;
+                for (const b of document.querySelectorAll('button')) {
                     const span = b.querySelector('span');
                     if (!span) continue;
-                    const n = parseInt((span.textContent || '').trim(), 10);
-                    if (n >= 1 && n <= 40 && !byNum.has(n)) byNum.set(n, b);
+                    const txt = (span.textContent || '').trim();
+                    const n = parseInt(txt, 10);
+                    if (n >= 1 && n <= 40 && txt === String(n) && !byNum.has(n)) byNum.set(n, b);
                 }
                 if (byNum.size < 40) return [];
                 const out = [];

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Desktop
 // @namespace    http://tampermonkey.net/
-// @version      2.62
+// @version      2.63
 // @description  .
 // @author       .
 // @match        https://nuts.gg/*
@@ -10876,15 +10876,18 @@ const PRESETS_KEY = 'keno-presets';
 
     // --- Tile detection: content-based (styled-components class names change on deploy) ---
     function getTiles() {
-        // Tile = <button> with exactly 2 children, where first span contains a number 1-40
-        const all = document.querySelectorAll('button');
+        // Tile = <button> whose first <span> is exactly a number 1-40. nuts.gg
+        // redesigned the tile from 2 children (span + cover) to 3 (span + cover
+        // div + hidden haptic input), so match on the numbered span rather than a
+        // fixed child count. The 40-distinct-numbers requirement keeps it precise,
+        // and children[1] stays the purple/gray cover for readPicksFromDOM.
         const byNum = new Map();
-        for (const b of all) {
-            if (b.children.length !== 2) continue;
+        for (const b of document.querySelectorAll('button')) {
             const span = b.querySelector('span');
             if (!span) continue;
-            const n = parseInt((span.textContent || '').trim(), 10);
-            if (n >= 1 && n <= 40 && !byNum.has(n)) byNum.set(n, b);
+            const txt = (span.textContent || '').trim();
+            const n = parseInt(txt, 10);
+            if (n >= 1 && n <= 40 && txt === String(n) && !byNum.has(n)) byNum.set(n, b);
         }
         if (byNum.size < 40) return [];
         const out = [];
