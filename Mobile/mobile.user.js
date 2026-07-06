@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mobile 
 // @namespace    https://whaklgjndo.github.io/gambling-tools/
-// @version      5.17
+// @version      5.18
 // @description  .
 // @author       .
 // @match        https://stake.com/*
@@ -2084,7 +2084,13 @@
         const dtP = document.querySelector('#ratchet-master-container #dt-aio-panel');
         const dtTab = dtP && dtP.getAttribute('data-active-tab');
         const dtTall = !!dtP && (dtTab === 'calc' || dtTab === 'opt' || dtTab === 'results');
-        gameDisplay.style.minHeight = dtTall ? 'clamp(520px, 80dvh, 920px)' : 'clamp(420px, 54dvh, 640px)';
+        // Taller HUD host so the SMART/IOW content (stats + 130px graph + the
+        // Aggression/Lock/Autostop/SL/TP controls + action bar + Target Multiplier)
+        // fits without scrolling — the graph is fixed-height and the workspace is
+        // the flex-grow element, so the extra height lands on the controls. The
+        // native bet panel just flows below, and the Target Multiplier stays pinned
+        // at the foot of the HUD.
+        gameDisplay.style.minHeight = dtTall ? 'clamp(520px, 80dvh, 920px)' : 'clamp(540px, 78dvh, 880px)';
         if (hud && hud.parentElement !== gameDisplay) gameDisplay.appendChild(hud);
         if (!hud) {
             hud = document.createElement('div');
