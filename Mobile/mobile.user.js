@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mobile 
 // @namespace    https://whaklgjndo.github.io/gambling-tools/
-// @version      5.24
+// @version      5.25
 // @description  .
 // @author       .
 // @match        https://stake.com/*
@@ -1097,11 +1097,16 @@
         }
         #ratchet-master-container #hud-content > .hud-shell .quick-btn:active { background: rgba(255, 255, 255, 0.12); }
 
-        /* --- No-scroll flex chain: the workspace fills the frame and the graph
-           is the flex-absorber that soaks up leftover height, so stats +
-           controls + graph fit one screen. Gated to the normal HUD (not the
-           dt-aio tools panel, which keeps its own layout). --- */
-        #ratchet-master-container #hud-content {
+        /* Advanced IOW ONLY: #hud-content grows to fill the pinned/fixed-height
+           HUD so #dt-aio-panel gets a definite height for its own internal
+           scrolling (.dt-body{overflow:auto}). This !important rule used to be
+           UNSCOPED (applied to Manual/IOW/Smart too), which silently overrode
+           the measured-content fix above (flex:0 0 auto for :not([data-tools-
+           active="1"])) since !important always wins regardless of source order
+           — Safari then inflated #hud-content into a big empty gap between the
+           controls and the action bar with nothing left to legitimately grow
+           into. Scoping this strictly to Advanced IOW removes the conflict. */
+        #ratchet-master-container[data-tools-active="1"] #hud-content {
             flex: 1 1 0 !important; min-height: 0 !important;
             display: flex; flex-direction: column;
         }
