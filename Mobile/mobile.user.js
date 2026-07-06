@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mobile 
 // @namespace    https://whaklgjndo.github.io/gambling-tools/
-// @version      5.18
+// @version      5.19
 // @description  .
 // @author       .
 // @match        https://stake.com/*
@@ -1082,7 +1082,9 @@
             display: flex; flex-direction: column; gap: 6px;
         }
         #ratchet-master-container #hud-content > .hud-shell > .hud-graph-box {
-            flex: 1 1 0; min-height: 32px; height: auto;
+            /* Static size — the graph no longer flex-grows/shrinks with available
+               space (it used to visibly resize as the panel scrolled). */
+            flex: 0 0 auto; height: 140px;
             border-color: var(--hud-border-soft);
         }
 
@@ -2090,7 +2092,7 @@
         // the flex-grow element, so the extra height lands on the controls. The
         // native bet panel just flows below, and the Target Multiplier stays pinned
         // at the foot of the HUD.
-        gameDisplay.style.minHeight = dtTall ? 'clamp(520px, 80dvh, 920px)' : 'clamp(540px, 78dvh, 880px)';
+        gameDisplay.style.minHeight = dtTall ? 'clamp(520px, 80dvh, 920px)' : 'clamp(540px, 74dvh, 720px)';
         if (hud && hud.parentElement !== gameDisplay) gameDisplay.appendChild(hud);
         if (!hud) {
             hud = document.createElement('div');
