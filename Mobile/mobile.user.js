@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mobile 
 // @namespace    https://whaklgjndo.github.io/gambling-tools/
-// @version      5.19
+// @version      5.20
 // @description  .
 // @author       .
 // @match        https://stake.com/*
@@ -1142,6 +1142,7 @@
         #ratchet-master-container .hud-rapid-btn,
         #ratchet-master-container .hud-reset-btn,
         #ratchet-master-container .hud-switch-ou-btn,
+        #ratchet-master-container .quick-btn,
         #ratchet-master-container #h-lock-agg-chk,
         #ratchet-master-container .hud-control-group label { touch-action: manipulation; }
         #ratchet-master-container input[type="number"] {
@@ -2193,9 +2194,9 @@
                         <div class="hud-control-group full">
                             <label>Base bet</label>
                             <div class="input-group">
+                                <button id="h-half-base" class="quick-btn">½</button>
                                 <input id="h-base" type="number" step="${moneyStep}" value="${baseInputValue}">
                                 <button id="h-double-base" class="quick-btn">2x</button>
-                                <button id="h-half-base" class="quick-btn">½</button>
                             </div>
                         </div>
                         <div class="hud-control-group">
@@ -2290,9 +2291,9 @@
                         <div class="hud-control-group full">
                             <label>Bet</label>
                             <div class="input-group">
+                                <button id="h-manual-half" class="quick-btn">½</button>
                                 <input id="h-manual-bet" type="number" step="${moneyStep}" min="${moneyStep}" value="${manualInputValue}">
                                 <button id="h-manual-double" class="quick-btn">2x</button>
-                                <button id="h-manual-half" class="quick-btn">½</button>
                             </div>
                         </div>
                         <div class="hud-control-group">
