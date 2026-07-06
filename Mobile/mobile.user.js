@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mobile 
 // @namespace    https://whaklgjndo.github.io/gambling-tools/
-// @version      5.20
+// @version      5.21
 // @description  .
 // @author       .
 // @match        https://stake.com/*
@@ -1743,6 +1743,14 @@
                 document.getElementById('hud-footer-slot'),
                 findNativeElement('.sc-1d9445d-1.hFwXoL') || findNativeElement('.sc-1d9445d-1')
             );
+            // The native dice roll-over slider (input[type=range], min 0 / max 100)
+            // stays in the game stage behind the HUD, and its thumb (a blue square)
+            // renders above the overlay and bleeds through. Roll Over is in the
+            // relocated footer, so hide the native slider. Skip our own Aggression
+            // slider (min=0.5) and anything already inside the HUD.
+            document.querySelectorAll('input[type="range"][min="0"][max="100"]').forEach(sl => {
+                if (!sl.closest('#ratchet-master-container')) sl.style.visibility = 'hidden';
+            });
             return;
         }
         if (isShuffle()) {
