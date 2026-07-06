@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mobile 
 // @namespace    https://whaklgjndo.github.io/gambling-tools/
-// @version      5.15
+// @version      5.17
 // @description  .
 // @author       .
 // @match        https://stake.com/*
@@ -813,10 +813,13 @@
         }
         #ratchet-master-container .hud-workspace {
             display: flex; flex-direction: column;
-            flex: 1 1 0; min-height: 0; gap: 6px;
+            flex: 1 1 0; min-height: 0; gap: 4px;
+            /* Scrolls only if content doesn't fit (never clips). The interactive
+               controls each own their touch gesture — the Aggression slider is
+               touch-action:none and the buttons are manipulation — so a fast
+               slider drag or a Lock/Start tap never triggers this scroll. */
             overflow-y: auto; overflow-x: hidden;
-            -webkit-overflow-scrolling: touch;
-            scrollbar-width: thin;
+            -webkit-overflow-scrolling: touch; scrollbar-width: thin;
         }
         #ratchet-master-container .hud-workspace::-webkit-scrollbar { width: 4px; }
         #ratchet-master-container .hud-workspace::-webkit-scrollbar-thumb {
@@ -1122,13 +1125,23 @@
         }
         #ratchet-master-container .hud-control-group input[type="range"] {
             width: 100%; height: 8px; accent-color: #00ff9d;
-            cursor: pointer; touch-action: manipulation;
+            /* touch-action:none so a touch-drag on the slider always moves the thumb
+               (full 0.5x–3x travel) instead of scrolling/panning the panel. */
+            cursor: pointer; touch-action: none;
         }
-        /* Shuffle (mobile): the Lock checkbox sits directly under the Aggression
-           slider, so users kept toggling it by accident while dragging. Add a
-           little breathing room below the slider. Scoped to .shuffle-theme (this
-           bundle is mobile-only), so Stake/Nuts layouts are unaffected. */
-        #ratchet-master-container.shuffle-theme #h-agg { margin-bottom: 10px; }
+        /* The Lock checkbox sits directly under the Aggression slider, so a fast
+           back-and-forth drag could overshoot onto it and toggle Lock. Give the
+           slider breathing room below it — all sites (Stake/Shuffle/Nuts), since
+           the SMART layout is the same everywhere. */
+        #ratchet-master-container #h-agg { margin-bottom: 14px; }
+        /* The mode/action buttons and the Lock checkbox own their touch gesture so a
+           tap isn't cancelled by a scroll (reported "stuck" Lock/Start on mobile). */
+        #ratchet-master-container .mode-btn,
+        #ratchet-master-container .hud-rapid-btn,
+        #ratchet-master-container .hud-reset-btn,
+        #ratchet-master-container .hud-switch-ou-btn,
+        #ratchet-master-container #h-lock-agg-chk,
+        #ratchet-master-container .hud-control-group label { touch-action: manipulation; }
         #ratchet-master-container input[type="number"] {
             background: #0b0e17; border: 1px solid #2f4553;
             color: white; padding: 7px 6px; border-radius: 6px;
