@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mobile 
 // @namespace    https://whaklgjndo.github.io/gambling-tools/
-// @version      5.22
+// @version      5.23
 // @description  .
 // @author       .
 // @match        https://stake.com/*
@@ -781,9 +781,11 @@
             --hud-green-dark: #00cc7a;
             --hud-red: #e11d48;
             position: absolute !important;
-            inset: 0 !important;
+            top: 0 !important; left: 0 !important; right: 0 !important;
+            /* Height is auto (content-driven), not a forced 100% fill — see the
+               [data-tools-active] override below and the buildHUD() comment for why. */
+            height: auto !important;
             width: 100% !important;
-            height: 100% !important;
             background: var(--hud-bg) !important;
             border: 1px solid var(--hud-border) !important;
             border-radius: 0 !important;
@@ -807,22 +809,40 @@
             50% { box-shadow: inset 0 0 0 2px rgba(74, 222, 128, 0.85), inset 0 0 24px rgba(74, 222, 128, 0.4); }
             100% { box-shadow: inset 0 0 0 0 rgba(74, 222, 128, 0); }
         }
+        /* Advanced IOW (data-tools-active="1", set by the cross-tool integration)
+           keeps the old pinned/filled layout: its own Optimizer/Results tables can
+           get long and manage their own internal scrolling (.dt-body{overflow:auto}
+           below), so the outer HUD should stay a fixed, filled box rather than
+           growing to fit an arbitrarily long table. Manual/IOW/Smart (the default,
+           below) instead sizes to its own natural content height — see buildHUD(). */
+        #ratchet-master-container[data-tools-active="1"] {
+            bottom: 0 !important;
+            height: 100% !important;
+        }
         #ratchet-master-container .hud-frame {
             display: flex; flex-direction: column;
-            flex: 1 1 0; min-height: 0; gap: 4px; overflow: hidden;
+            flex: 0 0 auto; gap: 4px; overflow: hidden;
+        }
+        #ratchet-master-container[data-tools-active="1"] .hud-frame {
+            flex: 1 1 0; min-height: 0;
         }
         #ratchet-master-container .hud-workspace {
             display: flex; flex-direction: column;
-            flex: 1 1 0; min-height: 0; gap: 4px;
-            /* Scrolls only if content doesn't fit (never clips). The interactive
-               controls each own their touch gesture — the Aggression slider is
-               touch-action:none and the buttons are manipulation — so a fast
-               slider drag or a Lock/Start tap never triggers this scroll. */
+            flex: 0 0 auto; gap: 4px;
+            /* No internal scroll — the host's height is measured & set (in JS, see
+               buildHUD()) to match this area's natural content exactly, so nothing
+               ever needs to scroll to be reached. The interactive controls each own
+               their touch gesture regardless (slider touch-action:none, buttons
+               manipulation), so this is also safe if scrolling is ever restored. */
+            overflow: visible;
+        }
+        #ratchet-master-container[data-tools-active="1"] .hud-workspace {
+            flex: 1 1 0; min-height: 0;
             overflow-y: auto; overflow-x: hidden;
             -webkit-overflow-scrolling: touch; scrollbar-width: thin;
         }
-        #ratchet-master-container .hud-workspace::-webkit-scrollbar { width: 4px; }
-        #ratchet-master-container .hud-workspace::-webkit-scrollbar-thumb {
+        #ratchet-master-container[data-tools-active="1"] .hud-workspace::-webkit-scrollbar { width: 4px; }
+        #ratchet-master-container[data-tools-active="1"] .hud-workspace::-webkit-scrollbar-thumb {
             background: rgba(255, 255, 255, 0.15); border-radius: 2px;
         }
         #ratchet-master-container .hud-native-sidebar-slot { display: none !important; }
@@ -2084,33 +2104,30 @@
         }
         let hud = document.getElementById('ratchet-master-container');
         if (window.getComputedStyle(gameDisplay).position === 'static') gameDisplay.style.position = 'relative';
-        // Limbo's game stage is much shorter than dice's, so the HUD (which is
-        // height:100% of this host) crams its controls into a tiny strip. Grow the
-        // host's min-height so the HUD gets clean vertical room. The native bet
-        // panel is a sibling BELOW the stage, so it just flows further down —
-        // nothing is covered. (One knob to tune: the clamp() below.)
-        // Extend further on the dice tool's content-heavy tabs (Calculator/Optimizer/
-        // Results) so they reach downward with less scrolling. Scoped to when our dice
-        // panel is actually mounted in the HUD, so IOW/Smart modes are unaffected.
-        const dtP = document.querySelector('#ratchet-master-container #dt-aio-panel');
-        const dtTab = dtP && dtP.getAttribute('data-active-tab');
-        const dtTall = !!dtP && (dtTab === 'calc' || dtTab === 'opt' || dtTab === 'results');
-        // Taller HUD host so the SMART/IOW content (stats + 130px graph + the
-        // Aggression/Lock/Autostop/SL/TP controls + action bar + Target Multiplier)
-        // fits without scrolling — the graph is fixed-height and the workspace is
-        // the flex-grow element, so the extra height lands on the controls. The
-        // native bet panel just flows below, and the Target Multiplier stays pinned
-        // at the foot of the HUD.
-        // Use svh (small viewport height), NOT dvh: dvh recalculates continuously as
-        // iOS Safari's address bar/toolbar collapses and expands while scrolling, so
-        // this host (and the absolutely-positioned HUD filling it) would resize
-        // mid-scroll, visibly shifting everything below it (the native bet panel)
-        // and detaching/reattaching as the toolbar animated — reported as the HUD
-        // "floaty"/separating on scroll. svh is pinned to the toolbar-visible size,
-        // so it never changes during scroll. This also likely caused the reported
-        // "stuck" Start/Lock taps: a toolbar-driven reflow mid-touch could shift a
-        // button out from under the finger between touchstart and touchend.
-        gameDisplay.style.minHeight = dtTall ? 'clamp(520px, 80svh, 920px)' : 'clamp(540px, 74svh, 720px)';
+        // Limbo's game stage is much shorter than dice's, so the HUD (which fills
+        // this host) crams its controls into a tiny strip. Grow the host so the
+        // HUD gets clean vertical room. The native bet panel is a sibling BELOW
+        // the stage, so it just flows further down — nothing is covered.
+        const toolsActive = !!hud && hud.dataset.toolsActive === '1';
+        if (toolsActive) {
+            // Advanced IOW keeps the previous guessed-vh sizing: its own
+            // Optimizer/Results tables can get long and manage their own internal
+            // scrolling (.dt-body{overflow:auto}), so we don't want to measure and
+            // fit content here — that could grow the page to fit an arbitrarily
+            // long results table. Extend further on the heavier tabs (Calculator/
+            // Optimizer/Results) so they reach downward with less internal scroll.
+            // Use svh (small viewport height), NOT dvh — dvh recalculates
+            // continuously as iOS Safari's address bar/toolbar collapses and
+            // expands while scrolling, resizing this host mid-scroll.
+            const dtP = document.querySelector('#ratchet-master-container #dt-aio-panel');
+            const dtTab = dtP && dtP.getAttribute('data-active-tab');
+            const dtTall = dtTab === 'calc' || dtTab === 'opt' || dtTab === 'results';
+            gameDisplay.style.minHeight = dtTall ? 'clamp(520px, 80svh, 920px)' : 'clamp(540px, 74svh, 720px)';
+        } else if (!gameDisplay.style.minHeight) {
+            // Small floor so there's no flash of near-zero height before the HUD's
+            // real content height is measured below (e.g. right after SPA nav).
+            gameDisplay.style.minHeight = '380px';
+        }
         if (hud && hud.parentElement !== gameDisplay) gameDisplay.appendChild(hud);
         if (!hud) {
             hud = document.createElement('div');
@@ -2148,8 +2165,24 @@
         hud.classList.toggle('nuts-theme', isNuts());
         syncModeButtons();
         syncNativeHudElements();
+        if (!toolsActive) {
+            // Manual/IOW/Smart: size the host to the HUD's OWN natural content
+            // height (measured, not guessed) so hud-workspace never needs to
+            // scroll internally — the game stage, and the native bet panel below
+            // it, grow to match exactly ("extend the footer downward" rather than
+            // clip). Runs every buildHUD() tick (600ms), so it self-corrects after
+            // mode switches or any content that grows/shrinks.
+            const measuredHeight = Math.ceil(hud.getBoundingClientRect().height);
+            if (measuredHeight > 0) gameDisplay.style.minHeight = Math.max(measuredHeight, 380) + 'px';
+        }
         setTimeout(() => {
             syncNativeHudElements();
+            // Re-measure after the native footer (e.g. Target Multiplier) may have
+            // mounted late — it can land just after this delay on a fresh page load.
+            if (!toolsActive && hud.dataset.toolsActive !== '1') {
+                const h2 = Math.ceil(hud.getBoundingClientRect().height);
+                if (h2 > 0) gameDisplay.style.minHeight = Math.max(h2, 380) + 'px';
+            }
         }, 350);
         try { const tid = currentGameToolId(); if (tid) markToolRan(tid); } catch (e) {}
     }
