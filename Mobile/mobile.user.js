@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mobile 
 // @namespace    https://whaklgjndo.github.io/gambling-tools/
-// @version      5.23
+// @version      5.24
 // @description  .
 // @author       .
 // @match        https://stake.com/*
@@ -894,6 +894,14 @@
             flex: 1 1 auto; min-height: 100%;
             overflow: visible;
         }
+        /* Manual/IOW/Smart (no scroll model): drop the flex-grow + percentage
+           min-height above. Safari/WebKit is known to mis-resolve a percentage
+           height against an indefinite-height ancestor (.hud-workspace is now
+           auto-height) inside flexbox, which was inflating this element hugely
+           on iPhone even though Chromium handled the same markup correctly. */
+        #ratchet-master-container:not([data-tools-active="1"]) #hud-content {
+            flex: 0 0 auto; min-height: 0;
+        }
         #ratchet-master-container .hud-shell {
             display: flex; flex-direction: column;
             flex: 0 0 auto; min-height: 0; gap: 5px;
@@ -1097,8 +1105,13 @@
             flex: 1 1 0 !important; min-height: 0 !important;
             display: flex; flex-direction: column;
         }
+        /* Was flex:1 1 0 (grow-to-fill) — a leftover from the old guessed-height
+           model. With #hud-content no longer flex-growing (see above), this had
+           nothing to fill, and Safari inflated it hugely (the empty box users
+           saw between the stats grid and the controls). Auto-size like the base
+           .hud-shell rule instead. */
         #ratchet-master-container:not([data-tools-active="1"]) #hud-content > .hud-shell {
-            flex: 1 1 0; min-height: 0;
+            flex: 0 0 auto; min-height: 0;
             display: flex; flex-direction: column; gap: 6px;
         }
         #ratchet-master-container #hud-content > .hud-shell > .hud-graph-box {
