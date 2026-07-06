@@ -52,6 +52,19 @@
         <!-- ============ Add new releases above this line (newest first) ============ -->
         <article class="release latest" data-reveal>
           <div class="release-head">
+            <span class="ver-badge">v5.22</span>
+            <span class="chip">Mobile</span>
+            <span class="rel-date">July 5, 2026</span>
+          </div>
+          <h2 class="rel-title">Fixed the HUD "floaty" scroll glitch and stuck Start/Lock taps</h2>
+          <ul class="changes">
+            <li><span class="tag fixed">Fixed</span><span class="ctxt">On iPhone, scrolling could make the HUD visibly separate from the page below it and "float", snapping back together when you stopped scrolling or scrolled back up. This was Safari's address bar hiding/showing while you scroll resizing the panel out from under you — the HUD now uses a viewport size that doesn't shift while scrolling, so it stays put.</span></li>
+            <li><span class="tag fixed">Fixed</span><span class="ctxt">The same glitch was very likely why <b>Start</b> and <b>Lock</b> could feel "stuck" or not register until you lifted your finger — the panel resizing mid-tap could shift the button out from under you. Should now respond immediately and reliably.</span></li>
+          </ul>
+        </article>
+
+        <article class="release" data-reveal>
+          <div class="release-head">
             <span class="ver-badge">v5.21</span>
             <span class="chip">Mobile</span>
             <span class="rel-date">July 5, 2026</span>

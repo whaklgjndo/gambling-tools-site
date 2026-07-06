@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mobile 
 // @namespace    https://whaklgjndo.github.io/gambling-tools/
-// @version      5.21
+// @version      5.22
 // @description  .
 // @author       .
 // @match        https://stake.com/*
@@ -2101,7 +2101,16 @@
         // the flex-grow element, so the extra height lands on the controls. The
         // native bet panel just flows below, and the Target Multiplier stays pinned
         // at the foot of the HUD.
-        gameDisplay.style.minHeight = dtTall ? 'clamp(520px, 80dvh, 920px)' : 'clamp(540px, 74dvh, 720px)';
+        // Use svh (small viewport height), NOT dvh: dvh recalculates continuously as
+        // iOS Safari's address bar/toolbar collapses and expands while scrolling, so
+        // this host (and the absolutely-positioned HUD filling it) would resize
+        // mid-scroll, visibly shifting everything below it (the native bet panel)
+        // and detaching/reattaching as the toolbar animated — reported as the HUD
+        // "floaty"/separating on scroll. svh is pinned to the toolbar-visible size,
+        // so it never changes during scroll. This also likely caused the reported
+        // "stuck" Start/Lock taps: a toolbar-driven reflow mid-touch could shift a
+        // button out from under the finger between touchstart and touchend.
+        gameDisplay.style.minHeight = dtTall ? 'clamp(520px, 80svh, 920px)' : 'clamp(540px, 74svh, 720px)';
         if (hud && hud.parentElement !== gameDisplay) gameDisplay.appendChild(hud);
         if (!hud) {
             hud = document.createElement('div');
