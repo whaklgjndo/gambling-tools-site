@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mobile
 // @namespace    https://whaklgjndo.github.io/gambling-tools/
-// @version      5.97
+// @version      5.98
 // @description  .
 // @author       .
 // @match        https://stake.com/*
@@ -1854,6 +1854,44 @@
         slot.replaceChildren(element);
     }
 
+    /* Native chrome that outranks the HUD in paint order.
+       The HUD root is `z-index: auto` (deliberately — a numeric value would make it
+       a stacking context), while nuts.gg gives the PLAY button's wrapper
+       `z-index: 3` from its own stylesheet. Both sit in the same stacking context,
+       so the native button legitimately paints ON TOP of the HUD. At phone width
+       the native column stacks clear of the HUD and nothing shows; at desktop width
+       — the mobile bundle with Chrome's device toolbar off — PLAY lands squarely
+       over the mode bar. Measured in a real browser: PLAY at (390,120) 340x60 vs
+       the mode bar at (366,138) 1188x29.
+
+       Clamp the offender's z-index rather than hiding it. clickPlay() resolves the
+       Nuts PLAY button through findButtonByText(), which filters on isVisible(),
+       and isVisible() rejects `visibility: hidden` — so hiding the bleed-through
+       would stop the engine placing any bet at all.
+
+       Bounded by geometry and by the HUD's own host, never by class name: the Nuts
+       class hashes change on every deploy. Self-healing too — once a node's
+       computed z-index is 0 it no longer matches, and if React re-renders and
+       restores the original value the next tick demotes it again. */
+    function demoteNativeStackingAboveHud() {
+        const hud = document.getElementById('ratchet-master-container');
+        const host = hud && hud.parentElement;
+        if (!host) return;
+        const hb = hud.getBoundingClientRect();
+        if (hb.width <= 0 || hb.height <= 0) return;
+        host.querySelectorAll('*').forEach(el => {
+            if (el === hud || hud.contains(el)) return;
+            const s = window.getComputedStyle(el);
+            if (s.position === 'static') return;
+            const z = parseInt(s.zIndex, 10);
+            if (!isFinite(z) || z <= 0) return;
+            const r = el.getBoundingClientRect();
+            if (r.width <= 0 || r.height <= 0) return;
+            if (r.right <= hb.left || hb.right <= r.left || r.bottom <= hb.top || hb.bottom <= r.top) return;
+            el.style.setProperty('z-index', '0', 'important');
+        });
+    }
+
     function syncNativeHudElements() {
         if (isNuts()) {
             const recentBets = findNativeElement('.sc-9b1418e2-1') || findNativeElement('.sc-9b1418e2-0');
@@ -1870,6 +1908,7 @@
             document.querySelectorAll('input[type="range"][min="0"][max="100"]').forEach(sl => {
                 if (!sl.closest('#ratchet-master-container')) sl.style.visibility = 'hidden';
             });
+            demoteNativeStackingAboveHud();
             return;
         }
         if (isShuffle()) {

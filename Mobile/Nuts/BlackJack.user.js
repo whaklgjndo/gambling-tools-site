@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Nuts Blackjack — Mobile
 // @namespace    http://tampermonkey.net/
-// @version      5.97
+// @version      5.98
 // @description  Standalone single-tool mobile build, extracted from the unified mobile bundle.
 // @author       .
 // @match        https://nuts.gg/*
@@ -14,7 +14,7 @@
 (function () {
     'use strict';
 
-    try { console.log('[Nuts Blackjack — Mobile] standalone build v5.97'); } catch (e) {}
+    try { console.log('[Nuts Blackjack — Mobile] standalone build v5.98'); } catch (e) {}
 
 
     try { console.log('[unified-mobile] boot v5.64 — DiceTool.exe replica UI for the dice tool (Calculator / Easy Mode / Strategy Finder / Results / Settings)'); } catch (e) {}
