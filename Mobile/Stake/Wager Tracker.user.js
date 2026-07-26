@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Stake Wager Tracker — Mobile
 // @namespace    http://tampermonkey.net/
-// @version      6.00
+// @version      6.01
 // @description  Standalone single-tool mobile build, extracted from the unified mobile bundle.
 // @author       .
 // @match        https://stake.com/*
@@ -22,7 +22,7 @@
 (function () {
     'use strict';
 
-    try { console.log('[Stake Wager Tracker — Mobile] standalone build v6.00'); } catch (e) {}
+    try { console.log('[Stake Wager Tracker — Mobile] standalone build v6.01'); } catch (e) {}
 
 
     try { console.log('[unified-mobile] boot v5.64 — DiceTool.exe replica UI for the dice tool (Calculator / Easy Mode / Strategy Finder / Results / Settings)'); } catch (e) {}
@@ -3424,8 +3424,19 @@ function tool_stake_7day_tracker() {
                 const winsResetEl = document.getElementById('h-wins-reset'); if (winsResetEl) winsBeforeReset = parseInt(winsResetEl.value, 10) || null;
             }
             if (ACTIVE_MODE === 'cond') {
+                /* The HUD no longer carries its own base-bet field, so the SITE's
+                   wager box is the source of truth. Only adopt it while a run is
+                   NOT in progress: during rapid fire the engine is itself writing
+                   that box on every bet, and reading it back would feed the
+                   escalated stake in as a new base and compound it away from the
+                   strategy. The `condInp` branch remains for any build that still
+                   renders the field. */
                 const condInp = document.getElementById('h-cond-base');
                 if (condInp) condBaseBet = parseCurrencyInput(condInp.value, minBaseBet);
+                else if (!isRapidFiring) {
+                    const nativeBet = getCurrentBet();
+                    if (isFinite(nativeBet) && nativeBet >= minBaseBet) condBaseBet = nativeBet;
+                }
                 // The DiceTool panel builds asynchronously (document-ready), so
                 // it may not have existed when the tab was first opened. Once it
                 // shows up, mount it, build the Stats tab, and wire its controls.

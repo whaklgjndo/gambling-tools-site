@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Stake Keno — Desktop
 // @namespace    http://tampermonkey.net/
-// @version      3.30
+// @version      3.31
 // @description  Standalone single-tool build, extracted from the unified bundle.
 // @author       .
 // @match        https://stake.com/*
@@ -23,7 +23,7 @@
 (function () {
     'use strict';
 
-    console.log('%cStake Keno — Desktop — standalone build v3.30', 'color:#17c7b8;font-weight:800;font-size:13px');
+    console.log('%cStake Keno — Desktop — standalone build v3.31', 'color:#17c7b8;font-weight:800;font-size:13px');
 
     /* =========================================================
        UNIFIED LOADER — STORAGE KEYS & SETTINGS

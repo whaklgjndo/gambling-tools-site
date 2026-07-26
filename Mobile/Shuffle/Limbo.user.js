@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Shuffle Limbo — Mobile
 // @namespace    http://tampermonkey.net/
-// @version      6.00
+// @version      6.01
 // @description  Standalone single-tool mobile build, extracted from the unified mobile bundle.
 // @author       .
 // @match        https://shuffle.com/*
@@ -14,7 +14,7 @@
 (function () {
     'use strict';
 
-    try { console.log('[Shuffle Limbo — Mobile] standalone build v6.00'); } catch (e) {}
+    try { console.log('[Shuffle Limbo — Mobile] standalone build v6.01'); } catch (e) {}
 
 
     try { console.log('[unified-mobile] boot v5.64 — DiceTool.exe replica UI for the dice tool (Calculator / Easy Mode / Strategy Finder / Results / Settings)'); } catch (e) {}
@@ -3979,14 +3979,15 @@
                      below it and can wrap without pushing START off screen.
                      Every id is unchanged — these ARE the elements the engine
                      already wires, moved rather than duplicated. -->
+                <!-- No bet-size field here either. The site's own wager box IS the
+                     bet size and the conditions engine writes to it; a second copy
+                     in the HUD was one more thing to keep in sync and one more row
+                     between the user and START. condBaseBet comes from the native
+                     wager input instead (see the ticker).
+                     Conditions stays a popup on mobile: the desktop side panel is a
+                     fixed 300px column, which cannot exist at 393px. -->
                 <div class="hud-cmd-bar">
                     <div class="cmd-row cmd-primary">
-                        <div class="cmd-bet">
-                            <span class="cmd-bet-label">BET</span>
-                            <button id="h-cond-half" class="quick-btn">½</button>
-                            <input id="h-cond-base" type="number" inputmode="decimal" step="${moneyStep}" value="${formatCurrencyInput(condBaseBet)}">
-                            <button id="h-cond-double" class="quick-btn">2x</button>
-                        </div>
                         <button id="h-rapid-toggle" class="hud-rapid-btn start">START</button>
                     </div>
                     <div class="cmd-row cmd-secondary">
@@ -4555,7 +4556,18 @@ ${MOB_NU} table.dt-stats td:first-child { color: #aab6c9 !important; }`;
         if (ACTIVE_MODE === 'iow') setBet(baseBet);
         // condStartCycle() captures the baseline the deck's "Cycle" stats scope
         // measures from, so Session|Cycle means the same thing it does on desktop.
-        if (ACTIVE_MODE === 'cond') { resetCondRuntime(); condStartCycle(); condCurBet = condBaseBet; setBet(condBaseBet); }
+        if (ACTIVE_MODE === 'cond') {
+            /* The HUD has no bet field any more, so the base bet is whatever the
+               site's wager box says at the moment START is pressed. Read it HERE
+               rather than relying on the ticker having sampled it: this is the one
+               instant the value has to be right, and it makes the source of the
+               base bet obvious instead of timing-dependent. */
+            if (!document.getElementById('h-cond-base')) {
+                const nativeBet = getCurrentBet();
+                if (isFinite(nativeBet) && nativeBet >= minBaseBet) condBaseBet = nativeBet;
+            }
+            resetCondRuntime(); condStartCycle(); condCurBet = condBaseBet; setBet(condBaseBet);
+        }
         if (ACTIVE_MODE === 'manual') setBet(manualBet);
         if (ACTIVE_MODE === 'smart') updateBetAmount();
         updateUI();
@@ -10035,8 +10047,19 @@ self.onmessage = async (e) => {
                 const winsResetEl = document.getElementById('h-wins-reset'); if (winsResetEl) winsBeforeReset = parseInt(winsResetEl.value, 10) || null;
             }
             if (ACTIVE_MODE === 'cond') {
+                /* The HUD no longer carries its own base-bet field, so the SITE's
+                   wager box is the source of truth. Only adopt it while a run is
+                   NOT in progress: during rapid fire the engine is itself writing
+                   that box on every bet, and reading it back would feed the
+                   escalated stake in as a new base and compound it away from the
+                   strategy. The `condInp` branch remains for any build that still
+                   renders the field. */
                 const condInp = document.getElementById('h-cond-base');
                 if (condInp) condBaseBet = parseCurrencyInput(condInp.value, minBaseBet);
+                else if (!isRapidFiring) {
+                    const nativeBet = getCurrentBet();
+                    if (isFinite(nativeBet) && nativeBet >= minBaseBet) condBaseBet = nativeBet;
+                }
                 // The DiceTool panel builds asynchronously (document-ready), so
                 // it may not have existed when the tab was first opened. Once it
                 // shows up, mount it, build the Stats tab, and wire its controls.

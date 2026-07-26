@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Nuts Limbo (Target) — Desktop
 // @namespace    http://tampermonkey.net/
-// @version      3.30
+// @version      3.31
 // @description  Standalone single-tool build, extracted from the unified bundle.
 // @author       .
 // @match        https://nuts.gg/*
@@ -15,7 +15,7 @@
 (function () {
     'use strict';
 
-    console.log('%cNuts Limbo (Target) — Desktop — standalone build v3.30', 'color:#17c7b8;font-weight:800;font-size:13px');
+    console.log('%cNuts Limbo (Target) — Desktop — standalone build v3.31', 'color:#17c7b8;font-weight:800;font-size:13px');
 
     /* =========================================================
        UNIFIED LOADER — STORAGE KEYS & SETTINGS
@@ -1556,7 +1556,7 @@
                              its left bet column. It is a SIBLING of the native slot because
                              syncNativeHudElements() calls replaceChildren() on that slot
                              every tick and would wipe anything placed inside it. -->
-                        <div id="hud-cond-left-slot" class="hud-cond-left-slot"></div>
+                        <div id="hud-cond-left-slot" class="hud-cond-left-slot">${ACTIVE_MODE === 'cond' ? condDeckHTML() : ''}</div>
                     </div>
                     <div class="hud-workspace">
                         <div id="hud-native-past-bets-slot" class="hud-native-past-bets-slot"></div>
@@ -1865,10 +1865,27 @@
         if (ACTIVE_MODE === 'cond') {
             mountDicePanel();
             ensureNutsStatsTab();
-            ensureCondModal();
-            refreshCondOpenBtn();
-            const condOpen = document.getElementById('h-cond-open');
-            if (condOpen) condOpen.addEventListener('click', openCondModal);
+            /* The conditions editor lives in the LEFT SIDE PANEL, under the native
+               bet panel, not in a popup. #hud-cond-left-slot was built for exactly
+               this and the HUD markup now fills it, so the deck is always on screen
+               and needs no button to reveal it.
+               The modal is deliberately NOT created: it renders the same
+               condDeckHTML(), so having both alive would duplicate every
+               #h-cond-* / #h-strat-* id and getElementById would silently favour
+               whichever came first. Any stale modal from a previous mode is torn
+               down here for the same reason. */
+            clearCondModal();
+            /* Fill the side panel here, not only in the HUD template. The shell is
+               built once (while the mode is still 'smart') and switching modes
+               swaps only the mode panel, so a template-only insert left the slot
+               empty — and .hud-cond-left-slot is `:empty { display: none }`, so it
+               collapsed to zero width and the editor was simply absent. */
+            const condSlot = document.getElementById('hud-cond-left-slot');
+            if (condSlot && !condSlot.querySelector('.cond-deck-wrap')) {
+                condSlot.innerHTML = condDeckHTML();
+            }
+            renderCondStrategyBar();
+            renderCondBlocks();
         }
         const rapidBtn = document.getElementById('h-rapid-toggle');
         if (rapidBtn) rapidBtn.onclick = () => { if (!isRapidFiring) startRapidFire(); else stopRapidFire(); };
@@ -2389,18 +2406,16 @@
                          are moved, never duplicated. The primary row (bet size +
                          START) cannot wrap; the secondary actions wrap below it, so
                          a narrow panel can never push START out of reach. -->
+                    <!-- No bet-size field here. The site's own wager box already is
+                         the bet size, and the conditions engine writes to it — a
+                         second copy in the HUD was one more thing to keep in sync
+                         and one more row between the user and START. condBaseBet is
+                         read from the native wager input instead (see the ticker).
+                         No Conditions button either: the editor is always visible in
+                         the left side panel. -->
                     <div class="hud-cmd-bar">
                         <div class="cmd-row cmd-primary">
-                            <div class="cmd-bet">
-                                <span class="cmd-bet-label">BET</span>
-                                <button id="h-cond-half" class="quick-btn">½</button>
-                                <input id="h-cond-base" type="number" step="0.00000001" value="${condBaseBet.toFixed(8)}">
-                                <button id="h-cond-double" class="quick-btn">2x</button>
-                            </div>
                             <button id="h-rapid-toggle" class="hud-rapid-btn start">START</button>
-                        </div>
-                        <div class="cmd-row cmd-secondary">
-                            <button id="h-cond-open" class="cond-open-btn" title="Open the strategy conditions editor">Conditions (${condBlocks.length})</button>
                             ${isOnDicePage() ? '<button id="h-switch-ou" class="hud-switch-ou-btn">O/U</button>' : ''}
                             <button id="h-stats-update" class="hud-update-btn" title="Read the current balance, recompute, and retune the loaded strategy">UPDATE</button>
                             <button id="h-reset" class="hud-reset-btn">RESET</button>
@@ -3161,7 +3176,18 @@
         syncLastSeenBet();
         lastPlacedBet = ACTIVE_MODE === 'cond' ? condBaseBet : baseBet;
         if (ACTIVE_MODE === 'iow') forceSetBet(baseBet);
-        if (ACTIVE_MODE === 'cond') { resetCondRuntime(); condStartCycle(); forceSetBet(condBaseBet); }
+        if (ACTIVE_MODE === 'cond') {
+            /* The HUD has no bet field any more, so the base bet is whatever the
+               site's wager box says at the moment START is pressed. Read it HERE
+               rather than relying on the ticker having sampled it: this is the one
+               instant the value has to be right, and it makes the source of the
+               base bet obvious instead of timing-dependent. */
+            if (!document.getElementById('h-cond-base')) {
+                const nativeBet = getCurrentBet();
+                if (isFinite(nativeBet) && nativeBet >= minBaseBet) condBaseBet = nativeBet;
+            }
+            resetCondRuntime(); condStartCycle(); forceSetBet(condBaseBet);
+        }
         if (ACTIVE_MODE === 'manual') forceSetBet(manualBet);
         if (ACTIVE_MODE === 'smart') updateBetAmount();
         startBetGuardian();
@@ -3495,7 +3521,18 @@
             const winsResetEl = document.getElementById('h-wins-reset'); if (winsResetEl) winsBeforeReset = parseInt(winsResetEl.value, 10) || null;
         }
         if (ACTIVE_MODE === 'cond') {
-            const condInp = document.getElementById('h-cond-base'); if (condInp) condBaseBet = parseFloat(condInp.value) || minBaseBet;
+            /* The HUD no longer carries its own base-bet field, so the SITE's wager
+               box is the source of truth. Only adopt it while a run is NOT in
+               progress: during rapid fire the engine is itself writing that box on
+               every bet, and reading it back would feed the escalated stake in as a
+               new base and compound it away from the strategy. The `condInp` branch
+               remains for any build that still renders the field. */
+            const condInp = document.getElementById('h-cond-base');
+            if (condInp) condBaseBet = parseFloat(condInp.value) || minBaseBet;
+            else if (!isRapidFiring) {
+                const nativeBet = getCurrentBet();
+                if (isFinite(nativeBet) && nativeBet >= minBaseBet) condBaseBet = nativeBet;
+            }
             // The DiceTool panel builds asynchronously (document-ready), so it
             // may not have existed when the tab was first opened. Once it shows
             // up, mount it, build the Stats tab, and wire its controls.
