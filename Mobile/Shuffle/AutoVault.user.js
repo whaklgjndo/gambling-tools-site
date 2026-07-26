@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Shuffle Auto-Vault — Mobile
 // @namespace    http://tampermonkey.net/
-// @version      5.99
+// @version      6.00
 // @description  Standalone single-tool mobile build, extracted from the unified mobile bundle.
 // @author       .
 // @match        https://shuffle.com/*
@@ -14,7 +14,7 @@
 (function () {
     'use strict';
 
-    try { console.log('[Shuffle Auto-Vault — Mobile] standalone build v5.99'); } catch (e) {}
+    try { console.log('[Shuffle Auto-Vault — Mobile] standalone build v6.00'); } catch (e) {}
 
 
     try { console.log('[unified-mobile] boot v5.64 — DiceTool.exe replica UI for the dice tool (Calculator / Easy Mode / Strategy Finder / Results / Settings)'); } catch (e) {}
@@ -378,7 +378,17 @@
         return isNuts() && !isUSDDisplayMode() ? '0.00000001' : '0.01';
     }
     function typeIntoInput(inp, value) {
-        inp.focus();
+        /* Focus is unavoidable: execCommand('insertText') only produces the real
+           input events a React-controlled field needs if the field is focused.
+           But focusing the NATIVE wager input makes the browser scroll it into
+           view, and on a phone that native column sits below the HUD overlay — so
+           every setBet() threw the page to the bottom of the screen. setBet() runs
+           on START and again after every single bet, so a run yanked the scroll
+           continuously and the HUD was unusable.
+           preventScroll covers the focus itself; the explicit restore covers
+           select()/blur() and any engine that ignores the option. */
+        const sx = window.scrollX, sy = window.scrollY;
+        try { inp.focus({ preventScroll: true }); } catch (e) { inp.focus(); }
         try {
             inp.select();
             document.execCommand('selectAll', false, null);
@@ -390,6 +400,7 @@
         }
         inp.dispatchEvent(new Event('change', { bubbles: true }));
         inp.blur();
+        if (window.scrollX !== sx || window.scrollY !== sy) window.scrollTo(sx, sy);
     }
 
     /* ============================================================
@@ -805,6 +816,62 @@
         #ratchet-master-container .hud-native-past-bets-slot > [class*="OriginalGameRecentResult_originalGameResultsWrapper"] > * {
             flex: 0 0 auto !important;
         }
+        /* Our OWN results strip, for Nuts only.
+           Verified against the live logged-in page 2026-07-26: .sc-9b1418e2-1 does
+           not exist at all and .sc-9b1418e2-0 is an empty 320x38 shell with zero
+           children — nuts.gg renders no bet history whatsoever, on any width. So
+           there is nothing to re-parent and the styling above can never help; the
+           slot was simply 38px of nothing. The socket's myGames frames carry the
+           settled result, so the strip is built from those instead. */
+        #ratchet-master-container .hud-own-bet-feed {
+            width: 100%;
+            display: flex;
+            gap: 4px;
+            padding: 5px;
+            background: var(--hud-panel);
+            border: 1px solid var(--hud-border-soft);
+            border-radius: 8px;
+            overflow-x: auto;
+            overflow-y: hidden;
+            -webkit-overflow-scrolling: touch;
+            align-items: center;
+            flex-direction: row-reverse;
+            justify-content: flex-end;
+        }
+        #ratchet-master-container .hud-own-bet-feed:empty::after {
+            content: 'no bets yet';
+            font-size: 10px;
+            opacity: 0.45;
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+        }
+        #ratchet-master-container .hud-own-bet-tile {
+            flex: 0 0 auto;
+            min-width: 44px;
+            padding: 3px 6px;
+            border-radius: 6px;
+            font-size: 11px;
+            font-weight: 800;
+            font-variant-numeric: tabular-nums;
+            text-align: center;
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid transparent;
+        }
+        #ratchet-master-container .hud-own-bet-tile.win {
+            color: var(--hud-green);
+            border-color: color-mix(in srgb, var(--hud-green) 45%, transparent);
+            background: color-mix(in srgb, var(--hud-green) 12%, transparent);
+        }
+        #ratchet-master-container .hud-own-bet-tile.loss {
+            color: #ff6b81;
+            border-color: rgba(225, 29, 72, 0.45);
+            background: rgba(225, 29, 72, 0.12);
+        }
+        #ratchet-master-container .hud-own-bet-tile.fresh { animation: hudTilePop 220ms ease-out; }
+        @keyframes hudTilePop {
+            from { transform: scale(0.82); opacity: 0; }
+            to { transform: scale(1); opacity: 1; }
+        }
         #ratchet-master-container .mode-wrap {
             display: flex; flex: 0 0 auto; gap: 4px;
             background: #13232d; padding: 3px; border-radius: 10px;
@@ -936,6 +1003,9 @@
             padding-bottom: 4px; margin-bottom: 4px;
             border-bottom: 1px solid var(--hud-line);
         }
+        /* Nothing to report = no strip at all. In cond mode this line now carries
+           warnings only, so it is empty almost all the time. */
+        #ratchet-master-container .hud-stats .hud-statusline:empty { display: none; }
         #ratchet-master-container .hud-stats .hud-hero {
             display: flex; align-items: baseline; flex-wrap: wrap;
             column-gap: 8px; row-gap: 0;
@@ -1748,10 +1818,50 @@
         });
     }
 
+    /* Our own results strip, for Nuts.
+       Verified on the live logged-in page 2026-07-26: `.sc-9b1418e2-1` does not
+       exist and `.sc-9b1418e2-0` is an empty 320x38 shell with zero children, at
+       every width. nuts.gg ships no bet history at all, so there has never been
+       anything to re-parent — the slot was 38px of nothing and no styling or
+       selector fix could change that. The socket's myGames frames carry each
+       settled result, so the strip gets built from those.
+       The container is row-reverse, so appending puts the newest tile on the left
+       and firstElementChild is the oldest. */
+    const NUTS_OWN_FEED_MAX = 24;
+    function ensureNutsOwnFeed() {
+        const slot = document.getElementById('hud-native-past-bets-slot');
+        if (!slot) return null;
+        let feed = slot.querySelector('.hud-own-bet-feed');
+        if (!feed) {
+            feed = document.createElement('div');
+            feed.className = 'hud-own-bet-feed';
+            slot.replaceChildren(feed);
+        }
+        return feed;
+    }
+    function nutsOwnFeedAdd(won, label) {
+        if (!isNuts()) return;
+        const feed = ensureNutsOwnFeed();
+        if (!feed) return;
+        const tile = document.createElement('div');
+        tile.className = 'hud-own-bet-tile fresh ' + (won ? 'win' : 'loss');
+        const hasLabel = label !== undefined && label !== null && String(label) !== '';
+        tile.textContent = hasLabel ? String(label) : (won ? 'WIN' : 'LOSS');
+        feed.appendChild(tile);
+        while (feed.childElementCount > NUTS_OWN_FEED_MAX) feed.removeChild(feed.firstElementChild);
+        setTimeout(() => { try { tile.classList.remove('fresh'); } catch (e) {} }, 260);
+    }
+
     function syncNativeHudElements() {
         if (isNuts()) {
             const recentBets = findNativeElement('.sc-9b1418e2-1') || findNativeElement('.sc-9b1418e2-0');
-            mountSingleElement(document.getElementById('hud-native-past-bets-slot'), recentBets);
+            // Prefer a real native feed if nuts.gg ever ships one with content in
+            // it; otherwise our own strip owns the slot.
+            if (recentBets && recentBets.childElementCount > 0) {
+                mountSingleElement(document.getElementById('hud-native-past-bets-slot'), recentBets);
+            } else {
+                ensureNutsOwnFeed();
+            }
             mountSingleElement(
                 document.getElementById('hud-footer-slot'),
                 findNativeElement('.sc-1d9445d-1.hFwXoL') || findNativeElement('.sc-1d9445d-1')

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Nuts Dice — Mobile
 // @namespace    http://tampermonkey.net/
-// @version      5.99
+// @version      6.00
 // @description  Standalone single-tool mobile build, extracted from the unified mobile bundle.
 // @author       .
 // @match        https://nuts.gg/*
@@ -14,7 +14,7 @@
 (function () {
     'use strict';
 
-    try { console.log('[Nuts Dice — Mobile] standalone build v5.99'); } catch (e) {}
+    try { console.log('[Nuts Dice — Mobile] standalone build v6.00'); } catch (e) {}
 
 
     try { console.log('[unified-mobile] boot v5.64 — DiceTool.exe replica UI for the dice tool (Calculator / Easy Mode / Strategy Finder / Results / Settings)'); } catch (e) {}
@@ -381,7 +381,17 @@
         return isNuts() && !isUSDDisplayMode() ? '0.00000001' : '0.01';
     }
     function typeIntoInput(inp, value) {
-        inp.focus();
+        /* Focus is unavoidable: execCommand('insertText') only produces the real
+           input events a React-controlled field needs if the field is focused.
+           But focusing the NATIVE wager input makes the browser scroll it into
+           view, and on a phone that native column sits below the HUD overlay — so
+           every setBet() threw the page to the bottom of the screen. setBet() runs
+           on START and again after every single bet, so a run yanked the scroll
+           continuously and the HUD was unusable.
+           preventScroll covers the focus itself; the explicit restore covers
+           select()/blur() and any engine that ignores the option. */
+        const sx = window.scrollX, sy = window.scrollY;
+        try { inp.focus({ preventScroll: true }); } catch (e) { inp.focus(); }
         try {
             inp.select();
             document.execCommand('selectAll', false, null);
@@ -393,6 +403,7 @@
         }
         inp.dispatchEvent(new Event('change', { bubbles: true }));
         inp.blur();
+        if (window.scrollX !== sx || window.scrollY !== sy) window.scrollTo(sx, sy);
     }
 
     /* ============================================================
@@ -808,6 +819,62 @@
         #ratchet-master-container .hud-native-past-bets-slot > [class*="OriginalGameRecentResult_originalGameResultsWrapper"] > * {
             flex: 0 0 auto !important;
         }
+        /* Our OWN results strip, for Nuts only.
+           Verified against the live logged-in page 2026-07-26: .sc-9b1418e2-1 does
+           not exist at all and .sc-9b1418e2-0 is an empty 320x38 shell with zero
+           children — nuts.gg renders no bet history whatsoever, on any width. So
+           there is nothing to re-parent and the styling above can never help; the
+           slot was simply 38px of nothing. The socket's myGames frames carry the
+           settled result, so the strip is built from those instead. */
+        #ratchet-master-container .hud-own-bet-feed {
+            width: 100%;
+            display: flex;
+            gap: 4px;
+            padding: 5px;
+            background: var(--hud-panel);
+            border: 1px solid var(--hud-border-soft);
+            border-radius: 8px;
+            overflow-x: auto;
+            overflow-y: hidden;
+            -webkit-overflow-scrolling: touch;
+            align-items: center;
+            flex-direction: row-reverse;
+            justify-content: flex-end;
+        }
+        #ratchet-master-container .hud-own-bet-feed:empty::after {
+            content: 'no bets yet';
+            font-size: 10px;
+            opacity: 0.45;
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+        }
+        #ratchet-master-container .hud-own-bet-tile {
+            flex: 0 0 auto;
+            min-width: 44px;
+            padding: 3px 6px;
+            border-radius: 6px;
+            font-size: 11px;
+            font-weight: 800;
+            font-variant-numeric: tabular-nums;
+            text-align: center;
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid transparent;
+        }
+        #ratchet-master-container .hud-own-bet-tile.win {
+            color: var(--hud-green);
+            border-color: color-mix(in srgb, var(--hud-green) 45%, transparent);
+            background: color-mix(in srgb, var(--hud-green) 12%, transparent);
+        }
+        #ratchet-master-container .hud-own-bet-tile.loss {
+            color: #ff6b81;
+            border-color: rgba(225, 29, 72, 0.45);
+            background: rgba(225, 29, 72, 0.12);
+        }
+        #ratchet-master-container .hud-own-bet-tile.fresh { animation: hudTilePop 220ms ease-out; }
+        @keyframes hudTilePop {
+            from { transform: scale(0.82); opacity: 0; }
+            to { transform: scale(1); opacity: 1; }
+        }
         #ratchet-master-container .mode-wrap {
             display: flex; flex: 0 0 auto; gap: 4px;
             background: #13232d; padding: 3px; border-radius: 10px;
@@ -939,6 +1006,9 @@
             padding-bottom: 4px; margin-bottom: 4px;
             border-bottom: 1px solid var(--hud-line);
         }
+        /* Nothing to report = no strip at all. In cond mode this line now carries
+           warnings only, so it is empty almost all the time. */
+        #ratchet-master-container .hud-stats .hud-statusline:empty { display: none; }
         #ratchet-master-container .hud-stats .hud-hero {
             display: flex; align-items: baseline; flex-wrap: wrap;
             column-gap: 8px; row-gap: 0;
@@ -1751,10 +1821,50 @@
         });
     }
 
+    /* Our own results strip, for Nuts.
+       Verified on the live logged-in page 2026-07-26: `.sc-9b1418e2-1` does not
+       exist and `.sc-9b1418e2-0` is an empty 320x38 shell with zero children, at
+       every width. nuts.gg ships no bet history at all, so there has never been
+       anything to re-parent — the slot was 38px of nothing and no styling or
+       selector fix could change that. The socket's myGames frames carry each
+       settled result, so the strip gets built from those.
+       The container is row-reverse, so appending puts the newest tile on the left
+       and firstElementChild is the oldest. */
+    const NUTS_OWN_FEED_MAX = 24;
+    function ensureNutsOwnFeed() {
+        const slot = document.getElementById('hud-native-past-bets-slot');
+        if (!slot) return null;
+        let feed = slot.querySelector('.hud-own-bet-feed');
+        if (!feed) {
+            feed = document.createElement('div');
+            feed.className = 'hud-own-bet-feed';
+            slot.replaceChildren(feed);
+        }
+        return feed;
+    }
+    function nutsOwnFeedAdd(won, label) {
+        if (!isNuts()) return;
+        const feed = ensureNutsOwnFeed();
+        if (!feed) return;
+        const tile = document.createElement('div');
+        tile.className = 'hud-own-bet-tile fresh ' + (won ? 'win' : 'loss');
+        const hasLabel = label !== undefined && label !== null && String(label) !== '';
+        tile.textContent = hasLabel ? String(label) : (won ? 'WIN' : 'LOSS');
+        feed.appendChild(tile);
+        while (feed.childElementCount > NUTS_OWN_FEED_MAX) feed.removeChild(feed.firstElementChild);
+        setTimeout(() => { try { tile.classList.remove('fresh'); } catch (e) {} }, 260);
+    }
+
     function syncNativeHudElements() {
         if (isNuts()) {
             const recentBets = findNativeElement('.sc-9b1418e2-1') || findNativeElement('.sc-9b1418e2-0');
-            mountSingleElement(document.getElementById('hud-native-past-bets-slot'), recentBets);
+            // Prefer a real native feed if nuts.gg ever ships one with content in
+            // it; otherwise our own strip owns the slot.
+            if (recentBets && recentBets.childElementCount > 0) {
+                mountSingleElement(document.getElementById('hud-native-past-bets-slot'), recentBets);
+            } else {
+                ensureNutsOwnFeed();
+            }
             mountSingleElement(
                 document.getElementById('hud-footer-slot'),
                 findNativeElement('.sc-1d9445d-1.hFwXoL') || findNativeElement('.sc-1d9445d-1')
@@ -2830,6 +2940,14 @@
         // Same downstream path as a DOM-observed bet: counters, handleBetResult,
         // the IOW/cond engines and the autostops all live in processNewBet().
         processNewBet(null, null, bet.isWin);
+        // The frame carries the actual roll, so the strip can show it rather than
+        // just W/L. `result` is the dice/target roll; fall back to the multiplier.
+        try {
+            const d = bet.details || {};
+            const label = d.result !== undefined && d.result !== null ? d.result
+                : (bet.multiplier ? bet.multiplier + 'x' : '');
+            nutsOwnFeedAdd(bet.isWin, label);
+        } catch (e) {}
     }
     /* Balance frames are a liveness heartbeat only. They were previously used for
        bet detection via the delta's sign, but that could never fire: the guard
@@ -2885,6 +3003,8 @@
         // the stake; bigger jumps are deposits, faucet claims or race payouts.
         if (Math.abs(delta) > betAmt * 500) return;
         processNewBet(null, null, delta > 0);
+        // No roll value on this path — the tile shows the outcome only.
+        try { nutsOwnFeedAdd(delta > 0, ''); } catch (e) {}
     }
     function startNutsBalanceWatcher() {
         if (!isNuts()) return;
@@ -3335,13 +3455,50 @@
            the pinned bar. Per-theme opaque equivalents below. */
         /* Sibling of .dt-body, not inside it — see ensureNutsStatsTab. Opaque, so
            nothing scrolling underneath can ghost through. */
-        #ratchet-master-container #hud-content > #dt-aio-panel > .dt-run-bar { flex: 0 0 auto; display: flex;
+        #ratchet-master-container #hud-content > #dt-aio-panel > .hud-cmd-bar { flex: 0 0 auto;
+            display: flex; flex-direction: column; gap: 6px;
             z-index: 6; padding: 7px 8px 8px; margin: 0;
             background: #0f212e; box-shadow: 0 -10px 14px -8px rgba(0, 0, 0, 0.85); }
-        #ratchet-master-container #hud-content > #dt-aio-panel > .dt-run-bar > button { flex: 1 1 auto; min-height: 42px;
-            font-size: 12.5px; font-weight: 800; letter-spacing: 0.06em; border-radius: 7px; }
-        #ratchet-master-container.shuffle-theme #hud-content > #dt-aio-panel > .dt-run-bar { background: #0a0818; }
-        #ratchet-master-container.nuts-theme #hud-content > #dt-aio-panel > .dt-run-bar { background: #0a0c14; }
+        #ratchet-master-container.shuffle-theme #hud-content > #dt-aio-panel > .hud-cmd-bar { background: #0a0818; }
+        #ratchet-master-container.nuts-theme #hud-content > #dt-aio-panel > .hud-cmd-bar { background: #0a0c14; }
+        #ratchet-master-container .hud-cmd-bar .cmd-row { display: flex; gap: 6px; align-items: stretch; }
+        /* The primary row must never wrap: bet size and START stay side by side at
+           any width, because these two together are the whole point of the bar. */
+        #ratchet-master-container .hud-cmd-bar .cmd-primary { flex-wrap: nowrap; }
+        #ratchet-master-container .hud-cmd-bar .cmd-bet {
+            flex: 1 1 auto; min-width: 0; display: flex; align-items: center; gap: 4px;
+            padding: 0 6px 0 8px; border-radius: 8px;
+            background: rgba(0, 0, 0, 0.32);
+            border: 1px solid var(--hud-border-soft);
+        }
+        #ratchet-master-container .hud-cmd-bar .cmd-bet-label {
+            font-size: 9px; font-weight: 800; letter-spacing: 0.12em;
+            opacity: 0.6; flex: 0 0 auto;
+        }
+        /* Fills the row, so the amount is never the thing that gets truncated —
+           an 8dp SOL figure needs every pixel it can get. */
+        #ratchet-master-container .hud-cmd-bar .cmd-bet input {
+            flex: 1 1 auto; min-width: 0; width: 100%;
+            background: transparent; border: 0; outline: none; box-shadow: none;
+            color: #fff; font-size: 13px; font-weight: 700;
+            font-variant-numeric: tabular-nums; text-align: right; padding: 9px 2px;
+        }
+        #ratchet-master-container .hud-cmd-bar .cmd-bet .quick-btn {
+            flex: 0 0 auto; min-width: 30px; min-height: 30px; padding: 0 7px;
+            font-size: 11px; font-weight: 800; border-radius: 6px;
+        }
+        #ratchet-master-container .hud-cmd-bar .cmd-primary > .hud-rapid-btn {
+            flex: 0 0 40%; min-height: 44px; border-radius: 8px;
+            font-size: 13px; font-weight: 900; letter-spacing: 0.08em;
+        }
+        /* Secondary actions may wrap freely — they sit BELOW the primary row, so
+           wrapping can never push START off the bottom of the panel. */
+        #ratchet-master-container .hud-cmd-bar .cmd-secondary { flex-wrap: wrap; }
+        #ratchet-master-container .hud-cmd-bar .cmd-secondary > button {
+            flex: 1 1 auto; min-width: 66px; min-height: 32px; padding: 0 8px;
+            font-size: 10.5px; font-weight: 800; letter-spacing: 0.04em;
+            border-radius: 7px; white-space: nowrap;
+        }
         /* iOS Safari draws stepper arrows inside every number input, which ate a
            chunk of each already-narrow field and looked nothing like the rest of
            the UI. Only visible when rendered in WebKit — Chromium at the same
@@ -3707,8 +3864,8 @@
            flex column, .dt-body takes the leftover space and scrolls, and this row
            is always on screen. It also survives tab switches, so START stays
            reachable from Calculator / Strategy Finder too. */
-        const runBar = statsPanel.querySelector('.dt-run-bar');
-        if (runBar) panel.appendChild(runBar);
+        const cmdBar = statsPanel.querySelector('.hud-cmd-bar');
+        if (cmdBar) panel.appendChild(cmdBar);
         tabsNav.querySelectorAll('.dt-tab-btn').forEach(b => b.classList.toggle('active', b === statsBtn));
         panel.querySelectorAll('.dt-panel').forEach(p => p.classList.toggle('active', p === statsPanel));
         panel.setAttribute('data-active-tab', 'stats');
@@ -3772,14 +3929,11 @@
                      owns that id, and a second one only ever shows a stale
                      placeholder (getElementById updates the first). -->
                 <div class="hud-controls-deck hud-panel">
-                    <div class="hud-control-group">
-                        <label>Base Bet</label>
-                        <div class="hud-base-row">
-                            <button id="h-cond-half" class="quick-btn">½</button>
-                            <input id="h-cond-base" type="number" inputmode="decimal" step="${moneyStep}" value="${formatCurrencyInput(condBaseBet)}">
-                            <button id="h-cond-double" class="quick-btn">2x</button>
-                        </div>
-                    </div>
+                    <!-- Base Bet is NOT here any more: it lives in the pinned
+                         command bar below, so the bet size is on screen whenever
+                         START is. Duplicating it in this scrolling deck is what
+                         made the panel feel like three different control surfaces
+                         fighting each other. -->
                     <div class="hud-control-group">
                         <label>Balance Divisor</label>
                         <input id="h-stats-bet-div" type="number" inputmode="decimal" step="any" min="1">
@@ -3811,20 +3965,36 @@
                         <input type="range" id="h-stats-vol" min="0" max="100" step="1" value="${condVolume}">
                     </div>
                 </div>
-                <div class="dt-action-bar">
-                    <button id="h-cond-open" class="cond-open-btn" title="Open the strategy conditions editor">Conditions (${condBlocks.length})</button>
-                    <button id="h-stats-update" class="hud-update-btn" title="Read the current balance, recompute, and retune the loaded strategy">Update Strategy</button>
-                    ${isOnDicePage() ? '<button id="h-switch-ou" class="hud-switch-ou-btn">Switch O/U</button>' : ''}
-                    <button id="h-reset" class="hud-reset-btn">RESET</button>
-                </div>
-                <!-- START gets its own pinned row. Pinning the whole action bar
-                     meant five buttons wrapping to three rows (~130px), which ate
-                     the viewport AND still got clipped by the bottom of the HUD on
-                     an iPhone, so START — the one control that must always be
-                     reachable — was the part you could not see. One full-width
-                     button is ~44px and always fits. -->
-                <div class="dt-run-bar">
-                    <button id="h-rapid-toggle" class="hud-rapid-btn start">START</button>
+                <!-- Always-visible command bar.
+                     Bet size, START and the action buttons used to live in three
+                     separate places — base bet buried in the scrolling deck, START
+                     pinned alone in its own row, the actions in a third bar, and a
+                     verbose status line restating the first two. So the controls
+                     you actually touch during a run were never on screen together.
+                     They are one bar now, lifted out of the scroller by
+                     ensureNutsStatsTab() and pinned to the panel, so it holds
+                     position no matter how far the deck scrolls.
+                     Two rows by design: the primary row (bet size + START) is the
+                     one that must never be clipped, so the secondary actions sit
+                     below it and can wrap without pushing START off screen.
+                     Every id is unchanged — these ARE the elements the engine
+                     already wires, moved rather than duplicated. -->
+                <div class="hud-cmd-bar">
+                    <div class="cmd-row cmd-primary">
+                        <div class="cmd-bet">
+                            <span class="cmd-bet-label">BET</span>
+                            <button id="h-cond-half" class="quick-btn">½</button>
+                            <input id="h-cond-base" type="number" inputmode="decimal" step="${moneyStep}" value="${formatCurrencyInput(condBaseBet)}">
+                            <button id="h-cond-double" class="quick-btn">2x</button>
+                        </div>
+                        <button id="h-rapid-toggle" class="hud-rapid-btn start">START</button>
+                    </div>
+                    <div class="cmd-row cmd-secondary">
+                        <button id="h-cond-open" class="cond-open-btn" title="Open the strategy conditions editor">Conditions (${condBlocks.length})</button>
+                        ${isOnDicePage() ? '<button id="h-switch-ou" class="hud-switch-ou-btn">O/U</button>' : ''}
+                        <button id="h-stats-update" class="hud-update-btn" title="Read the current balance, recompute, and retune the loaded strategy">Update</button>
+                        <button id="h-reset" class="hud-reset-btn">RESET</button>
+                    </div>
                 </div>
             </div>
         `;
@@ -4603,9 +4773,15 @@ ${MOB_NU} table.dt-stats td:first-child { color: #aab6c9 !important; }`;
                    say it out loud instead of letting it look like it is working. */
                 const blindFor = isRapidFiring && !lastObservedBetTime && rapidFireStartedAt
                     ? Date.now() - rapidFireStartedAt : 0;
+                /* Warnings ONLY. This line used to restate the live bet, the base
+                   bet, the block count, wins and loss streak on every tick — all
+                   five of which the stats deck already shows, and the first two of
+                   which now sit in the command bar. It was pure noise stacked on
+                   top of the controls. Empty means nothing is wrong, and the CSS
+                   collapses it, so the bar sits directly under the stats. */
                 if (condNotice && Date.now() < condNotice.until) targetEl.innerHTML = condNotice.text;
-                else if (blindFor > 6000) targetEl.innerHTML = '<span style="color:#f87171">No bets detected — conditions are not advancing. Past-bets feed unreadable.</span>';
-                else targetEl.innerHTML = `bet: ${formatCurrency(condCurBet)} | base: ${formatCurrency(condBaseBet)} | blocks: ${condBlocks.length} | W: <span style="color:#00ff9d">${counter}</span> | LS: <span style="color:#f87171">${lossStreak}</span>`;
+                else if (blindFor > 6000) targetEl.innerHTML = '<span style="color:#f87171">No bets detected — conditions are not advancing.</span>';
+                else targetEl.textContent = '';
             }
             populateAdvancedStats();
         } else if (ACTIVE_MODE === 'smart') {

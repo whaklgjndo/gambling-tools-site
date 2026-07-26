@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Nuts Limbo (Target) — Desktop
 // @namespace    http://tampermonkey.net/
-// @version      3.29
+// @version      3.30
 // @description  Standalone single-tool build, extracted from the unified bundle.
 // @author       .
 // @match        https://nuts.gg/*
@@ -15,7 +15,7 @@
 (function () {
     'use strict';
 
-    console.log('%cNuts Limbo (Target) — Desktop — standalone build v3.29', 'color:#17c7b8;font-weight:800;font-size:13px');
+    console.log('%cNuts Limbo (Target) — Desktop — standalone build v3.30', 'color:#17c7b8;font-weight:800;font-size:13px');
 
     /* =========================================================
        UNIFIED LOADER — STORAGE KEYS & SETTINGS
@@ -917,6 +917,54 @@
         #ratchet-master-container .cond-actionbar label { color: #c9d1d9 !important; font-size: 12px !important; font-weight: 700 !important; text-transform: none !important; letter-spacing: 0 !important; }
         #ratchet-master-container .cond-actionbar .input-group,
         #ratchet-master-container .cond-actionbar .btn-group { flex: 0 0 auto; gap: 7px; }
+        /* Command bar — bet size and START, always on screen together.
+           Takes the full width of the wrapping action bar so it reads as one
+           surface rather than another chip in the row of inputs. */
+        #ratchet-master-container .cond-actionbar .hud-cmd-bar {
+            flex: 1 0 100%; display: flex; flex-direction: column; gap: 7px;
+            margin-top: 2px; padding-top: 9px;
+            border-top: 1px solid var(--hud-border-soft, rgba(255, 255, 255, 0.08));
+        }
+        #ratchet-master-container .cond-actionbar .hud-cmd-bar .cmd-row {
+            display: flex; gap: 7px; align-items: stretch;
+        }
+        /* Never wraps: these two are the point of the bar. */
+        #ratchet-master-container .cond-actionbar .hud-cmd-bar .cmd-primary { flex-wrap: nowrap; }
+        #ratchet-master-container .cond-actionbar .hud-cmd-bar .cmd-bet {
+            flex: 1 1 auto; min-width: 0; display: flex; align-items: center; gap: 5px;
+            padding: 0 7px 0 9px; border-radius: 4px;
+            background: #071824; border: 1px solid #2f4553;
+        }
+        #ratchet-master-container .cond-actionbar .hud-cmd-bar .cmd-bet-label {
+            flex: 0 0 auto; font-size: 9px; font-weight: 800;
+            letter-spacing: 0.12em; opacity: 0.6;
+        }
+        /* Overrides the fixed 108px above: an 8dp SOL figure must never be the
+           thing that gets truncated, so the amount takes the slack in the row. */
+        #ratchet-master-container .cond-actionbar .hud-cmd-bar .cmd-bet input[type="number"] {
+            flex: 1 1 auto; width: auto; min-width: 0;
+            background: transparent; border: 0; box-shadow: none;
+            font-size: 13px; font-weight: 700; font-variant-numeric: tabular-nums;
+            text-align: right; padding: 8px 2px;
+        }
+        #ratchet-master-container .cond-actionbar .hud-cmd-bar .cmd-bet input[type="number"]:focus {
+            border: 0; box-shadow: none;
+        }
+        #ratchet-master-container .cond-actionbar .hud-cmd-bar .cmd-bet .quick-btn {
+            flex: 0 0 auto; min-width: 30px; padding: 5px 8px; font-size: 11px; font-weight: 800;
+        }
+        #ratchet-master-container .cond-actionbar .hud-cmd-bar .cmd-primary > .hud-rapid-btn {
+            flex: 0 0 34%; min-height: 40px; font-size: 13px; font-weight: 900; letter-spacing: 0.08em;
+        }
+        /* Wraps freely — it sits BELOW the primary row, so wrapping can never
+           displace START. */
+        #ratchet-master-container .cond-actionbar .hud-cmd-bar .cmd-secondary { flex-wrap: wrap; }
+        #ratchet-master-container .cond-actionbar .hud-cmd-bar .cmd-secondary > button {
+            flex: 1 1 auto; min-width: 78px; min-height: 30px; padding: 0 10px;
+            font-size: 11px; font-weight: 800; white-space: nowrap;
+        }
+        /* Nothing to report = no strip. In cond mode this carries warnings only. */
+        #ratchet-master-container .cond-actionbar .status-bar:empty { display: none; }
         #ratchet-master-container .cond-actionbar input[type="number"] { width: 108px; background: #071824; border: 1px solid #2f4553; border-radius: 3px; color: #c9d1d9;
             font-family: "Segoe UI", -apple-system, sans-serif; font-size: 12px; font-weight: 400; text-align: left; padding: 5px 8px; box-shadow: inset 1px 1px 2px rgba(0,0,0,0.4); }
         #ratchet-master-container .cond-actionbar input[type="number"]:focus { border-color: #c9d1d9; box-shadow: 0 0 0 1px #c9d1d9; }
@@ -2297,12 +2345,11 @@
         return `
             <div class="hud-shell">
                 <div class="cond-actionbar hud-panel">
-                    <div class="input-group">
-                        <label>Base bet</label>
-                        <input id="h-cond-base" type="number" step="0.00000001" value="${condBaseBet.toFixed(8)}">
-                        <button id="h-cond-double" class="quick-btn">2x</button>
-                        <button id="h-cond-half" class="quick-btn">1/2</button>
-                    </div>
+                    <!-- Base bet is NOT here any more: it sits in the pinned
+                         command bar at the bottom of this panel, beside START, so
+                         the bet size and the button that commits it are always on
+                         screen together instead of being separated by six other
+                         inputs and a status line restating both. -->
                     <div class="input-group">
                         <label>Bal divisor</label>
                         <input id="h-stats-bet-div" type="number" step="any" min="1" title="Balance ÷ this = bet size (higher = smaller bets)">
@@ -2335,13 +2382,29 @@
                         <label>🔊 <span id="h-stats-vol-val">${condVolume}</span></label>
                         <input type="range" id="h-stats-vol" min="0" max="100" step="1" value="${condVolume}">
                     </div>
-                    <div class="status-bar" id="h-target">bet: ${formatCurrency(condBaseBet)} | conditions: ${condBlocks.length}</div>
-                    <div class="btn-group">
-                        <button id="h-cond-open" class="cond-open-btn" title="Open the strategy conditions editor">Conditions (${condBlocks.length})</button>
-                        <button id="h-stats-update" class="hud-update-btn" title="Read the current balance, recompute, and retune the loaded strategy">UPDATE</button>
-                        <button id="h-reset" class="hud-reset-btn">RESET</button>
-                        ${isOnDicePage() ? '<button id="h-switch-ou" class="hud-switch-ou-btn">Switch O/U</button>' : ''}
-                        <button id="h-rapid-toggle" class="hud-rapid-btn start">START</button>
+                    <!-- Warnings only, and collapsed entirely when empty. -->
+                    <div class="status-bar" id="h-target"></div>
+                    <!-- Always-visible command bar. Same ids as before, so every
+                         listener and updateUI() lookup keeps working — the elements
+                         are moved, never duplicated. The primary row (bet size +
+                         START) cannot wrap; the secondary actions wrap below it, so
+                         a narrow panel can never push START out of reach. -->
+                    <div class="hud-cmd-bar">
+                        <div class="cmd-row cmd-primary">
+                            <div class="cmd-bet">
+                                <span class="cmd-bet-label">BET</span>
+                                <button id="h-cond-half" class="quick-btn">½</button>
+                                <input id="h-cond-base" type="number" step="0.00000001" value="${condBaseBet.toFixed(8)}">
+                                <button id="h-cond-double" class="quick-btn">2x</button>
+                            </div>
+                            <button id="h-rapid-toggle" class="hud-rapid-btn start">START</button>
+                        </div>
+                        <div class="cmd-row cmd-secondary">
+                            <button id="h-cond-open" class="cond-open-btn" title="Open the strategy conditions editor">Conditions (${condBlocks.length})</button>
+                            ${isOnDicePage() ? '<button id="h-switch-ou" class="hud-switch-ou-btn">O/U</button>' : ''}
+                            <button id="h-stats-update" class="hud-update-btn" title="Read the current balance, recompute, and retune the loaded strategy">UPDATE</button>
+                            <button id="h-reset" class="hud-reset-btn">RESET</button>
+                        </div>
                     </div>
                 </div>
                 <div class="hud-body">
@@ -3237,8 +3300,14 @@
         } else if (ACTIVE_MODE === 'cond') {
             const targetEl = document.getElementById('h-target');
             if (targetEl) {
+                /* Warnings ONLY. This line used to restate the live bet, the base
+                   bet, the block count, wins and loss streak on every tick — all
+                   five already shown by the stats grid, and the first two now in
+                   the command bar. It was noise sitting directly on top of the
+                   controls. Empty means nothing is wrong, and the CSS collapses
+                   it entirely. */
                 if (condNotice && Date.now() < condNotice.until) targetEl.innerHTML = condNotice.text;
-                else targetEl.innerHTML = `bet: ${formatCurrency(lastPlacedBet)} | base: ${formatCurrency(condBaseBet)} | conditions: ${condBlocks.length} | Wins: <span style="color:var(--hud-positive)">${counter}</span> | LossStreak: <span style="color:var(--hud-negative)">${lossStreak}</span>`;
+                else targetEl.textContent = '';
             }
             /* Repaint the stat rows for the selected scope (Session or Cycle).
                These ids were already written above with session values, so this

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Nuts Auto-Vault — Desktop
 // @namespace    http://tampermonkey.net/
-// @version      3.29
+// @version      3.30
 // @description  Standalone single-tool build, extracted from the unified bundle.
 // @author       .
 // @match        https://nuts.gg/*
@@ -15,7 +15,7 @@
 (function () {
     'use strict';
 
-    console.log('%cNuts Auto-Vault — Desktop — standalone build v3.29', 'color:#17c7b8;font-weight:800;font-size:13px');
+    console.log('%cNuts Auto-Vault — Desktop — standalone build v3.30', 'color:#17c7b8;font-weight:800;font-size:13px');
 
     /* =========================================================
        UNIFIED LOADER — STORAGE KEYS & SETTINGS

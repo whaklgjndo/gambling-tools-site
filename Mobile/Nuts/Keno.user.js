@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Nuts Keno — Mobile
 // @namespace    http://tampermonkey.net/
-// @version      5.99
+// @version      6.00
 // @description  Standalone single-tool mobile build, extracted from the unified mobile bundle.
 // @author       .
 // @match        https://nuts.gg/*
@@ -14,7 +14,7 @@
 (function () {
     'use strict';
 
-    try { console.log('[Nuts Keno — Mobile] standalone build v5.99'); } catch (e) {}
+    try { console.log('[Nuts Keno — Mobile] standalone build v6.00'); } catch (e) {}
 
 
     try { console.log('[unified-mobile] boot v5.64 — DiceTool.exe replica UI for the dice tool (Calculator / Easy Mode / Strategy Finder / Results / Settings)'); } catch (e) {}
@@ -378,7 +378,17 @@
         return isNuts() && !isUSDDisplayMode() ? '0.00000001' : '0.01';
     }
     function typeIntoInput(inp, value) {
-        inp.focus();
+        /* Focus is unavoidable: execCommand('insertText') only produces the real
+           input events a React-controlled field needs if the field is focused.
+           But focusing the NATIVE wager input makes the browser scroll it into
+           view, and on a phone that native column sits below the HUD overlay — so
+           every setBet() threw the page to the bottom of the screen. setBet() runs
+           on START and again after every single bet, so a run yanked the scroll
+           continuously and the HUD was unusable.
+           preventScroll covers the focus itself; the explicit restore covers
+           select()/blur() and any engine that ignores the option. */
+        const sx = window.scrollX, sy = window.scrollY;
+        try { inp.focus({ preventScroll: true }); } catch (e) { inp.focus(); }
         try {
             inp.select();
             document.execCommand('selectAll', false, null);
@@ -390,6 +400,7 @@
         }
         inp.dispatchEvent(new Event('change', { bubbles: true }));
         inp.blur();
+        if (window.scrollX !== sx || window.scrollY !== sy) window.scrollTo(sx, sy);
     }
 
     /* ============================================================
