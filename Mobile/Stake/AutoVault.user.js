@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Stake Auto-Vault — Mobile
 // @namespace    http://tampermonkey.net/
-// @version      6.01
+// @version      6.02
 // @description  Standalone single-tool mobile build, extracted from the unified mobile bundle.
 // @author       .
 // @match        https://stake.com/*
@@ -22,7 +22,7 @@
 (function () {
     'use strict';
 
-    try { console.log('[Stake Auto-Vault — Mobile] standalone build v6.01'); } catch (e) {}
+    try { console.log('[Stake Auto-Vault — Mobile] standalone build v6.02'); } catch (e) {}
 
 
     try { console.log('[unified-mobile] boot v5.64 — DiceTool.exe replica UI for the dice tool (Calculator / Easy Mode / Strategy Finder / Results / Settings)'); } catch (e) {}
@@ -3666,7 +3666,15 @@
                 // shows up, mount it, build the Stats tab, and wire its controls.
                 const dp = document.getElementById('dt-aio-panel');
                 const hc = document.getElementById('hud-content');
-                if (dp && hc && (dp.parentElement !== hc || !document.getElementById('h-cond-base'))) {
+                /* Sentinel for "the Stats tab is already built". It used to be
+                   #h-cond-base — which was DELETED when the bet field was removed,
+                   so this test became permanently true and the tab was rebuilt on
+                   every 600ms tick, appending another command bar each time and
+                   stacking five-plus copies of START / Conditions / O/U / RESET
+                   down the panel. Key it on the command bar itself: it is the thing
+                   ensureNutsStatsTab() lifts into the panel, so its presence is
+                   exactly the condition being asked about. */
+                if (dp && hc && (dp.parentElement !== hc || !dp.querySelector('.hud-cmd-bar'))) {
                     mountDicePanel();
                     if (ensureNutsStatsTab()) attachListeners();
                 }

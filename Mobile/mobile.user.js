@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mobile
 // @namespace    https://whaklgjndo.github.io/gambling-tools/
-// @version      6.01
+// @version      6.02
 // @description  .
 // @author       .
 // @match        https://stake.com/*
@@ -4021,6 +4021,12 @@
            flex column, .dt-body takes the leftover space and scrolls, and this row
            is always on screen. It also survives tab switches, so START stays
            reachable from Calculator / Strategy Finder too. */
+        /* Lifting the bar out of the scroller MOVES it, so re-rendering
+           statsPanel.innerHTML above cannot remove the copy already sitting in the
+           panel — every extra call would leave another bar behind. Clear the
+           previously lifted ones first, so this stays idempotent no matter how
+           often it is called. */
+        panel.querySelectorAll(':scope > .hud-cmd-bar').forEach(el => el.remove());
         const cmdBar = statsPanel.querySelector('.hud-cmd-bar');
         if (cmdBar) panel.appendChild(cmdBar);
         tabsNav.querySelectorAll('.dt-tab-btn').forEach(b => b.classList.toggle('active', b === statsBtn));
@@ -19571,7 +19577,15 @@ function tool_stake_7day_tracker() {
                 // shows up, mount it, build the Stats tab, and wire its controls.
                 const dp = document.getElementById('dt-aio-panel');
                 const hc = document.getElementById('hud-content');
-                if (dp && hc && (dp.parentElement !== hc || !document.getElementById('h-cond-base'))) {
+                /* Sentinel for "the Stats tab is already built". It used to be
+                   #h-cond-base — which was DELETED when the bet field was removed,
+                   so this test became permanently true and the tab was rebuilt on
+                   every 600ms tick, appending another command bar each time and
+                   stacking five-plus copies of START / Conditions / O/U / RESET
+                   down the panel. Key it on the command bar itself: it is the thing
+                   ensureNutsStatsTab() lifts into the panel, so its presence is
+                   exactly the condition being asked about. */
+                if (dp && hc && (dp.parentElement !== hc || !dp.querySelector('.hud-cmd-bar'))) {
                     mountDicePanel();
                     if (ensureNutsStatsTab()) attachListeners();
                 }
