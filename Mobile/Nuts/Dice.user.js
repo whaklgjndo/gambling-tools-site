@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Nuts Dice — Mobile
 // @namespace    http://tampermonkey.net/
-// @version      5.98
+// @version      5.99
 // @description  Standalone single-tool mobile build, extracted from the unified mobile bundle.
 // @author       .
 // @match        https://nuts.gg/*
@@ -14,7 +14,7 @@
 (function () {
     'use strict';
 
-    try { console.log('[Nuts Dice — Mobile] standalone build v5.98'); } catch (e) {}
+    try { console.log('[Nuts Dice — Mobile] standalone build v5.99'); } catch (e) {}
 
 
     try { console.log('[unified-mobile] boot v5.64 — DiceTool.exe replica UI for the dice tool (Calculator / Easy Mode / Strategy Finder / Results / Settings)'); } catch (e) {}
@@ -555,6 +555,22 @@
                            the authoritative stream. Guarded by typeof because
                            AutoVault-only builds do not include the HUD symbols. */
                         try { if (typeof onNutsSocketBalance === 'function') onNutsSocketBalance(Number(d.balance.after)); } catch (e) {}
+                    }
+                    /* THE authoritative per-bet signal. Captured from the live
+                       logged-in socket 2026-07-26:
+                         {"myGames":[{"__typename":"SinglePlayerGameBet",
+                           "id":"1651571395","profit":-80,"isWin":false,"wager":80,
+                           "multiplier":4,"details":{"targetMultiplier":4,
+                           "result":1.02,"__typename":"TargetGameDetails"},...}]}
+                       An exact id (so dedup is perfect) and an explicit isWin (so
+                       the outcome is never inferred from the sign of a balance
+                       delta). One balance frame follows each of these ~1ms later,
+                       1:1, which also proves nuts.gg does NOT debit the stake and
+                       credit the payout separately. */
+                    if ('myGames' in d && Array.isArray(d.myGames)) {
+                        for (const b of d.myGames) {
+                            try { if (typeof onNutsGameBet === 'function') onNutsGameBet(b); } catch (e) {}
+                        }
                     }
                     if ('vaultBalance' in d && d.vaultBalance && d.vaultBalance.after !== undefined) {
                         window.__nutsAvVaultBalance = Number(d.vaultBalance.after);
@@ -2762,44 +2778,70 @@
      *
      * The mobile layout has no rolling bet feed, so `.sc-9b1418e2-1` stays empty
      * forever: Bets 0 / Wagered 0 while money moved, and runConditionEngine()
-     * never fired because it only runs from processNewBet(). Balance deltas off
-     * the socket are the only signal available.
+     * never fired because it only runs from processNewBet().
      *
-     * Win/loss comes from the SIGN of the delta: a dice loss is exactly -stake, a
-     * win is +stake*(multiplier-1), so positive means won. Deltas that cannot be
-     * this bet (deposits, faucet claims, race payouts) are ignored by magnitude.
-     * If the DOM feed ever does report a bet, that wins and this defers, so no
-     * double counting on layouts where the feed works. */
+     * The socket's `myGames` frames are the authoritative source — each one is a
+     * settled bet with an exact id and an explicit isWin, so nothing has to be
+     * inferred from the sign of a balance delta. Captured live 2026-07-26:
+     *   {"myGames":[{"__typename":"SinglePlayerGameBet","id":"1651571395",
+     *     "profit":-80,"isWin":false,"wager":80,"multiplier":4,
+     *     "details":{"targetMultiplier":4,"result":1.02,
+     *                "__typename":"TargetGameDetails"},...}]}
+     *
+     * The amount deliberately still comes from getCurrentBet(), NOT from the
+     * frame's `wager`. The socket's numbers are in some internal unit, not SOL:
+     * a balance of 74128.498 units sat alongside a pill reading 0.00000021 SOL,
+     * which is ~350x off any clean power of ten, so the scale is not established.
+     * id and isWin are unit-free, and those are the two things that were wrong. */
     let _nutsSockBal = null;
+    let lastSocketBetTime = 0;
+    const _nutsSeenGameIds = [];
+    /* A myGames frame reports whatever game the account is playing, which is not
+       necessarily the page this HUD is on — a second session betting Target while
+       the dice HUD is open would otherwise inflate the dice counters. Skip a frame
+       only when its typename names a game that clearly ISN'T the current page; an
+       unrecognised typename is assumed to be the current game, so a naming change
+       degrades to "counted" rather than "silently ignored". Only TargetGameDetails
+       is confirmed from live capture — the rest are best-effort. */
+    const NUTS_GAME_TYPENAME_PATHS = [
+        [/target/i, /\/target(?:\/|$|\?|#)/i],
+        [/dice/i, /\/dice(?:\/|$|\?|#)/i],
+        [/limbo/i, /\/limbo(?:\/|$|\?|#)/i],
+        [/mines/i, /\/mines(?:\/|$|\?|#)/i],
+        [/keno/i, /\/keno(?:\/|$|\?|#)/i],
+        [/plinko/i, /\/plinko(?:\/|$|\?|#)/i],
+    ];
+    function onNutsGameBet(bet) {
+        if (!isNuts() || !bet || typeof bet.isWin !== 'boolean') return;
+        const id = String(bet.id == null ? '' : bet.id);
+        if (!id || _nutsSeenGameIds.indexOf(id) !== -1) return;
+        const typename = (bet.details && bet.details.__typename) || bet.__typename || '';
+        const path = location.pathname || '';
+        for (const [nameRe, pathRe] of NUTS_GAME_TYPENAME_PATHS) {
+            if (nameRe.test(typename)) {
+                if (!pathRe.test(path)) return;
+                break;
+            }
+        }
+        _nutsSeenGameIds.push(id);
+        if (_nutsSeenGameIds.length > 400) _nutsSeenGameIds.splice(0, 200);
+        lastSocketBetTime = Date.now();
+        try { noteBalanceHeartbeat(); } catch (e) {}
+        // Same downstream path as a DOM-observed bet: counters, handleBetResult,
+        // the IOW/cond engines and the autostops all live in processNewBet().
+        processNewBet(null, null, bet.isWin);
+    }
+    /* Balance frames are a liveness heartbeat only. They were previously used for
+       bet detection via the delta's sign, but that could never fire: the guard
+       compared a socket-unit delta (e.g. 240) against `betAmt * 500` in SOL
+       (5e-6), so every real bet was discarded by magnitude. myGames carries the
+       result properly, and the DOM balance still backs it up. */
     function onNutsSocketBalance(after) {
         if (!isNuts() || !isFinite(after)) return;
         if (_nutsSockBal === null) { _nutsSockBal = after; return; }
-        const delta = after - _nutsSockBal;
+        if (Math.abs(after - _nutsSockBal) < 1e-12) return;
         _nutsSockBal = after;
-        if (Math.abs(delta) < 1e-12) return;
-        // Defer only if a TILE was just counted (that path has the real result).
-        if (Date.now() - lastTileBetTime < 1200) return;
-        const betAmt = getCurrentBet() || condCurBet || minBaseBet;
-        if (!isFinite(betAmt) || betAmt <= 0) return;
-        // A single dice round cannot move the balance by more than a large
-        // multiple of the stake; anything bigger is not this bet.
-        if (Math.abs(delta) > betAmt * 500) return;
-        const won = delta > 0;
-        lastObservedBetTime = Date.now();
-        rapidBlockedSince = 0;
-        totalBets++;
-        handleBetResult(won, betAmt);
-        if (ACTIVE_MODE === 'cond') {
-            if (won) { lossStreak = 0; counter++; condPlayWinSound(); } else { lossStreak++; }
-            condTrackCycle();
-            if (isRapidFiring) runConditionEngine(won);
-            if (isRapidFiring && condWsStopOn && curWinStreak >= condWsTarget) {
-                stopRapidFire();
-                condNotice = { text: `Stopped: ${curWinStreak} win streak reached.`, until: Date.now() + 5000 };
-            }
-        }
-        if (isRapidFiring && autoStopBalance && getCurrentBalance() >= autoStopBalance) stopRapidFire();
-        updateUI();
+        try { noteBalanceHeartbeat(); } catch (e) {}
     }
     /* Bet detection from the BALANCE, for Nuts.
      *
@@ -2830,6 +2872,13 @@
         _nutsBalSeen = bal;
         // Defer only if a TILE was just counted (that path has the real result).
         if (Date.now() - lastTileBetTime < 1200) return;
+        /* Defer to the socket too. myGames gives an exact id and isWin, so while
+           those frames are arriving this inferred-from-the-sign path must stay out
+           of the way or every bet is counted twice. The window is generous because
+           the balance write lands ~1ms after the myGames frame but the DOM pill can
+           lag it, and it re-arms on every socket bet — so this only takes over once
+           the socket has genuinely gone quiet. */
+        if (Date.now() - lastSocketBetTime < 4000) return;
         const betAmt = getCurrentBet() || minBaseBet;
         if (!isFinite(betAmt) || betAmt <= 0) return;
         // One dice round cannot move the balance by more than a large multiple of

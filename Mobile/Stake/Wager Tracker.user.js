@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Stake Wager Tracker — Mobile
 // @namespace    http://tampermonkey.net/
-// @version      5.98
+// @version      5.99
 // @description  Standalone single-tool mobile build, extracted from the unified mobile bundle.
 // @author       .
 // @match        https://stake.com/*
@@ -22,7 +22,7 @@
 (function () {
     'use strict';
 
-    try { console.log('[Stake Wager Tracker — Mobile] standalone build v5.98'); } catch (e) {}
+    try { console.log('[Stake Wager Tracker — Mobile] standalone build v5.99'); } catch (e) {}
 
 
     try { console.log('[unified-mobile] boot v5.64 — DiceTool.exe replica UI for the dice tool (Calculator / Easy Mode / Strategy Finder / Results / Settings)'); } catch (e) {}
@@ -562,6 +562,22 @@
                            the authoritative stream. Guarded by typeof because
                            AutoVault-only builds do not include the HUD symbols. */
                         try { if (typeof onNutsSocketBalance === 'function') onNutsSocketBalance(Number(d.balance.after)); } catch (e) {}
+                    }
+                    /* THE authoritative per-bet signal. Captured from the live
+                       logged-in socket 2026-07-26:
+                         {"myGames":[{"__typename":"SinglePlayerGameBet",
+                           "id":"1651571395","profit":-80,"isWin":false,"wager":80,
+                           "multiplier":4,"details":{"targetMultiplier":4,
+                           "result":1.02,"__typename":"TargetGameDetails"},...}]}
+                       An exact id (so dedup is perfect) and an explicit isWin (so
+                       the outcome is never inferred from the sign of a balance
+                       delta). One balance frame follows each of these ~1ms later,
+                       1:1, which also proves nuts.gg does NOT debit the stake and
+                       credit the payout separately. */
+                    if ('myGames' in d && Array.isArray(d.myGames)) {
+                        for (const b of d.myGames) {
+                            try { if (typeof onNutsGameBet === 'function') onNutsGameBet(b); } catch (e) {}
+                        }
                     }
                     if ('vaultBalance' in d && d.vaultBalance && d.vaultBalance.after !== undefined) {
                         window.__nutsAvVaultBalance = Number(d.vaultBalance.after);
