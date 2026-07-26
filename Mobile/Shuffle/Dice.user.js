@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Shuffle Dice — Mobile
 // @namespace    http://tampermonkey.net/
-// @version      5.96
+// @version      5.97
 // @description  Standalone single-tool mobile build, extracted from the unified mobile bundle.
 // @author       .
 // @match        https://shuffle.com/*
@@ -14,7 +14,7 @@
 (function () {
     'use strict';
 
-    try { console.log('[Shuffle Dice — Mobile] standalone build v5.96'); } catch (e) {}
+    try { console.log('[Shuffle Dice — Mobile] standalone build v5.97'); } catch (e) {}
 
 
     try { console.log('[unified-mobile] boot v5.64 — DiceTool.exe replica UI for the dice tool (Calculator / Easy Mode / Strategy Finder / Results / Settings)'); } catch (e) {}
@@ -316,18 +316,24 @@
         const bal = findBalanceContainer();
         if (!bal) return null;
         const innerSpan = bal.querySelector('span[title*="$"][title*="SOL"]');
+        /* nuts.gg renders "0.00006839 SOL ($0.01)" — SOL first, USD in parentheses.
+           The old pattern pinned the opposite order ("$0.01 (0.00006839 SOL)") and
+           so returned null on the live site. In USD display mode that made
+           displayToSol() an identity function, i.e. a dollar figure was used as a
+           SOL amount. Pull the two numbers out independently instead of fixing an
+           order. Verified against the live pill 2026-07-26. */
         const candidates = [
+            bal.textContent || '',
             innerSpan ? (innerSpan.getAttribute('title') || '') : '',
-            bal.getAttribute('title') || '',
-            bal.textContent || ''
+            bal.getAttribute('title') || ''
         ];
         for (const t of candidates) {
-            const m = t.match(/\$\s*([\d,]+\.?\d*)\s*\(([\d,]+\.?\d*)\s*SOL\)/);
-            if (m) {
-                const usd = parseFloat(m[1].replace(/,/g, ''));
-                const sol = parseFloat(m[2].replace(/,/g, ''));
-                if (sol > 0 && isFinite(usd) && isFinite(sol)) return usd / sol;
-            }
+            const sm = t.match(/([\d,]+\.?\d*)\s*SOL/i);
+            const um = t.match(/\$\s*([\d,]+\.?\d*)/);
+            if (!sm || !um) continue;
+            const sol = parseFloat(sm[1].replace(/,/g, ''));
+            const usd = parseFloat(um[1].replace(/,/g, ''));
+            if (sol > 0 && usd > 0 && isFinite(usd) && isFinite(sol)) return usd / sol;
         }
         return null;
     }
@@ -1751,18 +1757,31 @@
        ============================================================ */
     function getCurrentBalance() {
         if (isNuts()) {
-            // Always returns SOL. Outer title "X SOL" is invariant to display mode.
+            // Always returns SOL. The outer title reads "X SOL" and is invariant to
+            // display mode — but nuts.gg writes that attribute ONCE, at page load,
+            // and never updates it, so it is also invariant to the BALANCE.
+            // Measured on the live logged-in page 2026-07-26: title stuck at
+            // 0.00006839 while the visible text moved 0.00003647 -> 0.00004719.
+            // Reading the title first made every balance delta exactly zero, so no
+            // bet was ever detected and Bets/Wagered/W-L sat at 0 forever. The
+            // visible text is the only live source; the two title attributes are
+            // last-resort fallbacks for the skeleton state before the pill renders.
             const bal = findBalanceContainer();
             if (!bal) return lastKnownBalance || 0;
             const innerSpan = bal.querySelector('span[title*="SOL"]');
             const candidates = [
-                bal.getAttribute('title') || '',
+                bal.textContent || '',
                 innerSpan ? (innerSpan.getAttribute('title') || '') : '',
-                bal.textContent || ''
+                bal.getAttribute('title') || ''
             ];
-            const source = candidates.find(t => /SOL/i.test(t)) || candidates[0];
-            const match = source.match(/([\d,]+(?:\.\d+)?)\s*SOL/i) || source.match(/([\d,]+(?:\.\d+)?)/);
-            if (match) {
+            for (const raw of candidates) {
+                if (!raw.trim()) continue;
+                // Strip USD sub-labels ("$0.00", "($0.01)") first so the fiat figure
+                // can never be parsed as the SOL amount — the narrow phone header
+                // renders "0.00004719$0.00" with no "SOL" word anywhere in the text.
+                const src = raw.replace(/\(\s*\$[\d.,]+\s*\)/g, ' ').replace(/\$\s*[\d.,]+/g, ' ');
+                const match = src.match(/([\d,]+(?:\.\d+)?)\s*SOL/i) || src.match(/([\d,]+(?:\.\d+)?)/);
+                if (!match) continue;
                 const val = parseFloat(match[1].replace(/,/g, ''));
                 if (isFinite(val)) { lastKnownBalance = val; return val; }
             }

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Nuts Blackjack — Desktop
 // @namespace    http://tampermonkey.net/
-// @version      3.28
+// @version      3.29
 // @description  Standalone single-tool build, extracted from the unified bundle.
 // @author       .
 // @match        https://nuts.gg/*
@@ -15,7 +15,7 @@
 (function () {
     'use strict';
 
-    console.log('%cNuts Blackjack — Desktop — standalone build v3.28', 'color:#17c7b8;font-weight:800;font-size:13px');
+    console.log('%cNuts Blackjack — Desktop — standalone build v3.29', 'color:#17c7b8;font-weight:800;font-size:13px');
 
     /* =========================================================
        UNIFIED LOADER — STORAGE KEYS & SETTINGS

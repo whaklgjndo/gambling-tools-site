@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Nuts Mines — Mobile
 // @namespace    http://tampermonkey.net/
-// @version      5.96
+// @version      5.97
 // @description  Standalone single-tool mobile build, extracted from the unified mobile bundle.
 // @author       .
 // @match        https://nuts.gg/*
@@ -14,7 +14,7 @@
 (function () {
     'use strict';
 
-    try { console.log('[Nuts Mines — Mobile] standalone build v5.96'); } catch (e) {}
+    try { console.log('[Nuts Mines — Mobile] standalone build v5.97'); } catch (e) {}
 
 
     try { console.log('[unified-mobile] boot v5.64 — DiceTool.exe replica UI for the dice tool (Calculator / Easy Mode / Strategy Finder / Results / Settings)'); } catch (e) {}
@@ -313,18 +313,24 @@
         const bal = findBalanceContainer();
         if (!bal) return null;
         const innerSpan = bal.querySelector('span[title*="$"][title*="SOL"]');
+        /* nuts.gg renders "0.00006839 SOL ($0.01)" — SOL first, USD in parentheses.
+           The old pattern pinned the opposite order ("$0.01 (0.00006839 SOL)") and
+           so returned null on the live site. In USD display mode that made
+           displayToSol() an identity function, i.e. a dollar figure was used as a
+           SOL amount. Pull the two numbers out independently instead of fixing an
+           order. Verified against the live pill 2026-07-26. */
         const candidates = [
+            bal.textContent || '',
             innerSpan ? (innerSpan.getAttribute('title') || '') : '',
-            bal.getAttribute('title') || '',
-            bal.textContent || ''
+            bal.getAttribute('title') || ''
         ];
         for (const t of candidates) {
-            const m = t.match(/\$\s*([\d,]+\.?\d*)\s*\(([\d,]+\.?\d*)\s*SOL\)/);
-            if (m) {
-                const usd = parseFloat(m[1].replace(/,/g, ''));
-                const sol = parseFloat(m[2].replace(/,/g, ''));
-                if (sol > 0 && isFinite(usd) && isFinite(sol)) return usd / sol;
-            }
+            const sm = t.match(/([\d,]+\.?\d*)\s*SOL/i);
+            const um = t.match(/\$\s*([\d,]+\.?\d*)/);
+            if (!sm || !um) continue;
+            const sol = parseFloat(sm[1].replace(/,/g, ''));
+            const usd = parseFloat(um[1].replace(/,/g, ''));
+            if (sol > 0 && usd > 0 && isFinite(usd) && isFinite(sol)) return usd / sol;
         }
         return null;
     }
