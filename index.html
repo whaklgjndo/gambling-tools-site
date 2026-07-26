@@ -608,6 +608,40 @@
             </aside>
           </div>
         </article>
+
+        <!-- Perfect Blackjack -->
+        <article class="tool">
+          <div class="tool-head"><div class="tool-icon" aria-hidden="true">🃏</div><h3>Perfect Blackjack</h3></div>
+          <div class="tool-body">
+            <div class="tool-copy">
+            <div class="mode-h">For manual players</div>
+            <p>Blackjack has exactly one correct play for every hand you can be dealt, and it depends only on your cards and the dealer's upcard. The tool reads both and tells you what that play is — <b>Hit</b>, <b>Stand</b>, <b>Double</b> or <b>Split</b> — with a short reason underneath, so you can learn the chart as you go rather than memorising it first. Splits are handled too: it follows whichever hand you're currently playing. The panel sits in the game's own betting column, under the native controls, so nothing covers the table.</p>
+            <p>When the dealer shows an ace and the game offers you insurance, the panel tells you to decline. Insurance looks like protection but loses money over the long run every time, and it's the single most common way players give back their edge.</p>
+            <div class="mode-h">For auto players</div>
+            <p>Turn on <b>Auto-play</b> and the tool presses the correct button for you, at whatever delay you set. It only presses buttons the game has already enabled, and if the ideal move isn't offered — doubling after you've already hit, say — it falls back to the next-best legal move instead of stalling. <b>Auto-deal</b> is a separate switch and is off by default: it's the only setting that starts fresh hands, and so the only one that places a bet without you.</p>
+            <div class="mode-h">Table rules</div>
+            <p>You don't configure anything — the tool knows each site's rules and applies them automatically, then shows them in the panel so you can see what it's assuming. Stake and Shuffle both stand on soft 17 and allow doubling after a split; the strategy chart is set to match.</p>
+            <p class="credit">Every decision follows <a href="https://www.blackjackapprenticeship.com/blackjack-strategy-charts/" target="_blank" rel="noopener">Blackjack Apprenticeship's basic strategy charts</a> — the S17 chart by default, and their H17 chart when you tick the soft-17 box. Surrender isn't included because none of the three sites offer it.</p>
+            </div>
+          </div>
+        </article>
+
+        <!-- Moles -->
+        <article class="tool">
+          <div class="tool-head"><div class="tool-icon" aria-hidden="true">🕳️</div><h3>Moles</h3></div>
+          <div class="tool-body">
+            <div class="tool-copy">
+            <p class="plain">Stake's Moles, played for you. Pick how many moles to set and how many holes to open each round, and the tool runs it back until you tell it to stop.</p>
+            <div class="mode-h">Two ways to run it</div>
+            <p><b>DOM</b> mode clicks the real buttons on the page, with a randomised delay between rounds so it plays at a human pace. <b>API</b> mode talks to Stake directly and is far faster, with an optional multi-bet setting and its own rate-limit backoff. There's also a <b>Manual</b> mode that mirrors the game's own controls into the panel if you'd rather play the rounds yourself.</p>
+            <div class="mode-h">Bankroll controls</div>
+            <p>Raise or lower your bet by a percentage after each win or loss, or snap it back to your base bet. Set a <b>stop win</b> and <b>stop loss</b> and it closes the session out for you when either is hit.</p>
+            <div class="mode-h">While it runs</div>
+            <p>The board is replaced by an overlay showing each round as it happens: which hole was opened, where the moles were, the running multiplier, and your wagered / returned / P&nbsp;&amp;&nbsp;L, win rate and biggest hit. A sparkline tracks profit over the session, and you can export the whole run to CSV.</p>
+            <p class="credit">Moles was built by Zerocu.</p>
+            </div>
+          </div>
+        </article>
       </div>
     </section>
 

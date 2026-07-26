@@ -1,0 +1,1423 @@
+// ==UserScript==
+// @name         Nuts Mines — Desktop
+// @namespace    http://tampermonkey.net/
+// @version      3.28
+// @description  Standalone single-tool build, extracted from the unified bundle.
+// @author       .
+// @match        https://nuts.gg/*
+// @match        https://*.nuts.gg/*
+// @grant        GM_addStyle
+// @grant        unsafeWindow
+// @run-at       document-start
+// @noframes
+// ==/UserScript==
+
+(function () {
+    'use strict';
+
+    console.log('%cNuts Mines — Desktop — standalone build v3.28', 'color:#17c7b8;font-weight:800;font-size:13px');
+
+    /* =========================================================
+       UNIFIED LOADER — STORAGE KEYS & SETTINGS
+       --------------------------------------------------------
+       Settings layout: { [toolId]: boolean } stored as JSON in
+       localStorage under SETTINGS_KEY. Missing entries fall back
+       to tool.defaultEnabled (defaults to true).
+       ========================================================= */
+
+    const SETTINGS_KEY    = '__stake_nuts_unified_tools_v1__';
+    const PANEL_POS_KEY   = '__stake_nuts_unified_panel_pos_v1__';
+    const PANEL_OPEN_KEY  = '__stake_nuts_unified_panel_open_v1__';
+    const VISIBILITY_STYLE_ID = 'unified-tools-visibility-css';
+
+    /** Read tool-enable settings from localStorage. */
+    function loadSettings() {
+        try {
+            const raw = localStorage.getItem(SETTINGS_KEY);
+            if (!raw) return {};
+            const parsed = JSON.parse(raw);
+            return (parsed && typeof parsed === 'object') ? parsed : {};
+        } catch { return {}; }
+    }
+    /** Persist tool-enable settings to localStorage. */
+    function saveSettings(s) {
+        try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(s)); } catch {}
+    }
+    let settings = loadSettings();
+
+    /** True when the user has the tool enabled (or defaultEnabled if never set). */
+    function isEnabled(tool) {
+        if (Object.prototype.hasOwnProperty.call(settings, tool.id)) return !!settings[tool.id];
+        return tool.defaultEnabled !== false;
+    }
+    /** Look up a tool by id and check its enabled state. Used by tool
+     *  bodies (Stake/Shuffle IOW/Smart, Nuts IOW/Smart) to gate runtime
+     *  behavior per-URL without needing the tool object passed in. */
+    function isToolIdEnabled(toolId) {
+        const tool = TOOLS.find(t => t.id === toolId);
+        if (!tool) return true;
+        return isEnabled(tool);
+    }
+    /** Save the user's enable/disable choice. */
+    function setEnabled(toolId, enabled) {
+        settings[toolId] = !!enabled;
+        saveSettings(settings);
+    }
+
+    /* =========================================================
+       URL MATCHING
+       Mirrors Tampermonkey's `*` wildcard (matches any chars).
+       Each tool's regex list is compiled lazily and cached on
+       tool._matcher.
+       ========================================================= */
+
+    function makePatternMatcher(patterns) {
+        const regexes = patterns.map(p => {
+            let re = '';
+            for (const ch of p) {
+                if (ch === '*') re += '.*';
+                else if ('.+?^${}()|[]\\'.indexOf(ch) !== -1) re += '\\' + ch;
+                else re += ch;
+            }
+            return new RegExp('^' + re + '$');
+        });
+        return url => regexes.some(r => r.test(url));
+    }
+
+    function urlMatches(tool, url) {
+        if (!tool._matcher) tool._matcher = makePatternMatcher(tool.matches);
+        return tool._matcher(url);
+    }
+
+    /** True when at least one of the tool's match patterns covers the current
+     *  hostname (regardless of path). Used to scope URL-mismatch CSS so a
+     *  tool for site A doesn't accidentally hide site B's UI that shares an
+     *  element id (e.g. stake-mines and nuts-mines both use #mines-auto-gui). */
+    function isToolOnThisSite(tool) {
+        if (!tool._domainMatcher) {
+            // Strip everything after the host: https://stake.us/casino/games/dice*
+            // becomes https://stake.us/*. Handles subdomain wildcards like
+            // https://*.nuts.gg/* by keeping them intact (the matcher knows *).
+            const domainPatterns = tool.matches.map(p => {
+                const m = String(p).match(/^(https?:\/\/[^/]+)\//);
+                return m ? m[1] + '/*' : p;
+            });
+            tool._domainMatcher = makePatternMatcher(domainPatterns);
+        }
+        return tool._domainMatcher('https://' + location.hostname + '/');
+    }
+
+    /* =========================================================
+       TOOL EXECUTION
+       --------------------------------------------------------
+       Once a tool's URL matches, its body runs exactly once and
+       stays loaded for the lifetime of the page. The enable
+       toggle does NOT re-gate execution — disabled tools just
+       have their UI hidden via `applyToolVisibility` below. This
+       means re-enabling is instant: no remount, no replay.
+
+       Exception: tools with hijacksPage:true (IOW/Smart, Nuts
+       IOW/Smart) re-parent the site's native bet panel into
+       their own HUD. Hiding that container with display:none
+       would also hide the relocated bet panel and brick the
+       page. For those tools the disable gate is enforced at
+       run time and toggles trigger a page reload — see
+       buildPanel() in the Control Panel section.
+       ========================================================= */
+
+    /** Run a tool body, swallowing exceptions so one bad tool doesn't kill the rest. */
+    function safeRun(tool) {
+        try {
+            tool._fn();
+            tool._ran = true;
+        } catch (e) {
+            console.error('[UnifiedTools] error running ' + tool.id + ':', e);
+        }
+    }
+
+    /** Execute a tool if it matches the current URL and is in the right boot phase. */
+    function maybeRun(tool, phase) {
+        if (tool._ran) return;
+        if (tool.runAt !== phase) return;
+        if (!urlMatches(tool, location.href)) return;
+        if (tool.hijacksPage && !isEnabled(tool)) return;
+        safeRun(tool);
+    }
+
+    /* =========================================================
+       PER-TOOL UI VISIBILITY
+       --------------------------------------------------------
+       Disabled tools aren't unloaded — we just inject a CSS
+       rule that hides every selector listed in tool.uiSelectors
+       when <html> carries the tool's "disabled" class. Toggling
+       back on removes the class instantly.
+
+       Skipped for hijacksPage tools (see TOOL EXECUTION above).
+       ========================================================= */
+
+    /** Build the per-tool disabled-class name (sanitized for CSS). */
+    function disabledClass(toolId) {
+        return 'uts-disabled-' + toolId.replace(/[^a-z0-9_-]/gi, '-');
+    }
+
+    /** Build the per-tool URL-mismatch class name. Applied when the user has
+     *  SPA-navigated away from a tool's matched game URL — hides the tool's UI
+     *  so its overlay doesn't sit on top of an unrelated page. */
+    function urlMismatchClass(toolId) {
+        return 'uts-url-mismatch-' + toolId.replace(/[^a-z0-9_-]/gi, '-');
+    }
+
+    /** Inject the visibility stylesheet. Idempotent; safe to call repeatedly. */
+    function injectVisibilityCss() {
+        if (document.getElementById(VISIBILITY_STYLE_ID)) return;
+        // Wait for <head> to exist — at document-start it might not yet.
+        if (!document.head && !document.documentElement) return;
+        const HIDE_PROPS = ' { display: none !important; visibility: hidden !important; pointer-events: none !important; }';
+        const css = TOOLS
+            .filter(t => Array.isArray(t.uiSelectors) && t.uiSelectors.length)
+            .map(t => {
+                const disSel = t.uiSelectors.map(s => 'html.' + disabledClass(t.id) + ' ' + s).join(',\n');
+                const urlSel = t.uiSelectors.map(s => 'html.' + urlMismatchClass(t.id) + ' ' + s).join(',\n');
+                return disSel + HIDE_PROPS + '\n' + urlSel + HIDE_PROPS;
+            }).join('\n');
+        const style = document.createElement('style');
+        style.id = VISIBILITY_STYLE_ID;
+        style.textContent = css;
+        (document.head || document.documentElement).appendChild(style);
+    }
+
+    /** Toggle disabled + url-mismatch classes for a single tool based on
+     *  current enable state and URL. Hides the tool's UI when:
+     *   - the tool is disabled via the control panel, OR
+     *   - the user is on the tool's site but SPA-navigated off the tool's
+     *     matched game URL (e.g. moved from /mines to the lobby). */
+    function applyToolVisibility(tool) {
+        if (!tool || !tool.id) return;
+        // hijacksPage tools manage their own visibility via the run gate +
+        // page reload. Skipping here avoids the case where hiding the HUD
+        // container would also hide the native bet panel relocated inside.
+        if (tool.hijacksPage) return;
+        const disCls = disabledClass(tool.id);
+        const urlCls = urlMismatchClass(tool.id);
+        const root = document.documentElement;
+        if (!root) return;
+        const onSameSite = isToolOnThisSite(tool);
+        const onMatchingUrl = urlMatches(tool, location.href);
+        // Disabled class: only on matching URL when tool is disabled. Several
+        // tools share UI element IDs across sites (e.g. stake-keno and
+        // nuts-keno both build #keno-preset-gui; stake-mines and nuts-mines
+        // both build #mines-auto-gui) — applying the disable class
+        // unconditionally would hide a different site's UI by mistake.
+        if (onMatchingUrl && !isEnabled(tool)) {
+            root.classList.add(disCls);
+        } else {
+            root.classList.remove(disCls);
+        }
+        // URL-mismatch class: applied only when we're on the tool's SITE but
+        // off its matched game URL — so it hides the tool's UI after SPA nav
+        // away from the game. CRITICAL: skip the class entirely when we're on
+        // a different site, otherwise nuts-mines's url-mismatch rule would
+        // hide #mines-auto-gui (used by both stake-mines and nuts-mines)
+        // while the user is sitting on stake.com/mines.
+        if (Array.isArray(tool.uiSelectors) && tool.uiSelectors.length) {
+            if (onSameSite && !onMatchingUrl) {
+                root.classList.add(urlCls);
+            } else {
+                root.classList.remove(urlCls);
+            }
+        }
+    }
+
+    /** Refresh visibility for every registered tool. */
+    function applyAllVisibility() {
+        injectVisibilityCss();
+        for (const t of TOOLS) applyToolVisibility(t);
+    }
+
+    /* =========================================================
+       PER-TOOL QUICK-TOGGLE BUTTONS
+       --------------------------------------------------------
+       A small floating chip pinned to the bottom-left (above the
+       ⚙ control panel button) on every URL that a non-autovault
+       tool matches. One click toggles that tool's enabled state.
+
+       The button stays visible whether the tool is enabled or
+       disabled — so after disabling, the user still has a way to
+       re-enable without opening the control panel.
+
+       Autovault tools are excluded by design: they have no
+       game-specific URL ("home") so there's no natural place to
+       anchor their quick toggle. Disable/enable them via the ⚙
+       control panel instead.
+       ========================================================= */
+
+    const QUICK_TOGGLE_STYLE_ID = 'unified-tools-quick-toggle-css';
+    // Tools managed only from the control-panel gear — no bottom-left quick-toggle
+    // chip (the account-wide auto-vaults and the always-on 7-day wager tracker).
+    const NO_QUICK_TOGGLE_IDS = new Set(['stake-autovault', 'shuffle-autovault', 'nuts-autovault', 'stake-7day-tracker']);
+
+    function injectQuickToggleCss() {
+        if (document.getElementById(QUICK_TOGGLE_STYLE_ID)) return;
+        if (!document.head && !document.documentElement) return;
+        const style = document.createElement('style');
+        style.id = QUICK_TOGGLE_STYLE_ID;
+        style.textContent = `
+            .uts-quick-toggle {
+                position: fixed;
+                left: 64px;
+                z-index: 2147483645;
+                padding: 7px 14px;
+                border-radius: 18px;
+                font-size: 11px;
+                font-weight: 700;
+                cursor: pointer;
+                border: 1px solid;
+                transition: transform 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
+                user-select: none;
+                box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+                letter-spacing: 0.3px;
+                white-space: nowrap;
+                display: inline-flex;
+                align-items: center;
+                gap: 6px;
+            }
+            .uts-quick-toggle.on {
+                background: linear-gradient(135deg, #10b981, #059669);
+                color: #ffffff;
+                border-color: rgba(16, 185, 129, 0.7);
+                text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+            }
+            .uts-quick-toggle.off {
+                background: linear-gradient(135deg, #1f2937, #0f172a);
+                color: #94a3b8;
+                border-color: rgba(148, 163, 184, 0.3);
+            }
+            .uts-quick-toggle:hover {
+                transform: translateY(-2px);
+                box-shadow: 0 6px 18px rgba(0, 0, 0, 0.55);
+            }
+            .uts-quick-toggle .uts-qt-dot {
+                width: 8px; height: 8px; border-radius: 50%;
+                flex: 0 0 auto;
+            }
+            .uts-quick-toggle.on .uts-qt-dot {
+                background: #ffffff; box-shadow: 0 0 6px rgba(255, 255, 255, 0.7);
+            }
+            .uts-quick-toggle.off .uts-qt-dot {
+                background: #475569;
+            }
+        `;
+        (document.head || document.documentElement).appendChild(style);
+    }
+
+    /** Build a short, user-friendly label for the quick-toggle button —
+     *  strips site prefix so the chip stays compact. With the {Site} {Game}
+     *  naming convention, "Stake Dice" → "Dice", "Nuts Limbo/Target" →
+     *  "Limbo/Target", "Shuffle Dice" → "Dice". */
+    function quickToggleLabel(tool) {
+        return (tool.name || tool.id)
+            .replace(/^Stake\/Shuffle\s+/i, '')
+            .replace(/^Stake\.gg\s+/i, '')
+            .replace(/^Stake\s+/i, '')
+            .replace(/^Shuffle\s+/i, '')
+            .replace(/^Nuts\.gg\s+/i, '')
+            .replace(/^Nuts\s+/i, '')
+            .replace(/\s*\(.*\)$/i, '');
+    }
+
+    /** (Re)create the quick-toggle buttons for every non-autovault tool that
+     *  matches the current URL. Removes stale buttons when the URL no longer
+     *  matches. Idempotent — safe to call on every SPA navigation tick. */
+    function applyQuickToggles() {
+        injectQuickToggleCss();
+        if (!document.body) return;
+        const matching = TOOLS.filter(t =>
+            !NO_QUICK_TOGGLE_IDS.has(t.id) && urlMatches(t, location.href)
+        );
+        const seen = new Set();
+        matching.forEach((tool, idx) => {
+            const btnId = 'uts-quick-toggle-' + tool.id;
+            seen.add(btnId);
+            let btn = document.getElementById(btnId);
+            if (!btn) {
+                btn = document.createElement('button');
+                btn.id = btnId;
+                btn.className = 'uts-quick-toggle';
+                btn.innerHTML = '<span class="uts-qt-dot"></span><span class="uts-qt-label"></span>';
+                btn.addEventListener('click', () => quickToggleClick(tool));
+                document.body.appendChild(btn);
+            }
+            // Stack above the ⚙ control panel button (bottom: 16px, ~38px tall).
+            btn.style.bottom = (16 + 44 + idx * 36) + 'px';
+            const enabled = isEnabled(tool);
+            btn.classList.toggle('on', enabled);
+            btn.classList.toggle('off', !enabled);
+            const label = btn.querySelector('.uts-qt-label');
+            if (label) label.textContent = quickToggleLabel(tool);
+            btn.title = (enabled ? 'Click to disable: ' : 'Click to enable: ') + (tool.name || tool.id);
+        });
+        // Tear down buttons whose tool no longer matches the URL.
+        document.querySelectorAll('.uts-quick-toggle').forEach(b => {
+            if (!seen.has(b.id)) b.remove();
+        });
+    }
+
+    /** Click handler for a quick-toggle button. Mirrors the control-panel
+     *  switch handler: flips state, refreshes visibility, syncs the panel
+     *  switch if open, and triggers a reload only for hijacksPage tools or
+     *  when enabling a tool that hasn't initialized yet. */
+    function quickToggleClick(tool) {
+        const newState = !isEnabled(tool);
+        setEnabled(tool.id, newState);
+        applyToolVisibility(tool);
+        applyQuickToggles();
+        // Sync the matching control-panel switch if the panel is open.
+        document.querySelectorAll('[data-switch="' + tool.id + '"]').forEach(el => {
+            el.classList.toggle('on', newState);
+        });
+        // hijacksPage tools always reload — their HUD owns relocated native
+        // page DOM that can't be hidden in place (matches control-panel behavior).
+        if (tool.hijacksPage && urlMatches(tool, location.href)) {
+            location.reload();
+            return;
+        }
+        // Enabling a tool that didn't initialize on this page → reload so its
+        // setup phases (document-start / document-end body) get a clean run.
+        if (newState && urlMatches(tool, location.href) && !tool._ran) {
+            location.reload();
+        }
+    }
+
+    /* =========================================================
+       TOOL REGISTRY
+       The TOOLS array holds every tool's definition + body.
+       Use register(definition, fn) to add a tool — see the
+       "Tool Registry — Definitions" section near the bottom.
+       ========================================================= */
+    const TOOLS = [];
+
+    /**
+     * Add a tool to the registry.
+     * @param {Object} definition - id, name, description, matches, runAt, defaultEnabled, group, uiSelectors, hijacksPage
+     * @param {Function} fn - the tool's body function (one of the tool_xxx functions below)
+     */
+    function register(definition, fn) {
+        definition._fn = fn;
+        TOOLS.push(definition);
+    }
+
+    /* === source: nuts-mines-desktop.user.js === */
+    function tool_nuts_mines() {
+        'use strict';
+let isRunning = false;
+
+    // ==================== HOLOGLASS GUI ====================
+    const gui = document.createElement('div');
+    gui.id = 'mines-auto-gui';
+    gui.style.cssText = `
+        position: fixed; top: 20px; right: 20px; z-index: 999999;
+        background: rgba(16, 20, 30, 0.45);
+        backdrop-filter: blur(16px);
+        -webkit-backdrop-filter: blur(16px);
+        border: 1px solid rgba(0, 255, 255, 0.15);
+        border-top: 1px solid rgba(0, 255, 255, 0.3);
+        border-left: 1px solid rgba(0, 255, 255, 0.3);
+        box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.3), inset 0 0 20px rgba(0, 255, 255, 0.05);
+        color: #e0ffff; padding: 16px; border-radius: 16px;
+        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        min-width: 240px; cursor: move; user-select: none;
+        transition: box-shadow 0.3s ease, transform 0.3s ease;
+    `;
+
+    const inputStyle = `
+        width: 60px; padding: 6px; border: 1px solid rgba(0, 255, 255, 0.2);
+        border-radius: 6px; background: rgba(0, 0, 0, 0.2); color: #00ffff;
+        outline: none; text-shadow: 0 0 5px rgba(0, 255, 255, 0.4);
+        font-weight: bold; text-align: center;
+    `;
+
+    gui.innerHTML = `
+        <div style="font-weight: 700; margin-bottom: 12px; text-align: center; color: #00ffff; font-size: 1.1em; text-shadow: 0 0 10px rgba(0, 255, 255, 0.6), 0 0 20px rgba(0, 255, 255, 0.2); letter-spacing: 1px;">
+            Nuts Mines
+        </div>
+        <div style="display: flex; align-items: center; justify-content: space-between; margin: 8px 0;">
+            <label style="color: rgba(224, 255, 255, 0.8); font-size: 0.9em; font-weight: 500;">Min Tiles:</label>
+            <input id="minPicks" type="number" value="3" min="1" max="24" style="${inputStyle}">
+        </div>
+        <div style="display: flex; align-items: center; justify-content: space-between; margin: 8px 0;">
+            <label style="color: rgba(224, 255, 255, 0.8); font-size: 0.9em; font-weight: 500;">Max Tiles:</label>
+            <input id="maxPicks" type="number" value="8" min="1" max="24" style="${inputStyle}">
+        </div>
+        <div style="margin: 16px 0 8px 0; text-align: center; display: flex; gap: 10px; justify-content: center;">
+            <button id="btnStart" style="flex: 1; background: rgba(0, 255, 255, 0.1); border: 1px solid rgba(0, 255, 255, 0.4); color: #00ffff; padding: 8px; border-radius: 8px; font-weight: 700; cursor: pointer; transition: all 0.2s; text-shadow: 0 0 5px rgba(0, 255, 255, 0.5); box-shadow: 0 0 10px rgba(0, 255, 255, 0.1); text-transform: uppercase; letter-spacing: 0.5px;">
+                Start
+            </button>
+            <button id="btnStop" style="flex: 1; background: rgba(255, 0, 85, 0.1); border: 1px solid rgba(255, 0, 85, 0.4); color: #ff0055; padding: 8px; border-radius: 8px; font-weight: 700; cursor: pointer; display: none; transition: all 0.2s; text-shadow: 0 0 5px rgba(255, 0, 85, 0.5); box-shadow: 0 0 10px rgba(255, 0, 85, 0.1); text-transform: uppercase; letter-spacing: 0.5px;">
+                Stop
+            </button>
+        </div>
+        <div id="status" style="font-size: 0.8em; color: rgba(224, 255, 255, 0.6); text-align: center; min-height: 1.2em; font-weight: 500; letter-spacing: 0.5px;"></div>
+        <div style="margin-top: 12px; border-top: 1px solid rgba(0, 255, 255, 0.15); padding-top: 10px;">
+            <div style="font-weight: 700; margin-bottom: 6px; text-align: center; color: #00ffff; font-size: 0.9em; text-shadow: 0 0 5px rgba(0, 255, 255, 0.4); letter-spacing: 0.6px; text-transform: uppercase;">
+                Live Stats
+            </div>
+            <p style="margin: 4px 0; font-size: 0.85em; display: flex; justify-content: space-between;"><span style="color: rgba(224, 255, 255, 0.7);">Multiplier:</span><span id="mult" style="font-weight: 700; color: #00ffff;">—</span></p>
+            <p style="margin: 4px 0; font-size: 0.85em; display: flex; justify-content: space-between;"><span style="color: rgba(224, 255, 255, 0.7);">Payout:</span><span id="pout" style="font-weight: 700; color: #00ffff;">—</span></p>
+            <p style="margin: 4px 0; font-size: 0.85em; display: flex; justify-content: space-between;"><span style="color: rgba(224, 255, 255, 0.7);">Next Gem:</span><span id="chance" style="font-weight: 700; color: #00ffff;">—</span></p>
+        </div>
+        <div style="margin-top: 8px; border-top: 1px solid rgba(255, 102, 255, 0.15); padding-top: 10px;">
+            <div style="font-weight: 700; margin-bottom: 6px; text-align: center; color: #ff66ff; font-size: 0.9em; text-shadow: 0 0 5px rgba(255, 102, 255, 0.4); letter-spacing: 0.6px; text-transform: uppercase;">
+                Projected Range
+            </div>
+            <p style="margin: 4px 0; font-size: 0.85em; display: flex; justify-content: space-between;"><span style="color: rgba(224, 255, 255, 0.7);">Min Mult:</span><span id="minMult" style="font-weight: 700; color: #ff66ff;">—</span></p>
+            <p style="margin: 4px 0; font-size: 0.85em; display: flex; justify-content: space-between;"><span style="color: rgba(224, 255, 255, 0.7);">Max Mult:</span><span id="maxMult" style="font-weight: 700; color: #ff66ff;">—</span></p>
+            <p style="margin: 4px 0; font-size: 0.85em; display: flex; justify-content: space-between;"><span style="color: rgba(224, 255, 255, 0.7);">Min Payout:</span><span id="minPayout" style="font-weight: 700; color: #ff66ff;">—</span></p>
+            <p style="margin: 4px 0; font-size: 0.85em; display: flex; justify-content: space-between;"><span style="color: rgba(224, 255, 255, 0.7);">Max Payout:</span><span id="maxPayout" style="font-weight: 700; color: #ff66ff;">—</span></p>
+        </div>
+    `;
+
+    document.body.appendChild(gui);
+
+    // ==================== INTERACTIVITY & FX ====================
+    const btnStart = document.getElementById('btnStart');
+    const btnStop = document.getElementById('btnStop');
+
+    btnStart.addEventListener('mouseover', () => {
+        btnStart.style.background = 'rgba(0, 255, 255, 0.2)';
+        btnStart.style.boxShadow = '0 0 15px rgba(0, 255, 255, 0.3)';
+    });
+    btnStart.addEventListener('mouseout', () => {
+        btnStart.style.background = 'rgba(0, 255, 255, 0.1)';
+        btnStart.style.boxShadow = '0 0 10px rgba(0, 255, 255, 0.1)';
+    });
+
+    btnStop.addEventListener('mouseover', () => {
+        btnStop.style.background = 'rgba(255, 0, 85, 0.2)';
+        btnStop.style.boxShadow = '0 0 15px rgba(255, 0, 85, 0.3)';
+    });
+    btnStop.addEventListener('mouseout', () => {
+        btnStop.style.background = 'rgba(255, 0, 85, 0.1)';
+        btnStop.style.boxShadow = '0 0 10px rgba(255, 0, 85, 0.1)';
+    });
+
+    let isDragging = false, currentX = 0, currentY = 0;
+    gui.addEventListener('mousedown', e => {
+        if (['BUTTON','INPUT','LABEL'].includes(e.target.tagName)) return;
+        isDragging = true;
+        currentX = e.clientX - gui.offsetLeft;
+        currentY = e.clientY - gui.offsetTop;
+        gui.style.boxShadow = '0 12px 40px 0 rgba(0, 0, 0, 0.5), inset 0 0 20px rgba(0, 255, 255, 0.1)';
+        gui.style.transform = 'scale(1.02)';
+    });
+    document.addEventListener('mousemove', e => {
+        if (!isDragging) return;
+        gui.style.left = (e.clientX - currentX) + 'px';
+        gui.style.top = (e.clientY - currentY) + 'px';
+        gui.style.right = 'auto';
+    });
+    document.addEventListener('mouseup', () => {
+        isDragging = false;
+        gui.style.boxShadow = '0 8px 32px 0 rgba(0, 0, 0, 0.3), inset 0 0 20px rgba(0, 255, 255, 0.05)';
+        gui.style.transform = 'scale(1)';
+    });
+
+    gui.style.left = (window.innerWidth - gui.offsetWidth - 30) + 'px';
+    gui.style.top = '40px';
+
+    const status = document.getElementById('status');
+
+    function setStatus(txt, color = 'rgba(224, 255, 255, 0.6)') {
+        status.textContent = txt;
+        status.style.color = color;
+    }
+
+    // ==================== CORE LOGIC ====================
+    // Speed slider removed — the bot already runs at the game's response
+    // ceiling. Fixed small delays keep the click loop loose enough for Nuts's
+    // React to register each event before the next one lands.
+    const POST_PLAY_DELAY_MS  = 80;   // After Play click, before picking
+    const INTER_TILE_DELAY_MS = 30;   // Between successive tile clicks
+    const PRE_CASHOUT_DELAY_MS = 50;  // After last pick, before cashout
+
+    function findButton(textContent, partial = false) {
+        const texts = [textContent.toLowerCase()];
+        if (partial) texts.push(textContent.toLowerCase().replace(/\s+/g,''));
+        const candidates = document.querySelectorAll('button, div[role="button"], [class*="button" i], [class*="btn" i], [class*="play" i], [class*="cash" i]');
+        for (const el of candidates) {
+            let txt = (el.textContent || '').toLowerCase().trim();
+            if (texts.some(t => partial ? txt.includes(t) : txt === t)) return el;
+        }
+        return null;
+    }
+
+    function clickPlay() { const el = findButton('PLAY') || findButton('play', true); return el ? (el.click(), true) : false; }
+    function clickCashout() { const el = findButton('CASHOUT') || findButton('cashout', true); return el ? (el.click(), true) : false; }
+
+    function getClickableTiles() {
+        // Broadened selector slightly to ensure it catches standard Nut.gg tile classes
+        return Array.from(document.querySelectorAll('div[class*="gtVEXU"]'))
+            .filter(el => window.getComputedStyle(el).cursor === 'pointer' || (el.getAttribute('style') || '').includes('cursor: pointer'));
+    }
+
+    async function delay(ms) {
+        return new Promise(r => setTimeout(r, ms));
+    }
+
+    function weightedRandom(min, max) {
+        const base = 1.5;
+        let weights = [], total = 0;
+        for (let i = min; i <= max; i++) {
+            let w = Math.pow(base, max - i);
+            weights.push(w); total += w;
+        }
+        let r = Math.random() * total, sum = 0;
+        for (let idx = 0; idx < weights.length; idx++) {
+            sum += weights[idx];
+            if (r < sum) return min + idx;
+        }
+        return max;
+    }
+
+    async function doOneRound() {
+        if (!isRunning) return;
+
+        setStatus('Running', '#00ffff');
+        // Safety kill switch: if the Play button stays unavailable for 20s
+        // (typically because balance ran out, a session got stuck, or a
+        // captcha/disconnect interrupted things), kill the bot instead of
+        // spinning forever. Mirrors the Stake Mines safety.
+        const playWaitStart = Date.now();
+        const MAX_PLAY_WAIT_MS = 20000;
+        while (isRunning && !clickPlay()) {
+            if (Date.now() - playWaitStart > MAX_PLAY_WAIT_MS) {
+                setStatus('Stopped — out of balance', '#ff0055');
+                stopBot();
+                return;
+            }
+            await delay(15);
+        }
+        if (!isRunning) return;
+
+        await delay(POST_PLAY_DELAY_MS);
+
+        const min = parseInt(document.getElementById('minPicks').value) || 3;
+        const max = parseInt(document.getElementById('maxPicks').value) || 12;
+        const targetAmount = weightedRandom(min, max);
+
+        let availableTiles = getClickableTiles();
+
+        if (availableTiles.length === 0) {
+            return;
+        }
+
+        // Shuffle array to pick random distinct tiles
+        const shuffled = availableTiles.sort(() => 0.5 - Math.random());
+        const tilesToClick = shuffled.slice(0, Math.min(targetAmount, availableTiles.length));
+
+        setStatus(`Picking ${tilesToClick.length} tiles`, '#00ffff');
+
+        // Rapid fire loop
+        for (let i = 0; i < tilesToClick.length; i++) {
+            if (!isRunning) return;
+            tilesToClick[i].click();
+            // Tiny delay to ensure browser dispatches the click events properly
+            await delay(INTER_TILE_DELAY_MS);
+        }
+
+        // Polling loop: Wait for the front-end to render the server's response
+        let resolved = false;
+        let timeoutCounter = 0;
+
+        while (!resolved && timeoutCounter < 60 && isRunning) { // Max wait ~3 seconds
+            await delay(50);
+            timeoutCounter++;
+
+            // Check 1: Did we hit a mine? Game over, PLAY button reappears.
+            if (findButton('PLAY') || findButton('play', true)) {
+                setStatus('Busted', '#ff0055');
+                resolved = true;
+                break;
+            }
+
+            // Check 2: Have all clicked tiles updated their state? (No longer pointer)
+            let stillPending = tilesToClick.filter(t => window.getComputedStyle(t).cursor === 'pointer').length;
+            if (stillPending === 0) {
+                resolved = true;
+                break;
+            }
+        }
+
+        if (isRunning && !findButton('PLAY') && !findButton('play', true)) {
+            // Survived the burst and DOM updated
+            await delay(PRE_CASHOUT_DELAY_MS);
+
+            const cashed = clickCashout();
+            setStatus(cashed ? 'Cashed out' : 'Running', '#00ffff');
+        }
+    }
+
+    async function runLoop() {
+        while (isRunning) {
+            // SPA safety: if the user navigated away from /mines, halt the
+            // bot immediately so it can't place bets on a different game
+            // that happens to expose a matching bet button.
+            if (!/\/mines/i.test(location.pathname)) {
+                setStatus('Stopped', '#ff0055');
+                stopBot();
+                return;
+            }
+            await doOneRound();
+        }
+    }
+
+    function startBot() {
+        if (isRunning) return;
+        isRunning = true;
+        btnStart.style.display = 'none';
+        btnStop.style.display = 'block';
+        setStatus('Running', '#00ffff');
+        runLoop();
+    }
+
+    function stopBot() {
+        isRunning = false;
+        btnStart.style.display = 'block';
+        btnStop.style.display = 'none';
+        setStatus('Stopped', '#ff0055');
+    }
+
+    btnStart.onclick = startBot;
+    btnStop.onclick = stopBot;
+    window.addEventListener('beforeunload', stopBot);
+    setStatus('Ready', 'rgba(224, 255, 255, 0.6)');
+
+    // ==================== LIVE TELEMETRY + PROJECTED RANGE ====================
+    // Nuts uses a 2% house edge on Mines (verified live: 3 mines / 22 picks
+    // shows "MAX PAYOUT x2,254" → 0.98 × C(25,22) / C(22,22) = 2254). Apart
+    // from the edge, the formula matches Stake's exactly.
+    function binomCoeff(n, k) {
+        if (k < 0 || k > n) return 0;
+        if (k === 0 || k === n) return 1;
+        if (k > n - k) k = n - k;
+        let result = 1;
+        for (let i = 0; i < k; i++) result = result * (n - i) / (i + 1);
+        return result;
+    }
+
+    function computeNutsMinesMultiplier(picks, mines) {
+        if (!isFinite(picks) || !isFinite(mines)) return NaN;
+        if (picks < 1 || mines < 1 || mines > 24) return NaN;
+        const safeTiles = 25 - mines;
+        if (picks > safeTiles) return NaN;
+        const top = binomCoeff(25, picks);
+        const bot = binomCoeff(safeTiles, picks);
+        if (!bot) return NaN;
+        return 0.98 * top / bot;
+    }
+
+    /** Read Nuts's "N MINES" label to recover the active mines count. */
+    function getNutsMinesCount() {
+        const labels = Array.from(document.querySelectorAll('*'))
+            .filter(el => el.children.length === 0 && /^\d+\s*MINES?$/i.test((el.textContent || '').trim()));
+        if (!labels.length) return NaN;
+        const m = labels[0].textContent.match(/(\d+)/);
+        return m ? parseInt(m[1], 10) : NaN;
+    }
+
+    /** Read Nuts's wager input (the bet amount in SOL). */
+    function getNutsBetAmount() {
+        const wager = document.querySelector('input[aria-label="wager"]');
+        if (!wager) return NaN;
+        return parseFloat(wager.value);
+    }
+
+    /** Count how many gem tiles are currently revealed in an active round.
+     *  Returns NaN if no round is in progress. */
+    function countNutsRevealedGems() {
+        const allTiles = document.querySelectorAll('div[class*="gtVEXU"]');
+        if (allTiles.length === 0) return NaN;
+        const clickable = getClickableTiles().length;
+        // Pre-round: tiles render but none are clickable. Distinguish by the
+        // presence of the CASHOUT button (only visible mid-round).
+        if (!findButton('CASHOUT') && !findButton('cashout', true)) return NaN;
+        return allTiles.length - clickable;
+    }
+
+    function getSafeTileCount() {
+        const mines = getNutsMinesCount();
+        if (isNaN(mines)) return 24;
+        return Math.max(1, 25 - mines);
+    }
+
+    /** Mirror Stake's pick-input cap behavior: sync `max` attribute to the
+     *  current safe-tile count and clamp values on blur so the user can't
+     *  request more picks than the board can deliver. */
+    let _lastSafeTilesNuts = null;
+    function syncPickInputCaps() {
+        const safeTiles = getSafeTileCount();
+        const minInp = document.getElementById('minPicks');
+        const maxInp = document.getElementById('maxPicks');
+        if (minInp) minInp.max = String(safeTiles);
+        if (maxInp) maxInp.max = String(safeTiles);
+        return safeTiles;
+    }
+
+    function clampPickInputs() {
+        const safeTiles = getSafeTileCount();
+        const minInp = document.getElementById('minPicks');
+        const maxInp = document.getElementById('maxPicks');
+        if (!minInp || !maxInp) return;
+        const minFocused = document.activeElement === minInp;
+        const maxFocused = document.activeElement === maxInp;
+        let minVal = parseInt(minInp.value);
+        let maxVal = parseInt(maxInp.value);
+        if (isNaN(minVal)) minVal = 1;
+        if (isNaN(maxVal)) maxVal = 1;
+        minVal = Math.max(1, Math.min(minVal, safeTiles));
+        maxVal = Math.max(1, Math.min(maxVal, safeTiles));
+        if (minVal > maxVal) maxVal = minVal;
+        if (!minFocused && minInp.value !== String(minVal)) minInp.value = String(minVal);
+        if (!maxFocused && maxInp.value !== String(maxVal)) maxInp.value = String(maxVal);
+    }
+
+    function updateInfo() {
+        // Keep pick-input caps in sync with the mines count and auto-clamp
+        // whenever the mines slider changes.
+        const safeTiles = syncPickInputCaps();
+        if (_lastSafeTilesNuts !== null && _lastSafeTilesNuts !== safeTiles) {
+            clampPickInputs();
+        }
+        _lastSafeTilesNuts = safeTiles;
+
+        const mines = getNutsMinesCount();
+        const bet = getNutsBetAmount();
+        const minPicks = parseInt(document.getElementById('minPicks').value);
+        const maxPicks = parseInt(document.getElementById('maxPicks').value);
+
+        // ---- Live telemetry (only meaningful when a round is in progress) ----
+        const revealed = countNutsRevealedGems();
+        const liveMult = (isFinite(revealed) && revealed > 0 && !isNaN(mines))
+            ? computeNutsMinesMultiplier(revealed, mines)
+            : NaN;
+        const livePayout = (!isNaN(liveMult) && isFinite(bet) && bet > 0) ? bet * liveMult : NaN;
+
+        let chanceText = '—';
+        if (isFinite(revealed) && revealed >= 0 && !isNaN(mines)) {
+            const remaining = 25 - revealed;
+            const safeRemaining = (25 - mines) - revealed;
+            if (remaining > 0 && safeRemaining >= 0) {
+                chanceText = ((safeRemaining / remaining) * 100).toFixed(2) + '%';
+            }
+        }
+
+        const multEl = document.getElementById('mult');
+        const poutEl = document.getElementById('pout');
+        const chanceEl = document.getElementById('chance');
+        if (multEl) multEl.textContent = isNaN(liveMult) ? '—' : liveMult.toFixed(2) + '×';
+        if (poutEl) poutEl.textContent = isNaN(livePayout) ? '—' : livePayout.toFixed(8);
+        if (chanceEl) chanceEl.textContent = chanceText;
+
+        // ---- Projected range (always shown when inputs are valid) ----
+        const minMultEl = document.getElementById('minMult');
+        const maxMultEl = document.getElementById('maxMult');
+        const minPayoutEl = document.getElementById('minPayout');
+        const maxPayoutEl = document.getElementById('maxPayout');
+
+        if (isNaN(minPicks) || isNaN(maxPicks) || isNaN(mines)) {
+            if (minMultEl) minMultEl.textContent = '—';
+            if (maxMultEl) maxMultEl.textContent = '—';
+            if (minPayoutEl) minPayoutEl.textContent = '—';
+            if (maxPayoutEl) maxPayoutEl.textContent = '—';
+            return;
+        }
+
+        const cappedMin = Math.max(1, Math.min(minPicks, safeTiles));
+        const cappedMax = Math.max(cappedMin, Math.min(maxPicks, safeTiles));
+        const minMult = computeNutsMinesMultiplier(cappedMin, mines);
+        const maxMult = computeNutsMinesMultiplier(cappedMax, mines);
+
+        if (minMultEl) minMultEl.textContent = isNaN(minMult) ? '—' : minMult.toFixed(2) + '×';
+        if (maxMultEl) maxMultEl.textContent = isNaN(maxMult) ? '—' : maxMult.toFixed(2) + '×';
+
+        if (isFinite(bet) && bet > 0) {
+            if (minPayoutEl) minPayoutEl.textContent = isNaN(minMult) ? '—' : (bet * minMult).toFixed(8);
+            if (maxPayoutEl) maxPayoutEl.textContent = isNaN(maxMult) ? '—' : (bet * maxMult).toFixed(8);
+        } else {
+            if (minPayoutEl) minPayoutEl.textContent = '—';
+            if (maxPayoutEl) maxPayoutEl.textContent = '—';
+        }
+    }
+
+    setInterval(updateInfo, 1000);
+    ['minPicks', 'maxPicks'].forEach(id => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        el.addEventListener('input', updateInfo);
+        el.addEventListener('blur', () => { clampPickInputs(); updateInfo(); });
+    });
+    clampPickInputs();
+    updateInfo();
+
+    }
+
+
+    /* ----- Nuts Mines ----- */
+    register({
+        id: 'nuts-mines',
+        name: 'Nuts Mines',
+        description: 'Auto-plays Mines on Nuts with rapid burst clicking & cashout.',
+        matches: [
+            'https://nuts.gg/mines*',
+            'https://*.nuts.gg/mines*'
+        ],
+        runAt: 'document-end',
+        defaultEnabled: true,
+        group: 'Nuts',
+        uiSelectors: ['#mines-auto-gui']
+    }, tool_nuts_mines);
+
+    /* =========================================================
+       CONTROL PANEL UI
+       --------------------------------------------------------
+       Floating ⚙ button (bottom-left) opens the panel. The panel
+       lists every registered tool grouped by site (Stake / Nuts.gg
+       / Other), each with a status line and an enable/disable
+       switch. Footer has bulk Enable matched / Disable all.
+       Header is draggable; position is persisted in localStorage.
+       ========================================================= */
+
+    const PANEL_ID         = 'unified-tools-panel';
+    const PANEL_TOGGLE_ID  = 'unified-tools-toggle';
+    const PANEL_STYLE_ID   = 'unified-tools-style';
+
+    const PANEL_CSS = `
+    #${PANEL_TOGGLE_ID} {
+        position: fixed; bottom: 16px; left: 16px; z-index: 2147483646;
+        width: 38px; height: 38px; border-radius: 50%;
+        background: linear-gradient(135deg, #1f2937, #0f172a);
+        border: 1px solid rgba(148, 163, 184, 0.3);
+        color: #e2e8f0; font-size: 18px; cursor: pointer;
+        display: flex; align-items: center; justify-content: center;
+        box-shadow: 0 6px 18px rgba(0,0,0,0.45);
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+        user-select: none;
+        transition: transform 0.15s ease, box-shadow 0.15s ease;
+    }
+    #${PANEL_TOGGLE_ID}:hover {
+        transform: scale(1.06);
+        box-shadow: 0 8px 22px rgba(0,0,0,0.55);
+    }
+    #${PANEL_TOGGLE_ID}.has-active::after {
+        content: ''; position: absolute; top: 4px; right: 4px;
+        width: 8px; height: 8px; border-radius: 50%;
+        background: #10b981; box-shadow: 0 0 6px #10b981;
+    }
+    #${PANEL_ID} {
+        position: fixed; bottom: 64px; left: 16px; z-index: 2147483647;
+        width: 320px; max-height: 70vh;
+        background: linear-gradient(180deg, #111827 0%, #0b1220 100%);
+        color: #e2e8f0; border: 1px solid rgba(148, 163, 184, 0.25);
+        border-radius: 12px; box-shadow: 0 18px 50px rgba(0,0,0,0.6);
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+        font-size: 13px; user-select: none;
+        display: flex; flex-direction: column; overflow: hidden;
+    }
+    #${PANEL_ID}.hidden { display: none; }
+    #${PANEL_ID} .ut-header {
+        display: flex; align-items: center; justify-content: space-between;
+        padding: 10px 12px;
+        background: linear-gradient(135deg, #1f2937, #111827);
+        border-bottom: 1px solid rgba(148, 163, 184, 0.2);
+        cursor: grab;
+    }
+    #${PANEL_ID} .ut-header:active { cursor: grabbing; }
+    #${PANEL_ID} .ut-title {
+        font-weight: 700; font-size: 13px; color: #f8fafc;
+        letter-spacing: 0.3px;
+    }
+    #${PANEL_ID} .ut-title small {
+        display: block; font-weight: 400; font-size: 10px; color: #94a3b8;
+        margin-top: 2px;
+    }
+    #${PANEL_ID} .ut-header-btn {
+        background: none; border: none; color: #94a3b8;
+        font-size: 18px; line-height: 1; cursor: pointer;
+        padding: 2px 6px; border-radius: 4px;
+    }
+    #${PANEL_ID} .ut-header-btn:hover { color: #fff; background: rgba(148, 163, 184, 0.15); }
+    #${PANEL_ID} .ut-body {
+        flex: 1 1 auto; overflow-y: auto;
+        padding: 8px 0;
+    }
+    #${PANEL_ID} .ut-body::-webkit-scrollbar { width: 6px; }
+    #${PANEL_ID} .ut-body::-webkit-scrollbar-thumb { background: rgba(148, 163, 184, 0.3); border-radius: 3px; }
+    #${PANEL_ID} .ut-group {
+        padding: 6px 12px 4px;
+        font-size: 10px; color: #64748b;
+        text-transform: uppercase; letter-spacing: 0.6px;
+        border-top: 1px solid rgba(148, 163, 184, 0.08);
+    }
+    #${PANEL_ID} .ut-group:first-child { border-top: none; }
+    #${PANEL_ID} .ut-tool {
+        display: flex; align-items: flex-start; gap: 10px;
+        padding: 8px 12px;
+        transition: background 0.12s ease;
+    }
+    #${PANEL_ID} .ut-tool:hover { background: rgba(148, 163, 184, 0.06); }
+    #${PANEL_ID} .ut-tool.unmatched { opacity: 0.45; }
+    #${PANEL_ID} .ut-tool-info { flex: 1 1 auto; min-width: 0; }
+    #${PANEL_ID} .ut-tool-name {
+        font-weight: 600; color: #f1f5f9; font-size: 12px;
+        line-height: 1.3;
+    }
+    #${PANEL_ID} .ut-tool-desc {
+        font-size: 11px; color: #94a3b8; margin-top: 2px;
+        line-height: 1.35;
+    }
+    #${PANEL_ID} .ut-tool-status {
+        font-size: 10px; color: #64748b; margin-top: 4px;
+        text-transform: uppercase; letter-spacing: 0.4px;
+    }
+    #${PANEL_ID} .ut-tool-status.running { color: #10b981; }
+    #${PANEL_ID} .ut-tool-status.disabled { color: #f59e0b; }
+    #${PANEL_ID} .ut-tool-status.unmatched { color: #475569; }
+    #${PANEL_ID} .ut-switch {
+        position: relative;
+        width: 36px; height: 20px;
+        background: #334155; border-radius: 10px; cursor: pointer;
+        flex: 0 0 auto;
+        transition: background 0.15s ease;
+    }
+    #${PANEL_ID} .ut-switch::after {
+        content: ''; position: absolute;
+        top: 2px; left: 2px;
+        width: 16px; height: 16px;
+        border-radius: 50%; background: #f8fafc;
+        transition: transform 0.15s ease;
+    }
+    #${PANEL_ID} .ut-switch.on { background: #10b981; }
+    #${PANEL_ID} .ut-switch.on::after { transform: translateX(16px); }
+    #${PANEL_ID} .ut-footer {
+        padding: 8px 12px;
+        border-top: 1px solid rgba(148, 163, 184, 0.15);
+        display: flex; gap: 6px;
+        background: rgba(15, 23, 42, 0.6);
+    }
+    #${PANEL_ID} .ut-footer-btn {
+        flex: 1 1 auto;
+        background: rgba(148, 163, 184, 0.1);
+        border: 1px solid rgba(148, 163, 184, 0.25);
+        color: #cbd5e1;
+        font-size: 11px; font-weight: 600;
+        padding: 6px 8px; border-radius: 6px;
+        cursor: pointer;
+        text-transform: uppercase; letter-spacing: 0.4px;
+    }
+    #${PANEL_ID} .ut-footer-btn:hover { background: rgba(148, 163, 184, 0.18); color: #fff; }
+    #${PANEL_ID} .ut-footer-btn.danger { color: #fca5a5; }
+    #${PANEL_ID} .ut-footer-btn.danger:hover { color: #fff; background: rgba(239, 68, 68, 0.2); }
+    #${PANEL_ID} .ut-empty {
+        padding: 20px 16px; text-align: center;
+        color: #64748b; font-size: 11px; font-style: italic;
+    }
+    `;
+
+    /** Inject the panel stylesheet once. */
+    function injectPanelStyle() {
+        if (document.getElementById(PANEL_STYLE_ID)) return;
+        const s = document.createElement('style');
+        s.id = PANEL_STYLE_ID;
+        s.textContent = PANEL_CSS;
+        document.head.appendChild(s);
+    }
+
+    /** Read the user's saved panel position (or null if never moved). */
+    function loadPanelPos() {
+        try {
+            const raw = localStorage.getItem(PANEL_POS_KEY);
+            if (!raw) return null;
+            const p = JSON.parse(raw);
+            if (typeof p.left === 'number' && typeof p.top === 'number') return p;
+        } catch {}
+        return null;
+    }
+    /** Persist the panel position so dragging survives reloads. */
+    function savePanelPos(left, top) {
+        try { localStorage.setItem(PANEL_POS_KEY, JSON.stringify({ left, top })); } catch {}
+    }
+
+    /** Build the toggle button + panel and wire up all its event handlers. */
+    function buildPanel() {
+        if (document.getElementById(PANEL_ID)) return;
+        injectPanelStyle();
+
+        const toggle = document.createElement('button');
+        toggle.id = PANEL_TOGGLE_ID;
+        toggle.title = 'Open Unified Tools Panel';
+        toggle.textContent = '⚙';
+
+        const panel = document.createElement('div');
+        panel.id = PANEL_ID;
+        panel.className = 'hidden';
+
+        const initiallyOpen = localStorage.getItem(PANEL_OPEN_KEY) === '1';
+        if (initiallyOpen) panel.classList.remove('hidden');
+
+        const savedPos = loadPanelPos();
+        if (savedPos) {
+            panel.style.left = savedPos.left + 'px';
+            panel.style.top = savedPos.top + 'px';
+            panel.style.bottom = 'auto';
+        }
+
+        const matching = TOOLS.filter(t => urlMatches(t, location.href));
+        const groups = {};
+        for (const t of TOOLS) {
+            const g = t.group || 'Other';
+            if (!groups[g]) groups[g] = [];
+            groups[g].push(t);
+        }
+
+        let body = '<div class="ut-header">' +
+            '<div class="ut-title">Unified Tools' +
+                '<small id="ut-count">' + matching.length + ' available on this page</small>' +
+            '</div>' +
+            '<div>' +
+                '<button class="ut-header-btn" id="ut-collapse" title="Collapse">×</button>' +
+            '</div>' +
+        '</div>' +
+        '<div class="ut-body">';
+
+        const groupOrder = ['Stake', 'Shuffle', 'Nuts', 'Other'];
+        for (const groupName of groupOrder) {
+            const list = groups[groupName];
+            if (!list || !list.length) continue;
+            body += '<div class="ut-group">' + groupName + '</div>';
+            for (const t of list) {
+                const matched = urlMatches(t, location.href);
+                const enabled = isEnabled(t);
+                const cls = 'ut-tool' + (matched ? '' : ' unmatched');
+                const switchCls = 'ut-switch' + (enabled ? ' on' : '');
+                body += '<div class="' + cls + '" data-tool-id="' + t.id + '">' +
+                    '<div class="ut-tool-info">' +
+                        '<div class="ut-tool-name">' + escapeHtml(t.name) + '</div>' +
+                        '<div class="ut-tool-desc">' + escapeHtml(t.description || '') + '</div>' +
+                        '<div class="ut-tool-status" data-status="' + t.id + '"></div>' +
+                    '</div>' +
+                    '<div class="' + switchCls + '" data-switch="' + t.id + '" title="Toggle"></div>' +
+                '</div>';
+            }
+        }
+
+        if (TOOLS.length === 0) {
+            body += '<div class="ut-empty">No tools registered.</div>';
+        }
+
+        body += '</div>' +
+        '<div class="ut-footer">' +
+            '<button class="ut-footer-btn" id="ut-enable-all">Enable matched</button>' +
+            '<button class="ut-footer-btn danger" id="ut-disable-all">Disable all</button>' +
+        '</div>';
+
+        panel.innerHTML = body;
+        document.body.appendChild(panel);
+        document.body.appendChild(toggle);
+
+        toggle.onclick = () => {
+            const willShow = panel.classList.contains('hidden');
+            panel.classList.toggle('hidden', !willShow);
+            try { localStorage.setItem(PANEL_OPEN_KEY, willShow ? '1' : '0'); } catch {}
+        };
+
+        panel.querySelector('#ut-collapse').onclick = () => {
+            panel.classList.add('hidden');
+            try { localStorage.setItem(PANEL_OPEN_KEY, '0'); } catch {}
+        };
+
+        panel.querySelectorAll('[data-switch]').forEach(el => {
+            el.addEventListener('click', () => {
+                const id = el.getAttribute('data-switch');
+                const tool = TOOLS.find(t => t.id === id);
+                if (!tool) return;
+                const newState = !isEnabled(tool);
+                setEnabled(id, newState);
+                el.classList.toggle('on', newState);
+                applyToolVisibility(tool);
+                try { applyQuickToggles(); } catch (e) {}
+                refreshStatuses();
+                updateToggleBadge();
+
+                // hijacksPage tools always reload on toggle — their HUD owns
+                // relocated native page DOM that can't be hidden in place.
+                if (tool.hijacksPage && urlMatches(tool, location.href)) {
+                    location.reload();
+                    return;
+                }
+
+                // Non-hijacking tools toggle hide/show via CSS class instantly.
+                // The one corner case is enabling a tool that didn't load
+                // (corrupted state, race, prior version that gated by enabled).
+                // In that case auto-refresh so it can initialize cleanly.
+                if (newState && urlMatches(tool, location.href) && !tool._ran) {
+                    location.reload();
+                }
+            });
+        });
+
+        panel.querySelector('#ut-enable-all').onclick = () => {
+            const matchedTools = TOOLS.filter(t => urlMatches(t, location.href));
+            let needsReload = false;
+            for (const t of matchedTools) {
+                if (!isEnabled(t) && t.hijacksPage) needsReload = true;
+                setEnabled(t.id, true);
+                if (!t._ran) needsReload = true;
+            }
+            refreshSwitches();
+            for (const t of TOOLS) applyToolVisibility(t);
+            try { applyQuickToggles(); } catch (e) {}
+            refreshStatuses();
+            updateToggleBadge();
+            if (needsReload) location.reload();
+        };
+        panel.querySelector('#ut-disable-all').onclick = () => {
+            let needsReload = false;
+            for (const t of TOOLS) {
+                if (isEnabled(t) && t.hijacksPage && urlMatches(t, location.href) && t._ran) {
+                    needsReload = true;
+                }
+                setEnabled(t.id, false);
+            }
+            refreshSwitches();
+            for (const t of TOOLS) applyToolVisibility(t);
+            try { applyQuickToggles(); } catch (e) {}
+            refreshStatuses();
+            updateToggleBadge();
+            if (needsReload) location.reload();
+        };
+
+        const header = panel.querySelector('.ut-header');
+        let dragging = false, dx = 0, dy = 0;
+        header.addEventListener('mousedown', (e) => {
+            if (e.target.closest('button')) return;
+            dragging = true;
+            const r = panel.getBoundingClientRect();
+            dx = e.clientX - r.left; dy = e.clientY - r.top;
+            e.preventDefault();
+        });
+        document.addEventListener('mousemove', (e) => {
+            if (!dragging) return;
+            let nl = e.clientX - dx, nt = e.clientY - dy;
+            nl = Math.max(0, Math.min(window.innerWidth - panel.offsetWidth, nl));
+            nt = Math.max(0, Math.min(window.innerHeight - panel.offsetHeight, nt));
+            panel.style.left = nl + 'px';
+            panel.style.top = nt + 'px';
+            panel.style.bottom = 'auto'; panel.style.right = 'auto';
+            savePanelPos(nl, nt);
+        });
+        document.addEventListener('mouseup', () => { dragging = false; });
+
+        refreshStatuses();
+        updateToggleBadge();
+    }
+
+    /** Minimal HTML escape used for tool names/descriptions in the panel. */
+    function escapeHtml(s) {
+        return String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+    }
+
+    /** Inline reload-prompt banner (currently unused — kept for future settings flows). */
+    function showReloadHint(panel) {
+        if (panel.querySelector('.ut-reload-hint')) return;
+        const hint = document.createElement('div');
+        hint.className = 'ut-reload-hint';
+        hint.style.cssText = 'padding:8px 12px;background:rgba(245,158,11,0.15);color:#fbbf24;font-size:11px;text-align:center;border-top:1px solid rgba(245,158,11,0.3);';
+        hint.innerHTML = 'Reload the page for new tools to take effect. ' +
+            '<button style="margin-left:6px;background:#fbbf24;color:#000;border:none;border-radius:4px;padding:3px 8px;font-weight:700;cursor:pointer;font-size:11px;" onclick="location.reload()">Reload now</button>';
+        panel.querySelector('.ut-footer').before(hint);
+    }
+
+    /** Sync each switch's visual on/off state to the persisted setting. */
+    function refreshSwitches() {
+        const panel = document.getElementById(PANEL_ID);
+        if (!panel) return;
+        panel.querySelectorAll('[data-switch]').forEach(el => {
+            const id = el.getAttribute('data-switch');
+            const tool = TOOLS.find(t => t.id === id);
+            if (!tool) return;
+            el.classList.toggle('on', isEnabled(tool));
+        });
+    }
+
+    /** Refresh the per-tool status line ("Running" / "Hidden" / "Not for this page" / "Loading…"). */
+    function refreshStatuses() {
+        const panel = document.getElementById(PANEL_ID);
+        if (!panel) return;
+        panel.querySelectorAll('[data-status]').forEach(el => {
+            const id = el.getAttribute('data-status');
+            const tool = TOOLS.find(t => t.id === id);
+            if (!tool) return;
+            const matched = urlMatches(tool, location.href);
+            const enabled = isEnabled(tool);
+            el.className = 'ut-tool-status';
+            if (!matched) {
+                el.classList.add('unmatched');
+                el.textContent = 'Not for this page';
+            } else if (!enabled) {
+                el.classList.add('disabled');
+                el.textContent = tool._ran ? 'Hidden (loaded)' : 'Hidden';
+            } else if (tool._ran) {
+                el.classList.add('running');
+                el.textContent = 'Running';
+            } else {
+                el.classList.add('disabled');
+                el.textContent = 'Loading…';
+            }
+        });
+    }
+
+    /** Add/remove the green dot on the ⚙ toggle button when any tool is running. */
+    function updateToggleBadge() {
+        const toggle = document.getElementById(PANEL_TOGGLE_ID);
+        if (!toggle) return;
+        const anyActive = TOOLS.some(t => t._ran);
+        toggle.classList.toggle('has-active', anyActive);
+    }
+
+
+    /* =========================================================
+       BOOT SEQUENCE
+       --------------------------------------------------------
+       Order of operations:
+         1. document-start: hide disabled-tool selectors as early
+            as possible (avoids a flash of UI before they hide).
+         2. document-start: run any tools registered with
+            runAt: 'document-start' (e.g. the IOW/Smart HUDs that
+            need to hijack page DOM before React mounts).
+         3. DOMContentLoaded: run document-end tools.
+         4. +1500 ms: build the control panel (delay gives slow
+            sites time to settle their own DOM mutations so the
+            panel doesn't fight a re-render).
+         5. setupIowDiceIntegration: stitch the Dice Tool's
+            calculator/optimizer into the IOW/Smart HUD as the
+            "Advanced IOW" tab.
+       ========================================================= */
+
+    /** applyAllVisibility() that swallows pre-DOM errors. */
+    function safeApplyAllVisibility() {
+        try { applyAllVisibility(); } catch (e) {}
+    }
+
+    // Step 1: apply disabled-tool visibility ASAP.
+    safeApplyAllVisibility();
+
+    // Re-inject the visibility CSS once <head> exists (in case we ran before
+    // <head> was constructed and the style failed to attach).
+    if (!document.getElementById(VISIBILITY_STYLE_ID)) {
+        const headObserver = new MutationObserver(() => {
+            if (document.head) {
+                safeApplyAllVisibility();
+                if (document.getElementById(VISIBILITY_STYLE_ID)) headObserver.disconnect();
+            }
+        });
+        headObserver.observe(document.documentElement, { childList: true });
+    }
+
+    // Step 2: document-start tools.
+    for (const t of TOOLS) maybeRun(t, 'document-start');
+    safeApplyAllVisibility();
+
+    /** Run `fn` on DOMContentLoaded, or immediately if the DOM is already ready. */
+    function onReady(fn) {
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', fn, { once: true });
+        } else {
+            fn();
+        }
+    }
+
+    onReady(() => {
+        // Step 3: document-end tools.
+        for (const t of TOOLS) maybeRun(t, 'document-end');
+        safeApplyAllVisibility();
+        try { applyQuickToggles(); } catch (e) {}
+
+        // Step 4: control panel (delayed so sites finish mutating).
+        setTimeout(() => {
+            try { buildPanel(); } catch (e) { console.error('[UnifiedTools] panel build failed:', e); }
+            safeApplyAllVisibility();
+            try { applyQuickToggles(); } catch (e) {}
+        }, 1500);
+
+        // Step 5: cross-tool stitching for IOW/Smart + Dice Tool.
+        setupIowDiceIntegration();
+
+        // Step 6: SPA navigation watcher — fires when the user moves between
+        // pages without a full reload (Stake/Shuffle/Nuts all use React
+        // routers, so clicking between games never reloads the script). Two
+        // jobs on each URL change:
+        //   1. Re-apply tool visibility, so the URL-mismatch class hides UIs
+        //      from tools whose @match patterns no longer match (e.g. Mines
+        //      UI stays out of the Stake lobby).
+        //   2. Run any not-yet-run tool whose @match now covers the new URL,
+        //      so SPA-navigating to /casino/games/mines from elsewhere on
+        //      Stake actually loads the Mines tool.
+        installSpaNavWatcher();
+    });
+
+    /** Detects SPA URL changes (pushState, replaceState, popstate) and
+     *  triggers visibility refresh + lazy tool loading. Idempotent — safe
+     *  to call once. */
+    function installSpaNavWatcher() {
+        if (window.__unifiedToolsSpaWatcherInstalled) return;
+        window.__unifiedToolsSpaWatcherInstalled = true;
+
+        let lastUrl = location.href;
+        function onUrlChange() {
+            if (location.href === lastUrl) return;
+            lastUrl = location.href;
+            safeApplyAllVisibility();
+            try { applyQuickToggles(); } catch (e) {}
+            // Lazy-load tools that haven't run yet but now match. Uses each
+            // tool's registered runAt phase. Tools that already ran keep
+            // their original intervals/observers alive — their internal URL
+            // guards (where present) take care of tear-down.
+            for (const t of TOOLS) {
+                try { maybeRun(t, t.runAt || 'document-end'); }
+                catch (e) { console.error('[UnifiedTools] error running tool on SPA nav:', e); }
+            }
+        }
+
+        // Patch history methods so SPA-driven URL changes notify us. Defer
+        // by a tick because pushState fires before location.href has
+        // finished updating in some browsers.
+        try {
+            const origPush = history.pushState;
+            history.pushState = function () {
+                const ret = origPush.apply(this, arguments);
+                setTimeout(onUrlChange, 0);
+                return ret;
+            };
+            const origReplace = history.replaceState;
+            history.replaceState = function () {
+                const ret = origReplace.apply(this, arguments);
+                setTimeout(onUrlChange, 0);
+                return ret;
+            };
+        } catch (e) { /* userscript world may not let us patch */ }
+
+        window.addEventListener('popstate', () => setTimeout(onUrlChange, 0));
+
+        // Polling fallback: catches any URL changes the patches above miss
+        // (e.g. React router replacements that bypass the patched methods,
+        // or sites that swap window.history). Cheap — 500ms compare-strings.
+        setInterval(onUrlChange, 500);
+    }
+
+
+    /* Standalone build: no IOW/dice stitching needed for this tool. */
+    function setupIowDiceIntegration() {}
+
+
+    console.log('%c[Nuts Mines — Desktop] loaded (' + TOOLS.length + ' tool slot(s)). Click \u2699 to toggle.', 'color:#8bc34a;font-weight:700;');
+})();

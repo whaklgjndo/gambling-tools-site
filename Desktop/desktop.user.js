@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Desktop
 // @namespace    http://tampermonkey.net/
-// @version      2.63
+// @version      3.28
 // @description  .
 // @author       .
 // @match        https://nuts.gg/*
@@ -28,7 +28,7 @@
 (function () {
     'use strict';
 
-    console.log('%c🎲 Dice & Limbo Tools — desktop v2.41 — blend redesign (calc/opt/results) + native-UI guard (hotkeys/chat)', 'color:#17c7b8;font-weight:800;font-size:13px');
+    console.log('%c🎲 Dice & Limbo Tools — desktop v3.03 — DiceTool.exe replica UI (Calculator / Easy Mode / Strategy Finder / Results / Settings)', 'color:#17c7b8;font-weight:800;font-size:13px');
 
     /* =========================================================
        PRE-STITCH UI HIDER
@@ -4429,13 +4429,9 @@ Bets</span><span id="h-total-bets" class="hud-val">0</span></div>
         'AvgHigh', 'StdDev', 'MaxHigh', 'AvgCycles', 'AvgRounds',
         'CycleSuccess%', 'Bust%', 'Score'
     ];
-    // Friendlier results headers + per-column help (sort still keys off raw RES_COLS).
-    const RES_COL_LABELS = {
-        StartingBalance: 'Start $', Trials: 'Trials', BetDiv: 'Bet Divisor', ProfitMult: 'Profit Mult',
-        'W%': 'Win Inc %', L: 'Loss Reset', 'Buffer%': 'Buffer %', AvgHigh: 'Avg High $', StdDev: 'Std Dev',
-        MaxHigh: 'Max High $', AvgCycles: 'Avg Cycles', AvgRounds: 'Avg Rounds',
-        'CycleSuccess%': 'Success %', 'Bust%': 'Bust %', Score: 'Score'
-    };
+    // Exact DiceTool.exe column headers: labels fall back to the raw RES_COLS
+    // keys (BetDiv, ProfitMult, W%, ...), matching the desktop app's treeview.
+    const RES_COL_LABELS = {};
     const RES_COL_HELP = {
         StartingBalance: 'Starting bankroll used for the simulations.',
         Trials: 'Number of simulated runs per combo.',
@@ -4481,7 +4477,7 @@ Bets</span><span id="h-total-bets" class="hud-val">0</span></div>
     let selectedRowIdx = -1;
     let resultsSortCol = 'Score';
     let resultsSortAsc = false;
-    let showAllCols = false;   // Results: show all columns vs RES_COLS_PRIMARY only
+    let showAllCols = true;    // Results: all 15 DiceTool.exe columns, always (matches the app)
     let safeOnly = false;      // Results: hide rows with Bust% above SAFE_BUST_MAX
 
     /* =========================================================
@@ -4491,7 +4487,9 @@ Bets</span><span id="h-total-bets" class="hud-val">0</span></div>
         try {
             const snap = {};
             const ids = ['balance', 'win_inc', 'loss_reset', 'bet_div', 'profit_mult', 'buffer', 'n_trials',
-                         'opt_balance', 'opt_trials', 'opt_betdiv', 'opt_profit', 'opt_w', 'opt_l', 'opt_buf'];
+                         'opt_balance', 'opt_trials', 'easy_mult', 'easy_w'];
+            for (const p of ['opt_betdiv', 'opt_profit', 'opt_w', 'opt_l', 'opt_buf'])
+                for (const s of ['from', 'to', 'step', 'values']) ids.push(p + '_' + s);
             for (const k of ids) {
                 const el = $(k);
                 if (el) snap[k] = el.value;
@@ -5393,13 +5391,15 @@ self.onmessage = async (e) => {
         'Profit Stop': 'The profit goal for the current cycle, derived from the bet and multiplier.',
         'Balance Target': 'The balance amount where the simulation stops a successful cycle.',
         'Trials': 'Number of simulated runs. Higher values improve accuracy but take longer.',
-        'Starting Balance': 'The initial balance applied to all combos during optimization.',
+        'Starting Balance': 'The initial balance applied to all combos during the strategy search.',
         'Trials per Combo': 'The number of simulations run for each parameter combination.',
-        'Bet Divisor Range': 'Range or list of divisors to test. Syntax: 256-512;step=1 or 25,30,40',
-        'Profit Multiplier Range': 'Range or list of profit multipliers to test. Syntax: 25-150;step=5',
-        'Win Increase % Range': 'Range or list of win increases to test. Syntax: 50-150;step=5',
-        'Loss Reset (whole)': 'Range or list of loss reset counts. Syntax: 3-8 (integers only)',
-        'Buffer % Range': 'Range or list of buffer percentages. Syntax: 20-40;step=2'
+        'Bet Divisor Range': 'Bet divisor values to test. From - To walks a range (using Step); Values tests an exact comma list (e.g. 256,500). Both merge; either may be blank.',
+        'Profit Multiplier Range': 'Profit multiplier values to test. From - To walks a range (using Step); Values tests an exact comma list. Both merge; either may be blank.',
+        'Win Increase % Range': 'Win increase percentages to test. From - To walks a range (using Step); Values tests an exact comma list. Both merge; either may be blank.',
+        'Loss Reset (whole)': 'Loss reset counts to test (whole numbers). From - To walks a range (using Step); Values tests an exact comma list. Both merge; either may be blank.',
+        'Buffer % Range': 'Buffer percentages to test. From - To walks a range (using Step); Values tests an exact comma list. Both merge; either may be blank.',
+        'Win Chance': 'The dice win chance implied by the multiplier (99 / multiplier).',
+        'Reset Odds %': 'The chance that a full run of Loss Reset bets are all losses, triggering a bet reset.'
     };
 
     /* Extra CSS for the Advanced IOW UX upgrades. Injected on init (see injectUxStyles).
@@ -5674,17 +5674,41 @@ self.onmessage = async (e) => {
         #${PANEL_ID} input.dt-num-input { width: 72px; text-align: right; font-family: ui-monospace, "SF Mono", Consolas, monospace; }
         #${PANEL_ID} select.dt-theme-select:focus, #${PANEL_ID} input.dt-num-input:focus { outline: none; border-color: var(--dt-label-fg); box-shadow: 0 0 0 3px color-mix(in srgb, var(--dt-label-fg) 22%, transparent); }
 
-        /* ===== Extend downward: on the three working tabs, the STANDALONE floating
+        /* Optimizer — clean aligned layout: compact scalar row, then one grid
+           with a single From/To/Step/Values caption row (no repeated sublabels). */
+        #${PANEL_ID} .dt-opt-scalars { display: flex; align-items: center; gap: 10px 26px; flex-wrap: wrap; margin-bottom: 4px; }
+        #${PANEL_ID} .dt-opt-scalars .dt-in { width: 88px; padding: 6px 9px; }
+        #${PANEL_ID} .dt-opt-tablewrap { overflow-x: auto; }
+        #${PANEL_ID} .dt-opt-table { display: grid; grid-template-columns: 176px 74px 14px 74px 64px 220px; gap: 8px 6px; align-items: center; margin-top: 14px; justify-content: start; }
+        #${PANEL_ID} .dt-opt-table .dt-lbl { display: flex; align-items: center; }
+        #${PANEL_ID} .dt-opt-table .dt-in { width: 100%; min-width: 0; padding: 6px 8px; font-size: 12.5px; }
+        #${PANEL_ID} .dt-opt-table .dt-values-in { text-align: left; }
+        #${PANEL_ID} .dt-opt-cap { font-size: 9.5px; font-weight: 800; letter-spacing: .14em; text-transform: uppercase; color: color-mix(in srgb, var(--dt-fg) 42%, transparent); text-align: center; padding-bottom: 1px; }
+        #${PANEL_ID} .dt-opt-cap.values { text-align: left; padding-left: 4px; }
+        #${PANEL_ID} .dt-opt-dash { text-align: center; color: color-mix(in srgb, var(--dt-fg) 38%, transparent); font-weight: 600; }
+
+        /* Easy Mode tab */
+        #${PANEL_ID} .dt-easy-grid { display: grid; grid-template-columns: auto 1fr auto 1fr; gap: 9px 12px; align-items: center; }
+        #${PANEL_ID} .dt-easy-cell { display: flex; align-items: center; gap: 6px; }
+        #${PANEL_ID} .dt-easy-cell .dt-in { width: 86px; }
+        #${PANEL_ID} .dt-easy-meta { display: flex; align-items: center; gap: 10px; margin-top: 11px; flex-wrap: wrap; }
+        #${PANEL_ID} .dt-easy-val { font-family: ui-monospace, monospace; color: var(--dt-label-fg); font-weight: 700; }
+        #${PANEL_ID} .dt-easy-status { font-size: 11px; font-style: italic; color: color-mix(in srgb, var(--dt-fg) 55%, transparent); }
+        #${PANEL_ID} .dt-easy-scroll { flex: 1; }
+
+        /* ===== Extend downward: on the working tabs, the STANDALONE floating
            panel anchors near the top and uses more vertical space (less scrolling).
            Settings keeps the original centered size. No effect when the panel is
            stitched into the IOW HUD (there it is position:static and the HUD's own
            height governs — see the stitched-height rule below). ===== */
         #${PANEL_ID}[data-active-tab="calc"],
+        #${PANEL_ID}[data-active-tab="easy"],
         #${PANEL_ID}[data-active-tab="opt"],
         #${PANEL_ID}[data-active-tab="results"] {
             top: 4vh; height: 92vh; max-height: none; transform: translate(120%, 0);
         }
         #${PANEL_ID}.show[data-active-tab="calc"],
+        #${PANEL_ID}.show[data-active-tab="easy"],
         #${PANEL_ID}.show[data-active-tab="opt"],
         #${PANEL_ID}.show[data-active-tab="results"] {
             transform: translate(0, 0);
@@ -5737,13 +5761,15 @@ self.onmessage = async (e) => {
               <button class="dt-close" id="dt-close-btn" aria-label="Close">×</button>
             </div>
             <nav class="dt-tabs" role="tablist">
-              <button class="dt-tab-btn active" data-tab="calc"><span class="dt-tab-icon">🎲</span>Calculator</button>
-              <button class="dt-tab-btn" data-tab="opt"><span class="dt-tab-icon">⚙️</span>Optimizer</button>
-              <button class="dt-tab-btn" data-tab="results"><span class="dt-tab-icon">📊</span>Results</button>
-              <button class="dt-tab-btn" data-tab="settings"><span class="dt-tab-icon">🛠</span>Settings</button>
+              <button class="dt-tab-btn active" data-tab="calc">Calculator / Simulator</button>
+              <button class="dt-tab-btn" data-tab="easy">Easy Mode</button>
+              <button class="dt-tab-btn" data-tab="opt">Strategy Finder</button>
+              <button class="dt-tab-btn" data-tab="results">Strategy Finder Results</button>
+              <button class="dt-tab-btn" data-tab="settings">Settings</button>
             </nav>
             <div class="dt-body">
               ${buildCalcPanel()}
+              ${buildEasyPanel()}
               ${buildOptPanel()}
               ${buildResultsPanel()}
               ${buildSettingsPanel()}
@@ -5852,47 +5878,67 @@ self.onmessage = async (e) => {
                <span class="dt-step-dot">${n}</span><span class="dt-step-name">${name}</span>
              </button>`).join('') + `</div>`;
     }
+    /* Exact DiceTool.exe layout: Calculated Values | Parameters side by side
+       (Simulation Controls under Parameters), Simulation Results treeview
+       below. Element IDs are unchanged so all existing wiring still lands. */
     function buildCalcPanel() {
+        const cvRow = (label, outId, hidden) => `
+              <div class="dt-cv-row"${hidden ? ' hidden' : ''}>
+                <span class="dt-lbl">${label}</span>
+                <input type="text" class="dt-out-val dt-entry" id="dt-${outId}" readonly>
+                <button class="dt-btn dt-btn-copy" data-copy="${outId}">Copy</button>
+              </div>`;
+        const pmCell = (label, id, value, inputmode) => `
+                  <span class="dt-lbl">${label}</span>
+                  <input type="text" inputmode="${inputmode || 'decimal'}" class="dt-in dt-entry" id="dt-${id}" value="${value}">`;
         return `
           <section class="dt-panel active" id="dt-panel-calc">
-            ${stepperHTML(3)}
-            <div class="dt-coach"><b>Use your strategy.</b> Put these two numbers into the game, then hit Send.</div>
-            <div class="dt-heroes">
-              ${heroOutHTML('Starting bet', 'Bet Size', 'out_bet', '$')}
-              ${heroOutHTML('Stop at profit', 'Profit Stop', 'out_profit', '$')}
-            </div>
-            <div class="dt-subout">
-              ${subOutHTML('Payout multiplier', 'Multiplier', 'out_mult')}
-              ${subOutHTML('Target balance', 'Balance Target', 'out_target')}
-            </div>
-            <button class="dt-btn dt-btn-primary dt-go dt-go-big" id="dt-game_sync">Send to game →</button>
-            <button class="dt-btn dt-btn-block" id="dt-game_import">Create a fresh strategy</button>
-
-            <div class="dt-card">
-              <div class="dt-card-title">Your numbers</div>
-              <div class="dt-card-sub">Edit anything — the bet &amp; profit above update instantly. Tap any ? for help.</div>
-              ${rowInputHTML('Bankroll', 'Balance', 'balance', '20', 'decimal', "Money you're playing with")}
-              ${rowInputHTML('Bet increase on win %', 'Win Increase %', 'win_inc', '78', 'decimal', 'Grows your bet after a win')}
-              ${rowInputHTML('Losses before reset', 'Loss Reset', 'loss_reset', '5', 'numeric', 'Back to base bet after N losses')}
-              ${rowInputHTML('Bet size control', 'Balance Divisor', 'bet_div', '500', 'decimal', 'Higher = smaller, safer bets')}
-              ${rowInputHTML('Profit target multiplier', 'Profit Multiplier', 'profit_mult', '100', 'decimal', 'Sets your profit stop')}
-              ${rowInputHTML('Safety margin %', 'Buffer %', 'buffer', '25', 'decimal', 'Extra cushion on the multiplier')}
-            </div>
-
-            <div class="dt-card">
-              <div class="dt-card-title">Test it first <span class="dt-opt-tag">optional</span></div>
-              <div class="dt-card-sub">See how this strategy performs before betting real money.</div>
-              ${rowInputHTML('Number of test runs', 'Trials', 'n_trials', '100', 'numeric')}
-              <div class="dt-btn-row" style="margin-top:9px;">
-                <button class="dt-btn dt-btn-primary" id="dt-sim_run">Run test</button>
-                <button class="dt-btn dt-btn-danger" id="dt-sim_stop" disabled>Stop</button>
+            <div class="dt-calc-grid">
+              <div class="dt-card dt-lf">
+                <div class="dt-card-title">Calculated Values</div>
+                ${cvRow('Multiplier:', 'out_mult')}
+                ${cvRow('Bet Size:', 'out_bet')}
+                ${cvRow('Balance Target:', 'out_target')}
+                ${cvRow('Profit Stop:', 'out_profit', true)}
               </div>
-              <div class="dt-progress-wrap"><div class="dt-progress-bar" id="dt-sim_progress"></div></div>
-              <div class="dt-status-line" id="dt-sim_status">Idle</div>
-              <div class="dt-scroll" style="margin-top:8px;">
+              <div class="dt-calc-right">
+                <div class="dt-card dt-lf">
+                  <div class="dt-card-title">Parameters</div>
+                  <div class="dt-pm-grid">
+                    ${pmCell('Balance:', 'balance', '20')}
+                    ${pmCell('Balance Divisor:', 'bet_div', '500')}
+                    ${pmCell('Win Increase %:', 'win_inc', '78')}
+                    ${pmCell('Profit Multiplier:', 'profit_mult', '100')}
+                    ${pmCell('Loss Reset:', 'loss_reset', '5', 'numeric')}
+                    ${pmCell('Buffer %:', 'buffer', '25')}
+                  </div>
+                  <div class="dt-pm-btns">
+                    <button class="dt-btn" id="dt-game_sync">Send To Game</button>
+                    <button class="dt-btn" id="dt-game_import">Create Strategy</button>
+                  </div>
+                </div>
+                <div class="dt-card dt-lf">
+                  <div class="dt-card-title">Simulation Controls</div>
+                  <div class="dt-ctl-row">
+                    <button class="dt-btn" id="dt-sim_run">Run Simulation</button>
+                    <span class="dt-lbl">Trials:</span>
+                    <input type="text" inputmode="numeric" class="dt-in dt-entry" id="dt-n_trials" value="100">
+                  </div>
+                  <div class="dt-ctl-row">
+                    <button class="dt-btn" id="dt-sim_stop" disabled>Stop</button>
+                    <div class="dt-progress-wrap"><div class="dt-progress-bar" id="dt-sim_progress"></div></div>
+                  </div>
+                  <div class="dt-status-line" id="dt-sim_status">Idle</div>
+                </div>
+              </div>
+            </div>
+            <div class="dt-card dt-lf dt-lf-grow">
+              <div class="dt-card-title">Simulation Results</div>
+              <div class="dt-scroll">
                 <table class="dt-stats" id="dt-sim_results">
+                  <thead><tr><th>Statistic</th><th>Value</th></tr></thead>
                   <tbody>
-                    <tr><td colspan="2" style="text-align:center; opacity:0.5; padding:14px;">Run a test to see how often this strategy wins.</td></tr>
+                    <tr><td colspan="2" class="dt-empty">Run a simulation to populate results.</td></tr>
                   </tbody>
                 </table>
               </div>
@@ -5901,147 +5947,173 @@ self.onmessage = async (e) => {
         `;
     }
 
-    /* ---- Tab: Optimizer ---- */
+    /* ---- Tab: Optimizer — mirrors the desktop tool's structured inputs:
+       each range row is [From] - [To] with its own Step, plus a Values field
+       for individual comma-separated numbers. Range and Values merge into
+       one de-duplicated list; either part may be left blank. Run Optimizer
+       inside bottom-left, then progress, centered status, and
+       Clear Results / Stop on the bottom row. ---- */
     function buildOptPanel() {
+        const scalar = (label, id, value) => `
+                <span class="dt-lbl">${label}${helpBtn(label)}</span>
+                <input type="text" class="dt-in dt-entry" id="dt-${id}" value="${value}">`;
+        const rangeRow = (label, id, frm, to, step, values) => `
+              <span class="dt-lbl">${label}${helpBtn(label)}</span>
+              <input type="text" inputmode="decimal" class="dt-in dt-entry" id="dt-${id}_from" value="${frm}" aria-label="${label} from">
+              <span class="dt-opt-dash">&ndash;</span>
+              <input type="text" inputmode="decimal" class="dt-in dt-entry" id="dt-${id}_to" value="${to}" aria-label="${label} to">
+              <input type="text" inputmode="decimal" class="dt-in dt-entry" id="dt-${id}_step" value="${step}" aria-label="${label} step">
+              <input type="text" inputmode="decimal" class="dt-in dt-entry dt-values-in" id="dt-${id}_values" value="${values}" placeholder="e.g. 25,30,40" aria-label="${label} values">`;
         return `
           <section class="dt-panel" id="dt-panel-opt">
-            ${stepperHTML(1)}
-            <div class="dt-coach"><b>Find a strategy.</b> The tool tests hundreds of setups and ranks the best for you.</div>
-            <div class="dt-card">
-              <div class="dt-card-title">How hard should it search?</div>
-              <div class="dt-card-sub">Just pick one and press Find. You can fine-tune the ranges below.</div>
-              <div class="dt-preset-grid">
-                <button type="button" class="dt-preset" data-preset="quick"><span class="dt-preset-ic">⚡</span><span><span class="dt-preset-name">Quick</span><span class="dt-preset-desc">~70 setups · a few seconds</span></span></button>
-                <button type="button" class="dt-preset" data-preset="balanced"><span class="dt-preset-rec">Recommended</span><span class="dt-preset-ic">⚖️</span><span><span class="dt-preset-name">Balanced</span><span class="dt-preset-desc">a few hundred setups · best for most people</span></span></button>
-                <button type="button" class="dt-preset" data-preset="thorough"><span class="dt-preset-ic">🔬</span><span><span class="dt-preset-name">Thorough</span><span class="dt-preset-desc">thousands · slower, most complete</span></span></button>
-                <button type="button" class="dt-preset" data-preset="center"><span class="dt-preset-ic">🎯</span><span><span class="dt-preset-name">Around my setup</span><span class="dt-preset-desc">centers on your Calculator values</span></span></button>
+            <div class="dt-card dt-lf">
+              <div class="dt-card-title">Parameter Ranges</div>
+              <div class="dt-opt-scalars">
+                ${scalar('Starting Balance', 'opt_balance', '20')}
+                ${scalar('Trials per Combo', 'opt_trials', '10')}
               </div>
-              ${rowInputHTML('Bankroll', 'Starting Balance', 'opt_balance', '20', 'decimal', "Money you're playing with")}
-              ${rowInputHTML('Tests per setup', 'Trials per Combo', 'opt_trials', '10', 'numeric', 'More = more accurate, slower')}
-
-              <details class="dt-adv-ranges">
-                <summary>Customize ranges<span class="dt-adv-hint">advanced — presets fill these</span></summary>
-                ${rangeGroupHTML('Bet size control', 'opt_betdiv', '256,500', 'e.g. 256-512;step=1 or 25,30,40', 'Bet Divisor Range')}
-                ${rangeGroupHTML('Profit target multiplier', 'opt_profit', '50,100', 'e.g. 25-150;step=5', 'Profit Multiplier Range')}
-                ${rangeGroupHTML('Bet increase on win %', 'opt_w', '50-100;step=5', 'e.g. 50-150;step=5', 'Win Increase % Range')}
-                ${rangeGroupHTML('Losses before reset', 'opt_l', '3-5;step=1', 'e.g. 3-8 (whole numbers)', 'Loss Reset (whole)')}
-                ${rangeGroupHTML('Safety margin %', 'opt_buf', '25,30,40', 'e.g. 20-40;step=2', 'Buffer % Range')}
-              </details>
+              <div class="dt-opt-tablewrap">
+                <div class="dt-opt-table">
+                  <span></span><span class="dt-opt-cap">From</span><span></span><span class="dt-opt-cap">To</span><span class="dt-opt-cap">Step</span><span class="dt-opt-cap values">Values</span>
+                  ${rangeRow('Bet Divisor Range', 'opt_betdiv', '', '', '', '256,500')}
+                  ${rangeRow('Profit Multiplier Range', 'opt_profit', '', '', '', '50,100')}
+                  ${rangeRow('Win Increase % Range', 'opt_w', '50', '100', '5', '')}
+                  ${rangeRow('Loss Reset (whole)', 'opt_l', '3', '5', '1', '')}
+                  ${rangeRow('Buffer % Range', 'opt_buf', '', '', '', '25,30,40')}
+                </div>
+              </div>
+              <div class="dt-opt-runrow"><button class="dt-btn" id="dt-opt_run">Run Strategy Finder</button></div>
             </div>
-
-            <div class="dt-card">
-              <div class="dt-est" id="dt-opt_preview">&mdash;</div>
-              <button class="dt-btn dt-btn-primary dt-go dt-go-big" id="dt-opt_run">⚙️ Find strategies</button>
-              <div class="dt-progress-wrap" style="margin-top:8px;"><div class="dt-progress-bar" id="dt-opt_progress"></div></div>
-              <div class="dt-status-line" id="dt-opt_status">Ready when you are.</div>
-              <div class="dt-btn-row" style="margin-top:9px;">
-                <button class="dt-btn" id="dt-opt_clear">Clear results</button>
-                <button class="dt-btn dt-btn-danger" id="dt-opt_stop" disabled>Stop</button>
-              </div>
-              <button type="button" class="dt-next" id="dt-next_opt" data-goto="results" disabled>Run a search to continue</button>
+            <div class="dt-progress-wrap"><div class="dt-progress-bar" id="dt-opt_progress"></div></div>
+            <div class="dt-status-line" id="dt-opt_status">Idle</div>
+            <div class="dt-opt-foot">
+              <button class="dt-btn" id="dt-opt_clear">Clear Results</button>
+              <button class="dt-btn" id="dt-opt_stop" disabled>Stop</button>
             </div>
           </section>
         `;
     }
 
-    /* ---- Tab: Results ---- */
+    /* ---- Tab: Easy Mode — port of the desktop tool's Easy Mode tab.
+       Pin Multiplier and/or Win Increase % (or leave either on Any) and get
+       every whole-number combo; Loss Reset and Buffer % are outputs, worked
+       out automatically so pinned values are matched exactly. ---- */
+    function buildEasyPanel() {
+        return `
+          <section class="dt-panel" id="dt-panel-easy">
+            <div class="dt-card dt-lf">
+              <div class="dt-card-title">Desired Parameters</div>
+              <div class="dt-easy-grid">
+                <span class="dt-lbl">Multiplier:${helpBtn('Multiplier')}</span>
+                <span class="dt-easy-cell">
+                  <input type="text" inputmode="decimal" class="dt-in dt-entry" id="dt-easy_mult" value="Any">
+                  <button type="button" class="dt-btn dt-btn-small" id="dt-easy_mult_any" title="Reset this field back to Any">Any</button>
+                </span>
+                <span class="dt-lbl">Win Increase %:${helpBtn('Win Increase %')}</span>
+                <span class="dt-easy-cell">
+                  <input type="text" inputmode="decimal" class="dt-in dt-entry" id="dt-easy_w" value="Any">
+                  <button type="button" class="dt-btn dt-btn-small" id="dt-easy_w_any" title="Reset this field back to Any">Any</button>
+                </span>
+              </div>
+              <div class="dt-easy-meta">
+                <span class="dt-lbl">Win Chance:${helpBtn('Win Chance')}</span><span class="dt-easy-val" id="dt-easy_chance">--</span>
+                <span class="dt-lbl">Combos:</span><span class="dt-easy-val" id="dt-easy_count">0</span>
+                <span class="dt-easy-status" id="dt-easy_status"></span>
+              </div>
+            </div>
+            <div class="dt-card dt-lf dt-lf-grow">
+              <div class="dt-card-title">Matching Combos</div>
+              <div class="dt-scroll dt-easy-scroll">
+                <table class="dt-results" id="dt-easy_table">
+                  <thead><tr id="dt-easy_head"></tr></thead>
+                  <tbody id="dt-easy_body"></tbody>
+                </table>
+              </div>
+              <div class="dt-res-foot">
+                <button class="dt-btn" id="dt-easy_apply">Apply Selected to Calculator</button>
+              </div>
+            </div>
+          </section>
+        `;
+    }
+
+    /* ---- Tab: Optimizer Results — exact DiceTool.exe layout: the full
+       15-column treeview filling the tab, with Apply Selected to Calculator
+       (left) and Save to CSV (right) underneath. The res_status element is
+       kept hidden because renderResults() writes to it unconditionally. ---- */
     function buildResultsPanel() {
         return `
           <section class="dt-panel" id="dt-panel-results">
-            ${stepperHTML(2)}
-            <div class="dt-coach"><b>Pick a strategy.</b> We've highlighted the best one for you.</div>
-            <div id="dt-res_best"></div>
-            <div class="dt-card">
-              <div class="dt-card-title">All results</div>
-              <div class="dt-card-sub">Ranked best-first. Tap a row to select it, then "Use selected".</div>
-              <div class="dt-res-toolbar">
-                <label class="dt-toggle"><input type="checkbox" id="dt-res_safe"> Hide risky <span style="opacity:0.6;">(bust &gt; ${SAFE_BUST_MAX}%)</span></label>
-                <label class="dt-toggle"><input type="checkbox" id="dt-res_allcols"> All columns</label>
-              </div>
-              <div class="dt-status-line" id="dt-res_status">No results yet — run the Optimizer first.</div>
-              <div class="dt-scroll">
-                <table class="dt-results" id="dt-res_table">
-                  <thead><tr id="dt-res_head"></tr></thead>
-                  <tbody id="dt-res_body"></tbody>
-                </table>
-              </div>
-              <div class="dt-btn-row">
-                <button class="dt-btn dt-btn-primary" id="dt-res_apply">Use selected</button>
-                <button class="dt-btn" id="dt-res_csv">Export CSV</button>
-              </div>
+            <div class="dt-scroll dt-res-scroll">
+              <table class="dt-results" id="dt-res_table">
+                <thead><tr id="dt-res_head"></tr></thead>
+                <tbody id="dt-res_body"></tbody>
+              </table>
+            </div>
+            <div class="dt-status-line" id="dt-res_status" hidden>No results yet.</div>
+            <div class="dt-res-foot">
+              <button class="dt-btn" id="dt-res_apply">Apply Selected to Calculator</button>
+              <button class="dt-btn" id="dt-res_csv">Save to CSV</button>
             </div>
           </section>
         `;
     }
 
-    /* ---- Tab: Settings ---- */
+    /* ---- Tab: Settings — exact DiceTool.exe layout: a centered, fixed-width
+       column with the app's "Interface Appearance" and "Optimizer Behavior"
+       LabelFrames, plus one extra "Advanced" frame (same styling) for the
+       web-only controls that have no desktop-app equivalent. ---- */
     function buildSettingsPanel() {
         return `
           <section class="dt-panel" id="dt-panel-settings">
-            <div class="dt-coach">Tune the look and behaviour. <b>Everything here is optional</b> — the defaults work fine.</div>
-            <div class="dt-card">
-              <div class="dt-card-title">Appearance</div>
-              <div class="dt-card-sub">Theme and text size.</div>
-              <div class="dt-setting-row">
-                <div>
-                  <div class="dt-setting-label">Color theme</div>
-                  <div class="dt-setting-desc">Match your casino's look.</div>
+            <div class="dt-settings-center">
+              <div class="dt-card dt-lf">
+                <div class="dt-card-title">Interface Appearance</div>
+                <div class="dt-set-row">
+                  <span class="dt-lbl">Color Theme</span>
+                  <select class="dt-theme-select" id="dt-theme_select">
+                    <option value="original">Original</option>
+                    <option value="stake">Stake</option>
+                    <option value="shuffle">Shuffle</option>
+                  </select>
                 </div>
-                <select class="dt-theme-select" id="dt-theme_select">
-                  <option value="original">Original</option>
-                  <option value="stake">Stake</option>
-                  <option value="shuffle">Shuffle</option>
-                </select>
-              </div>
-              <div class="dt-setting-row">
-                <div>
-                  <div class="dt-setting-label">Bigger text</div>
-                  <div class="dt-setting-desc">Increases text size by 20% everywhere.</div>
+                <div class="dt-sep"></div>
+                <div class="dt-set-row">
+                  <span class="dt-lbl">Large Fonts Mode (+4pt)</span>
+                  <input type="checkbox" class="dt-chk" id="dt-large_fonts">
                 </div>
-                <label class="dt-switch"><input type="checkbox" id="dt-large_fonts"><span class="dt-slider"></span></label>
               </div>
-            </div>
-            <div class="dt-card">
-              <div class="dt-card-title">Optimizer</div>
-              <div class="dt-setting-row">
-                <div>
-                  <div class="dt-setting-label">Keep previous results</div>
-                  <div class="dt-setting-desc">Add new runs to the Results list instead of replacing them.</div>
+              <div class="dt-card dt-lf">
+                <div class="dt-card-title">Strategy Finder Behavior</div>
+                <div class="dt-set-row">
+                  <span class="dt-lbl">Append Results</span>
+                  <input type="checkbox" class="dt-chk" id="dt-keep_prev">
                 </div>
-                <label class="dt-switch"><input type="checkbox" id="dt-keep_prev"><span class="dt-slider"></span></label>
+                <div class="dt-set-desc">If checked, new strategy searches will be added to the existing table instead of clearing it.</div>
               </div>
-              <div class="dt-setting-row">
-                <div>
-                  <div class="dt-setting-label">Speed (CPU cores)</div>
-                  <div class="dt-setting-desc">More cores = faster runs. 1–8.</div>
+              <div class="dt-card dt-lf">
+                <div class="dt-card-title">Advanced</div>
+                <div class="dt-set-row">
+                  <span class="dt-lbl">Worker Threads (1–8)</span>
+                  <input type="number" min="1" max="8" class="dt-num-input dt-entry" id="dt-worker_count">
                 </div>
-                <input type="number" min="1" max="8" class="dt-num-input" id="dt-worker_count">
-              </div>
-            </div>
-            <div class="dt-card">
-              <div class="dt-card-title">Live streak counter</div>
-              <div class="dt-setting-row">
-                <div>
-                  <div class="dt-setting-label">Show the counter</div>
-                  <div class="dt-setting-desc">A small floating widget that tracks your live win/loss streaks.</div>
+                <div class="dt-sep"></div>
+                <div class="dt-set-row">
+                  <span class="dt-lbl">Show Streak Counter</span>
+                  <input type="checkbox" class="dt-chk" id="dt-show_counter">
                 </div>
-                <label class="dt-switch"><input type="checkbox" id="dt-show_counter"><span class="dt-slider"></span></label>
-              </div>
-              <div class="dt-setting-row">
-                <div>
-                  <div class="dt-setting-label">Auto-stop on win streak</div>
-                  <div class="dt-setting-desc">Automatically stops autoplay once your win streak hits the target.</div>
+                <div class="dt-sep"></div>
+                <div class="dt-set-row">
+                  <span class="dt-lbl">Autostop On Win Streak</span>
+                  <input type="checkbox" class="dt-chk" id="dt-counter_autostop">
                 </div>
-                <label class="dt-switch"><input type="checkbox" id="dt-counter_autostop"><span class="dt-slider"></span></label>
+                <div class="dt-sep"></div>
+                <div class="dt-set-row">
+                  <span class="dt-lbl">Version</span>
+                  <span class="dt-set-val">Dice &amp; Limbo Tools v3.03 (Desktop)</span>
+                </div>
+                <button class="dt-btn dt-btn-block" id="dt-reset_state">Reset All Saved Data</button>
               </div>
-            </div>
-            <div class="dt-card">
-              <div class="dt-card-title">About</div>
-              <div class="dt-setting-row">
-                <div class="dt-setting-label">Version</div>
-                <div style="opacity:0.7;">Dice &amp; Limbo Tools v2.41 (Desktop)</div>
-              </div>
-              <button class="dt-btn dt-btn-block dt-btn-small" id="dt-reset_state">Reset all saved data</button>
             </div>
           </section>
         `;
@@ -6071,10 +6143,14 @@ self.onmessage = async (e) => {
             const bet_size = balance / bet_div;
             const profit_stop = bet_size * profit_mult;
             const target = balance + profit_stop;
+            // Nuts is denominated in SOL (8dp): 4dp/2dp rounds real amounts to a
+            // flat 0.0000 / 0.00. Stake and Shuffle keep their original 4dp/2dp.
+            const betDp = IS_NUTS_HOST ? 8 : 4;
+            const amtDp = IS_NUTS_HOST ? 8 : 2;
             $('out_mult').value = m.toFixed(2) + 'x';
-            $('out_bet').value = bet_size.toFixed(4);
-            $('out_profit').value = profit_stop.toFixed(2);
-            $('out_target').value = target.toFixed(2);
+            $('out_bet').value = bet_size.toFixed(betDp);
+            $('out_profit').value = profit_stop.toFixed(amtDp);
+            $('out_target').value = target.toFixed(amtDp);
         } catch {
             ['out_mult', 'out_bet', 'out_profit', 'out_target'].forEach(id => $(id).value = 'Invalid');
         }
@@ -6206,15 +6282,151 @@ self.onmessage = async (e) => {
         } catch { return []; }
     }
 
+    /* Merge one param's From/To/Step range with its Values comma list into a
+       sorted, de-duplicated list (mirrors the desktop tool's _range_values).
+       Either part may be blank; a comma list typed in From still works. */
+    function mergedRange(id, integer = false) {
+        const g = suf => { const el = $(id + '_' + suf); return el ? el.value.trim() : ''; };
+        const frm = g('from'), to = g('to'), step = g('step'), extra = g('values');
+        let vals = [];
+        if (frm.includes(',')) vals = vals.concat(parseRange(frm, integer));
+        else if (frm) {
+            let text = to ? (frm + '-' + to) : frm;
+            if (to && step) text += ';step=' + step;
+            vals = vals.concat(parseRange(text, integer));
+        }
+        if (extra) vals = vals.concat(parseRange(extra, integer));
+        return Array.from(new Set(vals.filter(Number.isFinite))).sort((a, b) => a - b);
+    }
+
+    /* ===== EASY MODE ENGINE (port of the desktop tool's easy_tab) =====
+       Pin Multiplier and/or Win Increase %; Loss Reset is enumerated up to
+       the multiplier (cap 100) and Buffer % is solved so pinned values are
+       matched exactly. Multiplier on Any = reverse-calculator sweeps. */
+    const EASY_W_MAX = 500, EASY_L_SWEEP = 10, EASY_L_CAP = 100, EASY_BUF_MAX = 100;
+    let easyRows = [], easySelectedIdx = -1, easySortCol = null, easySortAsc = true, easyTimer = null;
+    const EASY_COLS = [
+        { key: 'm', label: 'Multiplier' },
+        { key: 'w', label: 'Win Increase %' },
+        { key: 'l', label: 'Loss Reset' },
+        { key: 'b', label: 'Buffer %' },
+        { key: 'chance', label: 'Win Chance %' },
+        { key: 'odds', label: 'Reset Odds %' }
+    ];
+    function easyFindCombos(m, w) {
+        if (m == null && w == null) return null; // unbounded search
+        const rows = [];
+        const add = (mi, wi, li, bi) => {
+            if (mi <= 1) return;
+            const chance = 0.99 / mi;
+            rows.push({ m: mi, w: wi, l: li, b: bi, chance: chance * 100, odds: Math.pow(1 - chance, li) * 100 });
+        };
+        const lMax = m != null ? Math.min(Math.floor(m), EASY_L_CAP) : EASY_L_SWEEP;
+        for (let l = 1; l <= lMax; l++) {
+            if (m == null) { // W pinned, no multiplier: whole-number buffer sweep
+                for (let b = 0; b <= EASY_BUF_MAX; b++) add((1 + w / 100) * l * (1 + b / 100), w, l, b);
+            } else if (w != null) { // both pinned per L: solve the buffer
+                const b = (m / ((1 + w / 100) * l) - 1) * 100;
+                if (b >= -1e-9 && b <= EASY_BUF_MAX + 1e-9) add(m, w, l, Math.min(Math.max(b, 0), EASY_BUF_MAX));
+            } else { // multiplier pinned: whole-number W sweep, solve the buffer
+                for (let wi = 1; wi <= EASY_W_MAX; wi++) {
+                    const b = (m / ((1 + wi / 100) * l) - 1) * 100;
+                    if (b >= -1e-9 && b <= EASY_BUF_MAX + 1e-9) add(m, wi, l, Math.min(Math.max(b, 0), EASY_BUF_MAX));
+                }
+            }
+        }
+        rows.sort((a, b) => a.m - b.m || a.l - b.l || a.w - b.w);
+        rows.forEach((r, i) => { r._i = i; });
+        return rows;
+    }
+    function easyParse(id, lo, hi) {
+        const el = $(id); const t = el ? el.value.trim() : '';
+        if (!t || /^(any|all)$/i.test(t)) return { ok: true, v: null };
+        const v = parseFloat(t);
+        if (!Number.isFinite(v) || !(v > lo && v <= hi)) return { ok: false, v: null };
+        return { ok: true, v };
+    }
+    function fmtEasyW(w) { return Math.abs(w - Math.round(w)) < 1e-9 ? String(Math.round(w)) : w.toFixed(2); }
+    function easyRefresh() {
+        easyTimer = null;
+        const body = $('easy_body'); if (!body) return;
+        const pm = easyParse('easy_mult', 1, 9900);
+        const pw = easyParse('easy_w', 0, EASY_W_MAX);
+        $('easy_chance').textContent = (pm.ok && pm.v != null) ? (99 / pm.v).toFixed(2) + '%' : '--';
+        easySelectedIdx = -1;
+        if (!pm.ok || !pw.ok) {
+            easyRows = []; body.innerHTML = ''; $('easy_count').textContent = '0';
+            $('easy_status').textContent = 'Check inputs - each box needs a number or Any.';
+            return;
+        }
+        const rows = easyFindCombos(pm.v, pw.v);
+        if (rows == null) {
+            easyRows = []; body.innerHTML = ''; $('easy_count').textContent = '0';
+            $('easy_status').textContent = 'Pin Multiplier or Win Increase % to search.';
+            return;
+        }
+        easyRows = rows;
+        $('easy_count').textContent = String(rows.length);
+        $('easy_status').textContent = rows.length ? '' : 'No combos match - loosen a filter.';
+        renderEasyTable();
+    }
+    function renderEasyTable() {
+        const head = $('easy_head'), body = $('easy_body');
+        if (!head || !body) return;
+        head.innerHTML = EASY_COLS.map(c => {
+            const arrow = c.key === easySortCol ? (easySortAsc ? ' ▲' : ' ▼') : '';
+            return `<th data-col="${c.key}">${c.label}${arrow}</th>`;
+        }).join('');
+        let rows = easyRows;
+        if (easySortCol) {
+            rows = rows.slice().sort((a, b) => easySortAsc ? a[easySortCol] - b[easySortCol] : b[easySortCol] - a[easySortCol]);
+        }
+        body.innerHTML = rows.map(r =>
+            `<tr data-idx="${r._i}" class="${r._i === easySelectedIdx ? 'selected' : ''}">` +
+            `<td>${r.m.toFixed(2)}</td><td>${fmtEasyW(r.w)}</td><td>${r.l}</td>` +
+            `<td>${r.b.toFixed(2)}</td><td>${r.chance.toFixed(2)}</td><td>${r.odds.toFixed(2)}</td></tr>`
+        ).join('');
+    }
+    function onEasyTableClick(e) {
+        const th = e.target.closest('th');
+        if (th && th.dataset.col) {
+            if (easySortCol === th.dataset.col) easySortAsc = !easySortAsc;
+            else { easySortCol = th.dataset.col; easySortAsc = true; }
+            renderEasyTable();
+            return;
+        }
+        const tr = e.target.closest('tr[data-idx]');
+        if (tr) {
+            $$('#dt-easy_body tr').forEach(r => r.classList.remove('selected'));
+            tr.classList.add('selected');
+            easySelectedIdx = parseInt(tr.dataset.idx);
+        }
+    }
+    function easyApplySelected() {
+        if (easySelectedIdx < 0 || !easyRows[easySelectedIdx]) { toast('Select a combo row first.'); return; }
+        const r = easyRows[easySelectedIdx];
+        $('win_inc').value = fmtEasyW(r.w);
+        $('loss_reset').value = String(r.l);
+        $('buffer').value = r.b.toFixed(2);
+        calcValues();
+        saveState();
+        switchTab('calc');
+        toast('Combo applied to Calculator');
+    }
+    function easySchedule() {
+        if (easyTimer) clearTimeout(easyTimer);
+        easyTimer = setTimeout(easyRefresh, 250);
+    }
+
     function getOptParams() {
         const opt = {
             starting_balance: parseFloat($('opt_balance').value),
             n_trials: parseInt($('opt_trials').value),
-            bet_div_range: parseRange($('opt_betdiv').value),
-            profit_mult_range: parseRange($('opt_profit').value),
-            w_range: parseRange($('opt_w').value),
-            l_range: parseRange($('opt_l').value, true),
-            buffer_range: parseRange($('opt_buf').value)
+            bet_div_range: mergedRange('opt_betdiv'),
+            profit_mult_range: mergedRange('opt_profit'),
+            w_range: mergedRange('opt_w'),
+            l_range: mergedRange('opt_l', true),
+            buffer_range: mergedRange('opt_buf')
         };
         if (!Number.isFinite(opt.starting_balance) || !Number.isFinite(opt.n_trials) || opt.n_trials < 1) throw new Error('Invalid balance or trials');
         if ([opt.bet_div_range, opt.profit_mult_range, opt.w_range, opt.l_range, opt.buffer_range].some(r => !r.length)) throw new Error('Empty range');
@@ -6299,7 +6511,7 @@ self.onmessage = async (e) => {
         $('opt_run').disabled = false;
         $('opt_stop').disabled = true;
         $('opt_status').textContent = `Done (${optResults.length} results)`;
-        toast('Optimizer complete');
+        toast('Strategy Finder complete');
         switchTab('results');
     }
 
@@ -6320,7 +6532,7 @@ self.onmessage = async (e) => {
         if (!optResults.length) {
             body.innerHTML = '';
             if (best) best.innerHTML = '';
-            $('res_status').textContent = 'No results yet. Run the Optimizer.';
+            $('res_status').textContent = 'No results yet. Run the Strategy Finder.';
             return;
         }
         if (best) {
@@ -6386,7 +6598,7 @@ self.onmessage = async (e) => {
     }
     function clearResults() {
         if (!optResults.length) return;
-        if (!confirm('Clear all optimizer results?')) return;
+        if (!confirm('Clear all strategy finder results?')) return;
         optResults = [];
         state.results = [];
         selectedRowIdx = -1;
@@ -6843,16 +7055,85 @@ self.onmessage = async (e) => {
         } catch (err) { toast('Import failed: ' + err); console.error(err); }
     }
 
+    /* Nuts has no native Advanced strategy editor, so the panel's two
+       game-action buttons bridge to the Advanced IOW HUD (tool_nuts_iow_smart)
+       over window hooks it exports. "Create Strategy" fills the HUD's
+       condition blocks; "Send To Game" sets the wager. */
+    const IS_NUTS_HOST = /(^|\.)nuts\.gg$/i.test(location.hostname);
+    function nuts_exportBalance() {
+        const bal = (typeof window.__nuts_cond_balance__ === 'function') ? window.__nuts_cond_balance__() : NaN;
+        if (isFinite(bal) && bal > 0) {
+            const el = $('balance');
+            if (el) { el.value = bal.toFixed(8); trigger(el); }
+        }
+        calcValues();
+    }
+    /** Full-precision calculator values for Nuts.
+     *
+     *  currentCalcValues() returns the *displayed* outputs, which are rounded for
+     *  humans — bet size to 4dp and the targets to 2dp. That is fine for Stake's
+     *  2dp currency but wrong for 8dp SOL: a 0.00246913 bet becomes "0.0025", and
+     *  anything under 0.00005 collapses to "0.0000" and gets clamped to the
+     *  minimum bet. So recompute from the raw inputs with calcValues()'s own
+     *  formulas and hand the bridge real numbers. */
+    function nuts_preciseCalcValues() {
+        const balance = parseFloat($('balance').value);
+        const w = parseFloat($('win_inc').value) / 100;
+        const l = parseInt($('loss_reset').value, 10);
+        const div = parseFloat($('bet_div').value);
+        const pm = parseFloat($('profit_mult').value);
+        const buffer = 1 + parseFloat($('buffer').value) / 100;
+        if (![balance, w, div, pm, buffer].every(Number.isFinite) || !Number.isFinite(l) || div === 0) return null;
+        const bet = balance / div;
+        const profitStop = bet * pm;
+        return {
+            multiplier: ((1 + w) * l) * buffer,
+            bet_size: bet,
+            profit_stop: profitStop,
+            balance_target: balance + profitStop,
+            win_increase: parseFloat($('win_inc').value),
+            loss_reset: Math.max(1, l)
+        };
+    }
+    function nuts_importNew() {
+        calcValues();
+        const v = nuts_preciseCalcValues();
+        if (!v) { toast('Calculator values invalid.'); return; }
+        if (typeof window.__nuts_cond_import__ === 'function') {
+            window.__nuts_cond_import__(v);
+            toast(`"${v.multiplier.toFixed(2)}x" strategy sent to Advanced IOW — press START.`);
+        } else {
+            toast('Advanced IOW HUD not ready.');
+        }
+    }
+    /** Nuts equivalent of stake_updateExisting: keep the strategy that's already
+     *  loaded and only push the recomputed bet size + balance target into it, so
+     *  the win-increase / loss-reset / payout the user is running are untouched. */
+    function nuts_updateExisting() {
+        calcValues();
+        const v = nuts_preciseCalcValues();
+        if (!v) { toast('Calculator values invalid.'); return; }
+        if (typeof window.__nuts_cond_update__ === 'function') {
+            window.__nuts_cond_update__(v);
+            toast('Strategy updated for balance ' + (($('balance') || {}).value || '?') + '.');
+        } else {
+            toast('Advanced IOW HUD not ready.');
+        }
+    }
+
     /* Pick the right site's implementation */
     function gameExport() {
+        if (IS_NUTS_HOST) return nuts_exportBalance();
         if (location.hostname.includes('shuffle.')) return shuffle_exportBalance();
         return stake_exportBalance();
     }
     function gameUpdate() {
+        if (IS_NUTS_HOST) return nuts_updateExisting();
         if (location.hostname.includes('shuffle.')) return shuffle_updateExisting();
         return stake_updateExisting();
     }
     function gameImport() {
+        if (IS_NUTS_HOST) return nuts_importNew();
         if (location.hostname.includes('shuffle.')) return shuffle_importNew();
         return stake_importNew();
     }
@@ -7451,8 +7732,30 @@ self.onmessage = async (e) => {
        ========================================================= */
     function applyStateToUI() {
         const ids = ['balance', 'win_inc', 'loss_reset', 'bet_div', 'profit_mult', 'buffer', 'n_trials',
-                     'opt_balance', 'opt_trials', 'opt_betdiv', 'opt_profit', 'opt_w', 'opt_l', 'opt_buf'];
+                     'opt_balance', 'opt_trials', 'easy_mult', 'easy_w'];
+        for (const p of ['opt_betdiv', 'opt_profit', 'opt_w', 'opt_l', 'opt_buf'])
+            for (const s of ['from', 'to', 'step', 'values']) ids.push(p + '_' + s);
         for (const k of ids) if ($(k) && state[k] != null) $(k).value = state[k];
+        // Migrate legacy combined range strings ("50-100;step=5" / "25,30,40")
+        // into the From/To/Step/Values fields the first time they're seen.
+        for (const p of ['opt_betdiv', 'opt_profit', 'opt_w', 'opt_l', 'opt_buf']) {
+            if (state[p] == null || state[p + '_from'] != null || state[p + '_values'] != null) continue;
+            let text = String(state[p]).trim(), step = '';
+            if (text.includes(';')) {
+                const parts = text.split(';', 2);
+                text = parts[0].trim();
+                const mSt = /step\s*=\s*(.+)/i.exec(parts[1] || '');
+                if (mSt) step = mSt[1].trim();
+            }
+            const set = (suf, v) => { const el = $(p + '_' + suf); if (el) el.value = v; };
+            if (text.includes(',') || !text.includes('-')) {
+                set('values', text); set('from', ''); set('to', '');
+            } else {
+                const i = text.indexOf('-', text[0] === '-' ? 1 : 0);
+                set('from', text.slice(0, i).trim()); set('to', text.slice(i + 1).trim()); set('values', '');
+            }
+            if (step) set('step', step);
+        }
         $('theme_select').value = state.theme || 'original';
         $('large_fonts').checked = !!state.large_fonts;
         $('keep_prev').checked = !!state.keep_prev;
@@ -7567,8 +7870,13 @@ self.onmessage = async (e) => {
         ['balance', 'win_inc', 'loss_reset', 'bet_div', 'profit_mult', 'buffer'].forEach(id => {
             $(id).addEventListener('input', () => { calcValues(); saveState(); });
         });
-        ['n_trials', 'opt_balance', 'opt_trials', 'opt_betdiv', 'opt_profit', 'opt_w', 'opt_l', 'opt_buf']
-            .forEach(id => $(id).addEventListener('input', saveState));
+        ['n_trials', 'opt_balance', 'opt_trials'].forEach(id => $(id).addEventListener('input', saveState));
+        // Optimizer From/To/Step/Values fields — persist on edit
+        for (const p of ['opt_betdiv', 'opt_profit', 'opt_w', 'opt_l', 'opt_buf'])
+            for (const s of ['from', 'to', 'step', 'values']) {
+                const el = $(p + '_' + s);
+                if (el) el.addEventListener('input', saveState);
+            }
         // Advanced IOW UX: live combo-count + per-range previews, presets, results toggles
         ['opt_trials', 'opt_betdiv', 'opt_profit', 'opt_w', 'opt_l', 'opt_buf']
             .forEach(id => { const el = $(id); if (el) el.addEventListener('input', updateOptPreview); });
@@ -7652,6 +7960,14 @@ self.onmessage = async (e) => {
         $('res_apply').addEventListener('click', applySelectedToCalculator);
         $('res_csv').addEventListener('click', exportResultsCSV);
         document.getElementById('dt-res_table').addEventListener('click', onResTableClick);
+
+        // Easy Mode
+        ['easy_mult', 'easy_w'].forEach(id => $(id).addEventListener('input', () => { easySchedule(); saveState(); }));
+        $('easy_mult_any').addEventListener('click', () => { $('easy_mult').value = 'Any'; easyRefresh(); saveState(); });
+        $('easy_w_any').addEventListener('click', () => { $('easy_w').value = 'Any'; easyRefresh(); saveState(); });
+        $('easy_apply').addEventListener('click', easyApplySelected);
+        document.getElementById('dt-easy_table').addEventListener('click', onEasyTableClick);
+        easyRefresh();
 
         // Settings
         $('theme_select').addEventListener('change', () => { applyTheme(); saveState(); });
@@ -9277,7 +9593,6 @@ let isRunning = false;
     let rapidBlockedSince = 0;
     let rapidFireStartedAt = 0;
     let lastObservedBetTime = 0;
-    let spacePressInterval = null;
     let lockAggressionState = false;
     let lockedGearLevel = 1;
     // === BET LOCK STATE ===
@@ -9287,15 +9602,52 @@ let isRunning = false;
     let lastPlacedBet = 0.00000010;
     // === ADVANCED RAPID STATE ===
     let clickInterval = null;
-    let spaceTimeout = null;
-    let spaceInterval = null;
     let isSpaceHeldDown = false;
     let playButton = null;
     // === IOW ENFORCER ===
     let iowEnforcerInterval = null;
+    // === ADVANCED IOW MODE (condition engine) ===
+    // Userscript-side condition engine. Nuts has no native Advanced bet mode
+    // or strategy editor (which is what Advanced IOW drives on Stake and
+    // Shuffle), so the DiceTool calculator here imports the same 4-condition
+    // strategy into our own blocks and the cond-mode rapid-fire runs it.
+    const COND_STORE_KEY = 'nuts-dice-conditions-v1';
+    const COND_STRAT_KEY = 'nuts-dice-strategies-v1';
+    let condBaseBet = 0.00000001;
+    // Calculator params — same fields and defaults as the DiceTool.exe
+    // replica calculator on Stake/Shuffle (m = (1 + w) * l * buffer).
+    let condCalc = { balance: '', div: '500', winInc: '78', lossReset: '5', profitMult: '100', buffer: '25' };
+    /* Stats-deck preferences, mirroring Stake's Advanced IOW deck. Persisted
+       with the rest of the cond state.
+
+       These MUST be declared before the loadCondState() call below, which
+       restores them. They used to sit after it, and because `let` bindings are
+       in the temporal dead zone until their declaration is evaluated, the
+       restore threw `ReferenceError: Cannot access 'condWsStopOn' before
+       initialization`. loadCondState() wraps its whole body in try/catch, so
+       the throw was swallowed and the function fell through to its first-run
+       return — silently replacing the user's saved conditions with the two demo
+       blocks on every single page load, but only once prefs had ever been
+       written (which saveCondState always does). Keep these above line. */
+    let condWsStopOn = false;      // Autostop @ Win Streak enabled
+    let condWsTarget = 10;         // ...at this many consecutive wins
+    let condTrackPer = 'session';  // stats scope: 'session' | 'cycle' (since START)
+    let condVolume = 100;          // win-beep volume, 0-100
+    /* Baseline captured at START so the deck can show per-cycle stats. */
+    let condCycle = null;
+    let condBlocks = loadCondState();   // also restores condBaseBet + condCalc + prefs
+    let condRuntime = condBlocks.map(condDefaultRuntime);
+    let condResumePending = false;
+    let condNotice = null;
+    let condStrategies = loadCondStrategies();
+    let condSyncing = false;   // re-entry guard for the deck ↔ calculator binding
 
     GM_addStyle(`
-[]        #ratchet-master-container,
+        /* NOTE: this rule used to begin with a stray "[]" token, which made the
+           whole selector list invalid — so border-box silently never applied to
+           the Nuts HUD, and any width:100% element with padding/border overflowed
+           its column. */
+        #ratchet-master-container,
         #ratchet-master-container * { box-sizing: border-box !important; }
         #ratchet-master-container {
             --hud-bg:
@@ -9624,12 +9976,343 @@ let isRunning = false;
             }
         }
         .result.svelte-1oweb16, .multiplier-result, .result-multiplier, .crash-result, .limbo-result, [class*="crash"], [class*="result"][class*="multiplier"], span.result { display: none !important; }
-        /* === HIDE DICE SLIDER (thumb/track) that bleeds through HUD === */
+        /* === HIDE THE NATIVE DICE SLIDER that bleeds through the HUD ===
+           The thumb/track is absolutely positioned inside the bet panel we
+           re-parent, so it paints on top of whatever the HUD renders below it.
+           The three hashed classes below are Nuts build artefacts and change on
+           every deploy — which is why the slider kept coming back — so match it
+           structurally as well: anything slider-shaped inside the re-parented
+           bet panel, by tag, role, or class stem. Keep the legacy hashes too;
+           they cost nothing and still catch older builds. */
         .sc-1d9445d-12.dVJOJA,
         .sc-1d9445d-5.dWEMRV,
-        .sc-1d9445d-13.ktRmlk {
+        .sc-1d9445d-13.ktRmlk,
+        #ratchet-master-container #hud-native-sidebar-slot input[type="range"],
+        #ratchet-master-container #hud-native-sidebar-slot [role="slider"],
+        #ratchet-master-container #hud-native-sidebar-slot [class*="slider"],
+        #ratchet-master-container #hud-native-sidebar-slot [class*="Slider"],
+        #ratchet-master-container #hud-native-sidebar-slot [class*="thumb"],
+        #ratchet-master-container #hud-native-sidebar-slot [class*="Thumb"] {
             display: none !important;
         }
+        /* ...and the wrapper holding a range input, in case it carries the track
+           styling itself. Ignored by engines without :has(), which is harmless. */
+        #ratchet-master-container #hud-native-sidebar-slot :has(> input[type="range"]) { display: none !important; }
+        /* === ADVANCED IOW (Nuts) — chrome around the mounted DiceTool panel.
+           Palette and typography deliberately mirror the DiceTool.exe replica
+           skin the panel itself uses (ttk clam: #162a35 frames, 2px #c9d1d9
+           sunken LabelFrames with Times New Roman italic underlined titles,
+           #071824 entries/buttons, #00ff80 accent) so the action bar and
+           strategy frame read as part of the panel rather than the neon HUD. */
+        /* The panel is the only child of #hud-content and fills it; everything
+           lives inside its Stats tab, which scrolls with .dt-body. */
+        #ratchet-master-container[data-mode="cond"] #hud-content { flex-direction: column; }
+        /* Stats tab: nothing clips or scrolls internally, so the tab's real
+           height propagates up to the HUD where fitCondHostHeight() can measure
+           it and grow the game container to match — that is what stops the
+           bottom being cut off. Scoped to [data-active-tab="stats"] so the other
+           tabs (a 500-row Strategy Finder table) keep their own scrollbar and
+           can't balloon the page. */
+        #ratchet-master-container[data-mode="cond"] #hud-content { overflow: visible !important; }
+        #ratchet-master-container[data-mode="cond"] .hud-frame,
+        #ratchet-master-container[data-mode="cond"] .hud-workspace { overflow: visible !important; }
+        #ratchet-master-container #hud-content > #dt-aio-panel[data-active-tab="stats"] { height: auto !important; overflow: visible !important; }
+        #ratchet-master-container #hud-content > #dt-aio-panel[data-active-tab="stats"] .dt-body { overflow: visible !important; max-height: none !important; }
+        /* Stats tab shell — mirrors the rules Stake's bridge CSS applies.
+           Scoped through #hud-content so it outranks the replica skin's
+           .dt-panel.active rules that follow it in the stylesheet.
+           (No backticks in here — this block is a JS template literal.) */
+        #ratchet-master-container #hud-content > #dt-aio-panel #dt-panel-stats { padding: 10px !important; flex-direction: column !important; gap: 8px !important; }
+        #ratchet-master-container #hud-content > #dt-aio-panel #dt-panel-stats.active { display: flex !important; flex: 1 1 auto !important; min-height: 0 !important; }
+        #ratchet-master-container #hud-content > #dt-aio-panel #dt-panel-stats * { box-sizing: border-box; }
+        #ratchet-master-container #hud-content > #dt-aio-panel #dt-panel-stats > .hud-shell { display: flex !important; flex-direction: column !important; flex: 1 1 auto !important; min-height: 0 !important; gap: 8px !important; }
+        /* The HUD's stats grid divides a FIXED height into equal rows and clips
+           the overflow, which truncates rows as soon as the panel is short. In
+           the Stats tab everything sizes to its content instead and .dt-body
+           does the scrolling, so no row is ever cut off at any panel height. */
+        #ratchet-master-container #hud-content > #dt-aio-panel #dt-panel-stats .hud-body { flex: 0 0 auto !important; height: auto !important; min-height: 170px !important; align-items: stretch !important; }
+        #ratchet-master-container #hud-content > #dt-aio-panel #dt-panel-stats .graph-col { min-height: 170px !important; }
+        #ratchet-master-container #hud-content > #dt-aio-panel #dt-panel-stats .hud-graph-box { min-height: 170px !important; }
+        #ratchet-master-container #hud-content > #dt-aio-panel #dt-panel-stats .stats-col { height: auto !important; overflow: visible !important; }
+        /* flex:0 0 auto is the key one: as flex:1 1 0 the grid collapses into the
+           leftover space and squeezes its cards instead of growing the column. */
+        #ratchet-master-container #hud-content > #dt-aio-panel #dt-panel-stats .hud-stats-grid { flex: 0 0 auto !important; height: auto !important; grid-auto-rows: auto !important; align-content: start !important; overflow: visible !important; }
+        #ratchet-master-container #hud-content > #dt-aio-panel #dt-panel-stats .stats-col-inner,
+        #ratchet-master-container #hud-content > #dt-aio-panel #dt-panel-stats .hud-stat-card { height: auto !important; overflow: visible !important; }
+        #ratchet-master-container #hud-content > #dt-aio-panel #dt-panel-stats .hud-row { flex: 0 0 auto !important; min-height: 21px !important; }
+        /* ---- Action bar ---- */
+        #ratchet-master-container .cond-actionbar { display: flex; flex: 0 0 auto; align-items: center; gap: 10px; flex-wrap: wrap; padding: 9px 11px;
+            background: #162a35 !important; border: 1px solid #2f4553 !important; border-radius: 8px !important;
+            box-shadow: none !important; backdrop-filter: none !important; font-family: "Segoe UI", -apple-system, sans-serif; }
+        #ratchet-master-container .cond-actionbar label { color: #c9d1d9 !important; font-size: 12px !important; font-weight: 700 !important; text-transform: none !important; letter-spacing: 0 !important; }
+        #ratchet-master-container .cond-actionbar .input-group,
+        #ratchet-master-container .cond-actionbar .btn-group { flex: 0 0 auto; gap: 7px; }
+        #ratchet-master-container .cond-actionbar input[type="number"] { width: 108px; background: #071824; border: 1px solid #2f4553; border-radius: 3px; color: #c9d1d9;
+            font-family: "Segoe UI", -apple-system, sans-serif; font-size: 12px; font-weight: 400; text-align: left; padding: 5px 8px; box-shadow: inset 1px 1px 2px rgba(0,0,0,0.4); }
+        #ratchet-master-container .cond-actionbar input[type="number"]:focus { border-color: #c9d1d9; box-shadow: 0 0 0 1px #c9d1d9; }
+        #ratchet-master-container .cond-actionbar .quick-btn { background: #071824; border: 1px solid #2f4553; color: #c9d1d9; border-radius: 3px; box-shadow: none; font-size: 11px; }
+        #ratchet-master-container .cond-actionbar .quick-btn:hover { background: #1a2c38; color: #fff; border-color: #3a5566; }
+        #ratchet-master-container .cond-actionbar select { background: #071824; border: 1px solid #2f4553; color: #c9d1d9; border-radius: 3px;
+            font-family: "Segoe UI", -apple-system, sans-serif; font-size: 12px; font-weight: 400; padding: 5px 6px; width: auto; box-shadow: inset 1px 1px 2px rgba(0,0,0,0.4); }
+        #ratchet-master-container .cond-actionbar input[type="checkbox"] { appearance: auto; -webkit-appearance: auto; width: 15px; height: 15px; accent-color: #00ff80; flex: 0 0 auto; }
+        #ratchet-master-container .cond-actionbar input[type="range"] { width: 96px; accent-color: #00ff80; flex: 0 0 auto; }
+        #ratchet-master-container .cond-actionbar input#h-stats-ws-target { width: 56px; }
+        /* W/L read-out chip — the deck's equivalent of Stake's wins/losses counter */
+        #ratchet-master-container .cond-chip { display: flex; flex-direction: column; align-items: center; gap: 1px; flex: 0 0 auto;
+            background: #071824; border: 1px solid #2f4553; border-radius: 3px; padding: 3px 10px; box-shadow: inset 1px 1px 2px rgba(0,0,0,0.4); }
+        #ratchet-master-container .cond-chip-head { display: flex; gap: 14px; }
+        #ratchet-master-container .cond-chip-head span { font-size: 9px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; color: #7d8a96; min-width: 34px; text-align: center; }
+        #ratchet-master-container .cond-chip-vals { display: flex; gap: 14px; }
+        #ratchet-master-container .cond-chip-vals b { font-family: "Roboto Mono", monospace; font-size: 14px; font-weight: 700; min-width: 34px; text-align: center; color: #00ff80; }
+        #ratchet-master-container .cond-chip-vals b#h-stats-ctr-l { color: #7d8a96; }
+        #ratchet-master-container .cond-chip-vals b#h-stats-ctr-l.has-loss { color: #e11d48; }
+        #ratchet-master-container .cond-actionbar .status-bar { flex: 1 1 220px; min-height: 0; justify-content: flex-start; text-align: left; padding: 6px 10px;
+            background: #071824 !important; border: 1px solid #2f4553 !important; border-radius: 3px !important; color: #c9d1d9 !important;
+            font-family: "Segoe UI", -apple-system, sans-serif !important; font-size: 11.5px !important; font-weight: 400 !important; letter-spacing: 0 !important;
+            box-shadow: none !important; backdrop-filter: none !important; }
+        #ratchet-master-container .cond-actionbar .hud-reset-btn,
+        #ratchet-master-container .cond-actionbar .hud-switch-ou-btn { background: #071824 !important; border: 1px solid #2f4553 !important; color: #c9d1d9 !important;
+            border-radius: 3px !important; font-family: "Segoe UI", -apple-system, sans-serif !important; font-size: 12px !important; font-weight: 600 !important;
+            text-transform: none !important; letter-spacing: 0 !important; padding: 6px 12px !important; min-height: 30px !important; box-shadow: none !important; }
+        #ratchet-master-container .cond-actionbar .hud-reset-btn:hover,
+        #ratchet-master-container .cond-actionbar .hud-switch-ou-btn:hover { background: #1a2c38 !important; color: #fff !important; border-color: #3a5566 !important; }
+        /* UPDATE reads the balance and retunes the loaded strategy — a primary
+           action, so it gets the accent outline without stealing START's fill. */
+        #ratchet-master-container .cond-actionbar .hud-update-btn { background: #071824 !important; border: 1px solid #00ff80 !important; color: #00ff80 !important;
+            border-radius: 3px !important; font-family: "Segoe UI", -apple-system, sans-serif !important; font-size: 12px !important; font-weight: 700 !important;
+            text-transform: none !important; letter-spacing: 0 !important; padding: 6px 12px !important; min-height: 30px !important; cursor: pointer; box-shadow: none !important; }
+        #ratchet-master-container .cond-actionbar .hud-update-btn:hover { background: rgba(0, 255, 128, 0.14) !important; color: #fff !important; }
+        #ratchet-master-container .cond-actionbar .hud-rapid-btn { border-radius: 3px !important; font-family: "Segoe UI", -apple-system, sans-serif !important;
+            font-size: 12px !important; font-weight: 700 !important; letter-spacing: 0.3px !important; padding: 6px 18px !important; min-height: 30px !important;
+            min-width: 0 !important; box-shadow: none !important; }
+        #ratchet-master-container .cond-actionbar .hud-rapid-btn.start { background: #00ff80 !important; border: 1px solid #00ff80 !important; color: #03171a !important; }
+        #ratchet-master-container .cond-actionbar .hud-rapid-btn.start:hover { background: #4dffa6 !important; filter: none !important; }
+        #ratchet-master-container .cond-actionbar .hud-rapid-btn.stop { background: #e11d48 !important; border: 1px solid #e11d48 !important; color: #fff !important; }
+        /* ---- Left column: native bet panel on top, Strategy editor beneath ---- */
+        #ratchet-master-container .hud-left-col { display: flex; flex-direction: column; flex: 0 0 300px; width: 300px; min-width: 300px; max-width: 300px;
+            min-height: 0; gap: 8px; position: relative; z-index: 4; }
+        #ratchet-master-container .hud-left-col > .hud-native-sidebar-slot { flex: 0 0 auto; width: 100%; min-width: 0; max-width: none; }
+        #ratchet-master-container .hud-cond-left-slot { display: flex; flex: 1 1 auto; min-height: 0; min-width: 0; }
+        #ratchet-master-container .hud-cond-left-slot:empty { display: none !important; }
+        /* Advanced IOW: the column and its editor size to content so nothing is
+           clipped — fitCondHostHeight() grows the page to match. */
+        #ratchet-master-container[data-mode="cond"] .hud-left-col,
+        #ratchet-master-container[data-mode="cond"] .hud-cond-left-slot { overflow: visible !important; }
+        #ratchet-master-container .hud-cond-left-slot { max-width: 300px; }
+        /* Everything in here must be free to shrink to the 300px column; the
+           !importants beat the wider default field widths further down the
+           sheet (same specificity, later in source order). */
+        #ratchet-master-container .hud-cond-left-slot > .cond-deck-wrap { width: 100%; min-width: 0; max-width: 100%; }
+        #ratchet-master-container .hud-cond-left-slot .cond-row { min-width: 0; }
+        #ratchet-master-container .hud-cond-left-slot .cond-row > * { min-width: 0 !important; max-width: 100%; }
+        #ratchet-master-container .hud-cond-left-slot .cond-row input,
+        #ratchet-master-container .hud-cond-left-slot .cond-row select { width: 100% !important; }
+        #ratchet-master-container .hud-cond-left-slot .cond-row .cond-del { width: 26px !important; }
+        /* Narrow layout for the 300px column: stack each control full-width and
+           drop the inline arrow, so a condition reads top-to-bottom. */
+        #ratchet-master-container .hud-cond-left-slot .cond-strat-bar { flex-direction: column; align-items: stretch; gap: 6px; }
+        #ratchet-master-container .hud-cond-left-slot .cond-strat-bar input#h-strat-name,
+        #ratchet-master-container .hud-cond-left-slot .cond-strat-bar select#h-strat-select,
+        #ratchet-master-container .hud-cond-left-slot .cond-strat-bar .cond-btn { flex: 0 0 auto; width: 100%; }
+        #ratchet-master-container .hud-cond-left-slot .cond-strat-sep { display: none; }
+        #ratchet-master-container .hud-cond-left-slot .cond-row { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; align-items: center; }
+        #ratchet-master-container .hud-cond-left-slot .cond-row .cond-arrow { display: none; }
+        #ratchet-master-container .hud-cond-left-slot .cond-row select,
+        #ratchet-master-container .hud-cond-left-slot .cond-row input[type="number"] { width: 100%; min-width: 0; }
+        #ratchet-master-container .hud-cond-left-slot .cond-row .cond-trigger,
+        #ratchet-master-container .hud-cond-left-slot .cond-row .cond-action,
+        #ratchet-master-container .hud-cond-left-slot .cond-row .cond-value,
+        #ratchet-master-container .hud-cond-left-slot .cond-row input.cond-amount { grid-column: 1 / -1; }
+        #ratchet-master-container .hud-cond-left-slot .cond-row .cond-del { grid-column: 1 / -1; justify-self: end; margin-left: 0; }
+        #ratchet-master-container .hud-cond-left-slot .cond-add-btn { width: 100%; text-align: center; }
+        /* ---- Strategy frame (sunken LabelFrame, like the panel's dt-card) ---- */
+        #ratchet-master-container .cond-deck-wrap { position: relative; flex: 0 0 auto; display: flex; flex-direction: column; gap: 9px; padding: 16px 12px 12px;
+            background: #162a35 !important; border: 2px solid #c9d1d9 !important; border-radius: 4px !important;
+            box-shadow: inset 1px 1px 4px rgba(0,0,0,0.35) !important; backdrop-filter: none !important;
+            font-family: "Segoe UI", -apple-system, sans-serif; color: #c9d1d9; }
+        #ratchet-master-container .cond-deck-head { position: absolute; top: -11px; left: 10px; background: #162a35; padding: 0 7px;
+            font-family: "Times New Roman", Georgia, serif; font-style: italic; font-weight: 700; text-decoration: underline;
+            font-size: 14px; color: #c9d1d9; letter-spacing: 0; text-transform: none; white-space: nowrap; }
+        /* Shared clam fields/buttons inside the frame */
+        #ratchet-master-container .cond-deck-wrap input[type="number"],
+        #ratchet-master-container .cond-deck-wrap input[type="text"],
+        #ratchet-master-container .cond-deck-wrap select { background: #071824; border: 1px solid #2f4553; border-radius: 3px; color: #c9d1d9;
+            font-family: "Segoe UI", -apple-system, sans-serif; font-size: 12px; font-weight: 400; padding: 5px 7px;
+            box-shadow: inset 1px 1px 2px rgba(0,0,0,0.4); appearance: auto; outline: none; }
+        #ratchet-master-container .cond-deck-wrap input:focus,
+        #ratchet-master-container .cond-deck-wrap select:focus { border-color: #c9d1d9; box-shadow: 0 0 0 1px #c9d1d9; }
+        #ratchet-master-container .cond-deck-wrap .cond-btn { background: #071824; border: 1px solid #2f4553; color: #c9d1d9; border-radius: 3px; cursor: pointer;
+            font-family: "Segoe UI", -apple-system, sans-serif; font-size: 12px; font-weight: 600; padding: 6px 12px; min-height: 30px; flex: 0 0 auto; }
+        #ratchet-master-container .cond-deck-wrap .cond-btn:hover:not(:disabled) { background: #1a2c38; color: #fff; border-color: #3a5566; }
+        #ratchet-master-container .cond-deck-wrap .cond-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+        /* ---- Saved-strategy bar ---- */
+        #ratchet-master-container .cond-strat-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding-bottom: 9px; border-bottom: 1px solid #2f4553; }
+        #ratchet-master-container .cond-strat-bar input#h-strat-name { flex: 1 1 160px; min-width: 0; }
+        #ratchet-master-container .cond-strat-bar select#h-strat-select { flex: 1 1 190px; min-width: 0; }
+        #ratchet-master-container .cond-strat-bar .cond-strat-sep { width: 1px; align-self: stretch; background: #2f4553; margin: 0 2px; }
+        /* ---- Condition rows ---- */
+        /* No inner scroller: the condition list grows and the game container is
+           extended to fit it (fitCondHostHeight), so a long strategy is fully
+           visible instead of scrolling inside a 168px window. */
+        #ratchet-master-container .cond-deck { display: flex; flex-direction: column; gap: 6px; flex: 0 0 auto; }
+        #ratchet-master-container .cond-deck::-webkit-scrollbar { width: 10px; }
+        #ratchet-master-container .cond-deck::-webkit-scrollbar-thumb { background: #2f4553; border-radius: 2px; border: 2px solid #162a35; }
+        #ratchet-master-container .cond-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; background: #10202b; border: 1px solid #2f4553; border-radius: 3px; padding: 6px 8px; }
+        #ratchet-master-container .cond-row select { width: auto; flex: 0 0 auto; }
+        #ratchet-master-container .cond-row input[type="number"] { width: 64px; text-align: center; }
+        #ratchet-master-container .cond-row input.cond-amount, #ratchet-master-container .cond-row input.cond-value { width: 106px; text-align: left; }
+        #ratchet-master-container .cond-row .cond-arrow { color: #7d8a96; font-weight: 700; }
+        #ratchet-master-container .cond-row .cond-del { margin-left: auto; background: #071824; border: 1px solid #2f4553; color: #e08a9b; border-radius: 3px;
+            width: 26px; height: 26px; cursor: pointer; font-weight: 700; line-height: 1; flex: 0 0 auto; font-size: 14px; }
+        #ratchet-master-container .cond-row .cond-del:hover { background: #e11d48; border-color: #e11d48; color: #fff; }
+        #ratchet-master-container .cond-add-btn { align-self: flex-start; background: #071824; border: 1px solid #2f4553; color: #c9d1d9; border-radius: 3px; cursor: pointer;
+            font-family: "Segoe UI", -apple-system, sans-serif; font-size: 12px; font-weight: 600; letter-spacing: 0; text-transform: none; padding: 6px 12px; min-height: 30px; }
+        #ratchet-master-container .cond-add-btn:hover { background: #1a2c38; color: #fff; border-color: #3a5566; }
+        #ratchet-master-container .cond-empty { color: #7d8a96; font-size: 11.5px; font-style: italic; padding: 4px 2px; }
+        /* =====================================================================
+           NUTS THEME — Advanced IOW chrome.
+           Everything above dresses this mode as the DiceTool.exe replica (ttk
+           clam slate: #162a35 frames, 2px #c9d1d9 LabelFrames with Times New
+           Roman titles, #00ff80 accent). This block repaints it in the HUD's
+           own neon-glass palette so Advanced IOW reads as part of Nuts instead
+           of a slate window pasted into it. Last in the sheet, so it wins ties
+           against the rules above without touching them.
+           Colour, type and radii only - nothing here moves a box.
+           (No backticks in here - this block is a JS template literal.) */
+        #ratchet-master-container .cond-actionbar { background: var(--hud-panel) !important; border: 1px solid var(--hud-border-soft) !important;
+            border-radius: 12px !important; box-shadow: 0 16px 34px rgba(0, 0, 0, 0.24), inset 0 1px 0 rgba(255, 255, 255, 0.05) !important;
+            backdrop-filter: blur(20px) saturate(1.24) !important; font-family: "Proxima Nova", "Segoe UI", sans-serif !important; }
+        #ratchet-master-container .cond-actionbar label { color: var(--hud-text-soft) !important; font-size: 10px !important; font-weight: 800 !important;
+            text-transform: uppercase !important; letter-spacing: 0.06em !important; }
+        #ratchet-master-container .cond-actionbar input[type="number"],
+        #ratchet-master-container .cond-actionbar select { background: rgba(8, 11, 18, 0.78) !important; border: 1px solid rgba(142, 174, 212, 0.18) !important;
+            border-radius: 9px !important; color: var(--hud-text) !important; font-family: "Proxima Nova", "Segoe UI", sans-serif !important;
+            font-weight: 700 !important; box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04) !important; }
+        #ratchet-master-container .cond-actionbar input[type="number"]:focus,
+        #ratchet-master-container .cond-actionbar select:focus { border-color: var(--hud-accent-a) !important;
+            box-shadow: 0 0 0 2px rgba(25, 243, 255, 0.18), inset 0 1px 0 rgba(255, 255, 255, 0.04) !important; }
+        #ratchet-master-container .cond-actionbar input[type="checkbox"] { accent-color: var(--hud-accent-a) !important; }
+        #ratchet-master-container .cond-actionbar input[type="range"] { accent-color: var(--hud-accent-a) !important; }
+        #ratchet-master-container .cond-actionbar .quick-btn { background: linear-gradient(180deg, rgba(39, 48, 63, 0.88), rgba(17, 22, 33, 0.94)) !important;
+            border: 1px solid rgba(142, 174, 212, 0.18) !important; color: var(--hud-text) !important; border-radius: 8px !important;
+            box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05) !important; }
+        #ratchet-master-container .cond-actionbar .quick-btn:hover { background: linear-gradient(180deg, rgba(52, 64, 84, 0.92), rgba(22, 28, 42, 0.96)) !important;
+            border-color: rgba(25, 243, 255, 0.4) !important; color: #fff !important; }
+        /* W/L chip */
+        #ratchet-master-container .cond-chip { background: rgba(8, 11, 18, 0.62) !important; border: 1px solid var(--hud-border-soft) !important;
+            border-radius: 10px !important; box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04) !important; }
+        #ratchet-master-container .cond-chip-head span { color: var(--hud-text-soft) !important; letter-spacing: 0.08em !important; }
+        #ratchet-master-container .cond-chip-vals b { color: var(--hud-accent-a) !important; text-shadow: 0 0 12px rgba(25, 243, 255, 0.35) !important; }
+        #ratchet-master-container .cond-chip-vals b#h-stats-ctr-l { color: var(--hud-text-soft) !important; text-shadow: none !important; }
+        #ratchet-master-container .cond-chip-vals b#h-stats-ctr-l.has-loss { color: var(--hud-negative) !important;
+            text-shadow: 0 0 12px rgba(255, 107, 176, 0.4) !important; }
+        #ratchet-master-container .cond-actionbar .status-bar { background: rgba(8, 11, 18, 0.62) !important; border: 1px solid var(--hud-border-soft) !important;
+            border-radius: 10px !important; color: var(--hud-text-soft) !important; font-family: "Proxima Nova", "Segoe UI", sans-serif !important; }
+        #ratchet-master-container .cond-actionbar .hud-reset-btn,
+        #ratchet-master-container .cond-actionbar .hud-switch-ou-btn { background: linear-gradient(180deg, rgba(39, 48, 63, 0.88), rgba(17, 22, 33, 0.94)) !important;
+            border: 1px solid rgba(142, 174, 212, 0.18) !important; color: var(--hud-text) !important; border-radius: 9px !important;
+            font-family: "Proxima Nova", "Segoe UI", sans-serif !important; font-size: 10.5px !important; font-weight: 800 !important;
+            text-transform: uppercase !important; letter-spacing: 0.06em !important; box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05) !important; }
+        #ratchet-master-container .cond-actionbar .hud-reset-btn:hover,
+        #ratchet-master-container .cond-actionbar .hud-switch-ou-btn:hover { background: linear-gradient(180deg, rgba(52, 64, 84, 0.92), rgba(22, 28, 42, 0.96)) !important;
+            border-color: rgba(25, 243, 255, 0.4) !important; color: #fff !important;
+            box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06), 0 0 14px rgba(25, 243, 255, 0.14) !important; }
+        /* UPDATE keeps the accent outline; START keeps the accent fill. */
+        #ratchet-master-container .cond-actionbar .hud-update-btn { background: rgba(25, 243, 255, 0.08) !important;
+            border: 1px solid rgba(25, 243, 255, 0.55) !important; color: var(--hud-accent-a) !important; border-radius: 9px !important;
+            font-family: "Proxima Nova", "Segoe UI", sans-serif !important; font-size: 10.5px !important; font-weight: 800 !important;
+            text-transform: uppercase !important; letter-spacing: 0.06em !important; box-shadow: 0 0 14px rgba(25, 243, 255, 0.14) !important; }
+        #ratchet-master-container .cond-actionbar .hud-update-btn:hover { background: rgba(25, 243, 255, 0.18) !important; color: #fff !important;
+            box-shadow: 0 0 20px rgba(25, 243, 255, 0.26) !important; }
+        #ratchet-master-container .cond-actionbar .hud-rapid-btn { border-radius: 9px !important;
+            font-family: "Proxima Nova", "Segoe UI", sans-serif !important; font-size: 11px !important; font-weight: 800 !important;
+            text-transform: uppercase !important; letter-spacing: 0.08em !important; }
+        #ratchet-master-container .cond-actionbar .hud-rapid-btn.start { background: linear-gradient(135deg, var(--hud-accent-a), var(--hud-accent-b) 44%, var(--hud-accent-c)) !important;
+            border: 1px solid rgba(255, 255, 255, 0.18) !important; color: #070911 !important;
+            box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.18) inset, 0 0 20px rgba(25, 243, 255, 0.2), 0 0 28px rgba(255, 79, 216, 0.16) !important; }
+        #ratchet-master-container .cond-actionbar .hud-rapid-btn.start:hover { filter: brightness(1.08) !important; background: linear-gradient(135deg, var(--hud-accent-a), var(--hud-accent-b) 44%, var(--hud-accent-c)) !important; }
+        #ratchet-master-container .cond-actionbar .hud-rapid-btn.stop { background: var(--hud-red) !important; border: 1px solid var(--hud-red) !important;
+            color: #fff !important; box-shadow: 0 0 20px rgba(255, 76, 148, 0.28) !important; }
+        /* Strategy deck: glass card. The Times-italic title notched into a 2px
+           border becomes a lettered cyan caption over a hairline, which is also
+           what the panel's dt-card titles become in the theme block. */
+        #ratchet-master-container .cond-deck-wrap { padding: 12px !important; background: rgba(10, 14, 22, 0.42) !important;
+            border: 1px solid var(--hud-border-soft) !important; border-radius: 12px !important;
+            box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04) !important; backdrop-filter: blur(14px) saturate(1.2) !important;
+            font-family: "Proxima Nova", "Segoe UI", sans-serif !important; color: var(--hud-text) !important; }
+        #ratchet-master-container .cond-deck-head { position: static !important; top: auto !important; left: auto !important; display: block !important;
+            background: none !important; padding: 0 0 7px !important; margin: 0 0 4px !important;
+            font-family: "Proxima Nova", "Segoe UI", sans-serif !important; font-style: normal !important; text-decoration: none !important;
+            font-size: 10.5px !important; font-weight: 800 !important; letter-spacing: 0.1em !important; text-transform: uppercase !important;
+            color: var(--hud-accent-a) !important; border-bottom: 1px solid rgba(25, 243, 255, 0.25) !important; }
+        #ratchet-master-container .cond-deck-wrap input[type="number"],
+        #ratchet-master-container .cond-deck-wrap input[type="text"],
+        #ratchet-master-container .cond-deck-wrap select { background: rgba(8, 11, 18, 0.78) !important; border: 1px solid rgba(142, 174, 212, 0.18) !important;
+            border-radius: 9px !important; color: var(--hud-text) !important; font-family: "Proxima Nova", "Segoe UI", sans-serif !important;
+            font-weight: 700 !important; box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04) !important; }
+        #ratchet-master-container .cond-deck-wrap input:focus,
+        #ratchet-master-container .cond-deck-wrap select:focus { border-color: var(--hud-accent-a) !important;
+            box-shadow: 0 0 0 2px rgba(25, 243, 255, 0.18), inset 0 1px 0 rgba(255, 255, 255, 0.04) !important; }
+        #ratchet-master-container .cond-deck-wrap .cond-btn { background: linear-gradient(180deg, rgba(39, 48, 63, 0.88), rgba(17, 22, 33, 0.94)) !important;
+            border: 1px solid rgba(142, 174, 212, 0.18) !important; color: var(--hud-text) !important; border-radius: 9px !important;
+            font-family: "Proxima Nova", "Segoe UI", sans-serif !important; font-size: 10.5px !important; font-weight: 800 !important;
+            text-transform: uppercase !important; letter-spacing: 0.06em !important; box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05) !important; }
+        #ratchet-master-container .cond-deck-wrap .cond-btn:hover:not(:disabled) { background: linear-gradient(180deg, rgba(52, 64, 84, 0.92), rgba(22, 28, 42, 0.96)) !important;
+            border-color: rgba(25, 243, 255, 0.4) !important; color: #fff !important;
+            box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06), 0 0 14px rgba(25, 243, 255, 0.14) !important; }
+        #ratchet-master-container .cond-strat-bar { border-bottom: 1px solid var(--hud-border-soft) !important; }
+        #ratchet-master-container .cond-strat-bar .cond-strat-sep { background: var(--hud-border-soft) !important; }
+        #ratchet-master-container .cond-deck::-webkit-scrollbar-thumb { background: rgba(25, 243, 255, 0.28) !important; border-radius: 999px !important;
+            border: 2px solid transparent !important; background-clip: padding-box !important; }
+        #ratchet-master-container .cond-row { background: rgba(8, 11, 18, 0.55) !important; border: 1px solid rgba(255, 255, 255, 0.07) !important;
+            border-radius: 10px !important; transition: border-color 0.15s ease !important; }
+        #ratchet-master-container .cond-row:hover { border-color: rgba(25, 243, 255, 0.28) !important; }
+        #ratchet-master-container .cond-row .cond-arrow { color: var(--hud-accent-b) !important; }
+        #ratchet-master-container .cond-row .cond-del { background: rgba(255, 107, 176, 0.1) !important; border: 1px solid rgba(255, 107, 176, 0.35) !important;
+            color: var(--hud-negative) !important; border-radius: 8px !important; }
+        #ratchet-master-container .cond-row .cond-del:hover { background: var(--hud-red) !important; border-color: var(--hud-red) !important; color: #fff !important; }
+        #ratchet-master-container .cond-add-btn { background: rgba(25, 243, 255, 0.06) !important; border: 1px dashed rgba(25, 243, 255, 0.45) !important;
+            color: var(--hud-accent-a) !important; border-radius: 9px !important; font-family: "Proxima Nova", "Segoe UI", sans-serif !important;
+            font-size: 10.5px !important; font-weight: 800 !important; text-transform: uppercase !important; letter-spacing: 0.06em !important; }
+        #ratchet-master-container .cond-add-btn:hover { background: rgba(25, 243, 255, 0.16) !important; border-style: solid !important; color: #fff !important;
+            box-shadow: 0 0 16px rgba(25, 243, 255, 0.18) !important; }
+        #ratchet-master-container .cond-empty { color: var(--hud-text-soft) !important; }
+        /* ---- Conditions popup ----
+           Overlays the HUD (see ensureCondModal for why it is absolute-in-HUD
+           rather than viewport-fixed). Everything inside is the same
+           .cond-deck-wrap markup that used to sit in the left column, so it
+           inherits the themed field/button rules above unchanged. */
+        #ratchet-master-container .cond-modal { position: absolute; inset: 0; z-index: 60; display: none;
+            align-items: center; justify-content: center; padding: 20px; }
+        #ratchet-master-container .cond-modal.show { display: flex; }
+        #ratchet-master-container .cond-modal-backdrop { position: absolute; inset: 0; background: rgba(4, 6, 12, 0.74);
+            backdrop-filter: blur(6px) saturate(1.1); }
+        #ratchet-master-container .cond-modal-card { position: relative; z-index: 1; display: flex; flex-direction: column; gap: 10px;
+            /* 760px so a full condition row (trigger, count, result, arrow,
+               action, value, delete) fits on ONE line — at 620 the delete
+               button wrapped onto a second row and left a gap. */
+            width: min(760px, 100%); max-height: 100%; overflow-y: auto; padding: 14px;
+            background: var(--hud-panel); border: 1px solid var(--hud-border); border-radius: 16px;
+            box-shadow: 0 30px 70px rgba(0, 0, 0, 0.6), inset 0 1px 0 rgba(255, 255, 255, 0.05); }
+        #ratchet-master-container .cond-modal-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex: 0 0 auto; }
+        #ratchet-master-container .cond-modal-title { font-size: 11px; font-weight: 800; letter-spacing: 0.1em;
+            text-transform: uppercase; color: var(--hud-accent-a); }
+        #ratchet-master-container .cond-modal-close { width: 28px; height: 28px; flex: 0 0 auto; cursor: pointer;
+            background: rgba(255, 255, 255, 0.05); border: 1px solid var(--hud-border-soft); border-radius: 8px;
+            color: var(--hud-text); font-size: 16px; line-height: 1; font-weight: 700; }
+        #ratchet-master-container .cond-modal-close:hover { background: rgba(255, 107, 176, 0.18);
+            border-color: var(--hud-negative); color: #fff; }
+        #ratchet-master-container .cond-modal .cond-deck-wrap { width: 100%; }
+        /* The opener carries the condition count, so the strategy stays legible
+           without opening the popup. Accent-b so it reads as distinct from the
+           cyan UPDATE and the gradient START beside it. */
+        #ratchet-master-container .cond-actionbar .cond-open-btn { flex: 0 0 auto; cursor: pointer;
+            background: rgba(143, 99, 255, 0.12) !important; border: 1px solid rgba(143, 99, 255, 0.5) !important;
+            color: var(--hud-accent-b) !important; border-radius: 9px !important;
+            font-family: "Proxima Nova", "Segoe UI", sans-serif !important; font-size: 10.5px !important; font-weight: 800 !important;
+            text-transform: uppercase !important; letter-spacing: 0.06em !important; padding: 6px 12px !important; min-height: 30px !important; }
+        #ratchet-master-container .cond-actionbar .cond-open-btn:hover { background: rgba(143, 99, 255, 0.24) !important; color: #fff !important;
+            box-shadow: 0 0 16px rgba(143, 99, 255, 0.28) !important; }
     `);
 
     function getUserSetMultiplier() {
@@ -9646,11 +10329,27 @@ let isRunning = false;
         }
         return document.querySelector('.sc-cfbf8337-1.eaQLvl') || null;
     }
+    /* Which unit the balance is DISPLAYED in.
+       Decided from the visible text, and never from a title attribute: nuts.gg
+       puts the USD equivalent inside the SOL span's own title
+       (title="0.00000408 SOL ($0.00)") while the text reads "0.00000000 SOL",
+       so the old `span[title*="$"]` test matched in BOTH modes and could never
+       return false — silently forcing USD mode on a SOL site. Verified against
+       the live DOM 2026-07-25.
+       The pill shows both units, primary first, so the leading one wins. */
     function isUSDDisplayMode() {
         const bal = findBalanceContainer();
         if (!bal) return false;
-        if (bal.querySelector('span[title*="$"]')) return true;
-        return (bal.textContent || '').trim().startsWith('$');
+        const txt = (bal.textContent || '').replace(/\s+/g, ' ').trim();
+        /* Only a LEADING '$' means USD is the displayed unit. Do NOT decide from
+           where 'SOL' sits relative to '$': the pill does not always spell the
+           word out (a narrow header can render just the number plus a $
+           sub-label), and a '$'-anywhere test then flips a SOL balance to USD
+           and every money input back to 2dp. A bare leading number is the SOL
+           balance whether or not 'SOL' is written beside it. */
+        if (txt.startsWith('$')) return true;
+        if (/\bSOL\b/i.test(txt)) return false;
+        return /\bUSD\b/i.test(txt);
     }
     function getSolToUsdRate() {
         const bal = findBalanceContainer();
@@ -9904,13 +10603,22 @@ let isRunning = false;
             hud.id = 'ratchet-master-container';
             hud.innerHTML = `
                 <div class="hud-frame">
-                    <div id="hud-native-sidebar-slot" class="hud-native-sidebar-slot"></div>
+                    <div class="hud-left-col">
+                        <div id="hud-native-sidebar-slot" class="hud-native-sidebar-slot"></div>
+                        <!-- Advanced IOW puts the Strategy / conditions editor here, under
+                             the native bet panel — the way Stake's strategy editor lives in
+                             its left bet column. It is a SIBLING of the native slot because
+                             syncNativeHudElements() calls replaceChildren() on that slot
+                             every tick and would wipe anything placed inside it. -->
+                        <div id="hud-cond-left-slot" class="hud-cond-left-slot"></div>
+                    </div>
                     <div class="hud-workspace">
                         <div id="hud-native-past-bets-slot" class="hud-native-past-bets-slot"></div>
                         <div class="mode-wrap">
                             <button id="mode-manual" class="mode-btn">Manual</button>
                             <button id="mode-iow" class="mode-btn">IOW</button>
                             <button id="mode-smart" class="mode-btn">Smart</button>
+                            <button id="mode-cond" class="mode-btn">Advanced IOW</button>
                         </div>
                         <div id="hud-content"></div>
                         <div id="hud-footer-slot" class="hud-footer-slot"></div>
@@ -9922,6 +10630,7 @@ let isRunning = false;
             document.getElementById('mode-manual').onclick = () => switchMode('manual');
             document.getElementById('mode-iow').onclick = () => switchMode('iow');
             document.getElementById('mode-smart').onclick = () => switchMode('smart');
+            document.getElementById('mode-cond').onclick = () => switchMode('cond');
             buildHUDContent();
         }
         hud.dataset.mode = ACTIVE_MODE;
@@ -9936,9 +10645,25 @@ let isRunning = false;
         if (!content) return;
         if (hud) hud.dataset.mode = ACTIVE_MODE;
         syncModeButtons();
+        // Park the DiceTool panel out of #hud-content before we wipe it, so
+        // `content.innerHTML = ''` can't destroy it (Advanced IOW mounts it).
+        // Reset the column layout too; the cond branch re-applies it.
+        unmountDicePanel();
+        // The left-column strategy editor lives outside #hud-content, so it has
+        // to be torn down explicitly when leaving Advanced IOW.
+        if (ACTIVE_MODE !== 'cond') clearCondModal();
+        content.style.removeProperty('flex-direction');
+        content.style.removeProperty('gap');
         content.innerHTML = '';
         let html = '';
-        if (ACTIVE_MODE === 'iow') {
+        if (ACTIVE_MODE === 'cond') {
+            // Advanced IOW mirrors Stake exactly: the DiceTool panel is the ONLY
+            // child of #hud-content, and every control lives inside its "Stats"
+            // tab (built by ensureNutsStatsTab from attachListeners). Nothing is
+            // a sibling here, so nothing can overflow the game area and get
+            // clipped by the native bet panel below it.
+            html = '';
+        } else if (ACTIVE_MODE === 'iow') {
             html = `
                 <div class="hud-shell">
                     <div class="hud-top-bar">
@@ -10189,6 +10914,16 @@ let isRunning = false;
         });
     }
     function attachListeners() {
+        // Advanced IOW: mount the DiceTool panel and build its Stats tab BEFORE
+        // any wiring below, because every control now lives inside that tab.
+        if (ACTIVE_MODE === 'cond') {
+            mountDicePanel();
+            ensureNutsStatsTab();
+            ensureCondModal();
+            refreshCondOpenBtn();
+            const condOpen = document.getElementById('h-cond-open');
+            if (condOpen) condOpen.addEventListener('click', openCondModal);
+        }
         const rapidBtn = document.getElementById('h-rapid-toggle');
         if (rapidBtn) rapidBtn.onclick = () => { if (!isRapidFiring) startRapidFire(); else stopRapidFire(); };
         const resetBtn = document.getElementById('h-reset');
@@ -10222,7 +10957,114 @@ let isRunning = false;
                 setTimeout(() => { switchOuBtn.disabled = false; }, 250);
             });
         }
-        if (ACTIVE_MODE === 'iow') {
+        if (ACTIVE_MODE === 'cond') {
+            const condInp = document.getElementById('h-cond-base');
+            if (condInp) {
+                condInp.addEventListener('input', () => { condBaseBet = parseFloat(condInp.value) || minBaseBet; saveCondState(); });
+                condInp.addEventListener('blur', () => { let v = parseFloat(condInp.value) || minBaseBet; condInp.value = v.toFixed(8); condBaseBet = v; saveCondState(); });
+            }
+            const condDouble = document.getElementById('h-cond-double');
+            if (condDouble) condDouble.addEventListener('click', () => {
+                let val = parseFloat(document.getElementById('h-cond-base').value) || minBaseBet;
+                val *= 2;
+                document.getElementById('h-cond-base').value = val.toFixed(8);
+                condBaseBet = val;
+                saveCondState();
+            });
+            const condHalf = document.getElementById('h-cond-half');
+            if (condHalf) condHalf.addEventListener('click', () => {
+                let val = parseFloat(document.getElementById('h-cond-base').value) || minBaseBet;
+                val = Math.max(minBaseBet, val * 0.5);
+                document.getElementById('h-cond-base').value = val.toFixed(8);
+                condBaseBet = val;
+                saveCondState();
+            });
+            const condAdd = document.getElementById('h-cond-add');
+            if (condAdd) condAdd.addEventListener('click', () => {
+                condBlocks.push({ trigger: 'every', count: 1, result: 'win', cmp: 'gte', amount: '', action: 'increaseBet', value: 100 });
+                condRuntime.push(condDefaultRuntime());
+                saveCondState();
+                renderCondBlocks();
+            });
+            renderCondBlocks();
+            // Saved strategies — name + Save, and a dropdown that loads on pick
+            // (Delete stays disabled until something is selected).
+            const stratSave = document.getElementById('h-strat-save');
+            const stratName = document.getElementById('h-strat-name');
+            if (stratSave) stratSave.addEventListener('click', () => condSaveStrategy(stratName ? stratName.value : ''));
+            if (stratName) stratName.addEventListener('keydown', e => {
+                if (e.key === 'Enter') { e.preventDefault(); condSaveStrategy(stratName.value); }
+            });
+            const stratSel = document.getElementById('h-strat-select');
+            if (stratSel) stratSel.addEventListener('change', () => {
+                const del = document.getElementById('h-strat-del');
+                if (del) del.disabled = !stratSel.value;
+                if (stratSel.value) condLoadStrategy(stratSel.value);
+            });
+            const stratDel = document.getElementById('h-strat-del');
+            if (stratDel) stratDel.addEventListener('click', () => {
+                const sel = document.getElementById('h-strat-select');
+                if (sel && sel.value) condDeleteStrategy(sel.value);
+            });
+            renderCondStrategyBar();
+            /* Balance Divisor / Profit Multiplier are the same two knobs the
+               calculator owns, surfaced in the deck so you can retune without
+               leaving the Stats tab — two-way bound, exactly like Stake's deck. */
+            const bindCalcField = (deckId, calcId) => {
+                const deck = document.getElementById(deckId);
+                const calc = document.getElementById(calcId);
+                if (!deck || !calc) return;
+                deck.value = calc.value;
+                deck.addEventListener('input', () => {
+                    if (condSyncing) return;
+                    condSyncing = true;
+                    try {
+                        const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+                        setter.call(calc, deck.value);
+                        calc.dispatchEvent(new Event('input', { bubbles: true }));
+                        calc.dispatchEvent(new Event('change', { bubbles: true }));
+                    } finally { condSyncing = false; }
+                });
+                calc.addEventListener('input', () => {
+                    if (condSyncing) return;
+                    condSyncing = true;
+                    try { deck.value = calc.value; } finally { condSyncing = false; }
+                });
+            };
+            bindCalcField('h-stats-bet-div', 'dt-bet_div');
+            bindCalcField('h-stats-profit-mult', 'dt-profit_mult');
+            // UPDATE = the dice tool's own "Send To Game" path (read balance →
+            // recompute → retune the loaded strategy), so there's one code path.
+            const updBtn = document.getElementById('h-stats-update');
+            if (updBtn) updBtn.addEventListener('click', () => {
+                const sync = document.getElementById('dt-game_sync');
+                if (sync) sync.click();
+                else { condNotice = { text: 'Calculator not ready yet.', until: Date.now() + 3000 }; updateUI(); }
+            });
+            // Autostop @ Win Streak
+            const wsChk = document.getElementById('h-stats-ws-chk');
+            if (wsChk) wsChk.addEventListener('change', () => { condWsStopOn = wsChk.checked; saveCondState(); });
+            const wsTar = document.getElementById('h-stats-ws-target');
+            if (wsTar) wsTar.addEventListener('input', () => {
+                const n = parseInt(wsTar.value, 10);
+                if (Number.isFinite(n) && n > 0) { condWsTarget = n; saveCondState(); }
+            });
+            // Stats scope: whole session, or just since the last START
+            const trackSel = document.getElementById('h-stats-track');
+            if (trackSel) trackSel.addEventListener('change', () => {
+                condTrackPer = trackSel.value === 'cycle' ? 'cycle' : 'session';
+                saveCondState();
+                updateUI();
+            });
+            // Win-beep volume
+            const volInp = document.getElementById('h-stats-vol');
+            if (volInp) volInp.addEventListener('input', () => {
+                condVolume = Math.max(0, Math.min(100, parseInt(volInp.value, 10) || 0));
+                const lbl = document.getElementById('h-stats-vol-val');
+                if (lbl) lbl.textContent = condVolume;
+                saveCondState();
+            });
+        } else if (ACTIVE_MODE === 'iow') {
             const baseInp = document.getElementById('h-base');
             if (baseInp) {
                 baseInp.addEventListener('input', () => { baseBet = parseFloat(baseInp.value) || minBaseBet; });
@@ -10320,10 +11162,13 @@ let isRunning = false;
         curLossStreak = 0; maxLossStreak = 0; curWinStreak = 0; maxWinStreak = 0;
         multGames = 0; multWins = 0; lastResult = null; autoPaused = false; stopLossPct = 0; takeProfitPct = 0;
         rapidBlockedSince = 0; rapidFireStartedAt = 0; lastObservedBetTime = 0;
-        lastPlacedBet = baseBet;
+        lastPlacedBet = ACTIVE_MODE === 'cond' ? condBaseBet : baseBet;
+        resetCondRuntime();
         if (isRapidFiring) stopRapidFire();
         if (ACTIVE_MODE === 'iow') {
             const baseInp = document.getElementById('h-base'); if (baseInp) baseInp.value = baseBet.toFixed(8);
+        } else if (ACTIVE_MODE === 'cond') {
+            const condInp = document.getElementById('h-cond-base'); if (condInp) condInp.value = condBaseBet.toFixed(8);
         } else if (ACTIVE_MODE === 'smart') {
             const aggInp = document.getElementById('h-agg'); if (aggInp) aggInp.value = aggressionLevel.toFixed(1);
             const valEl = document.getElementById('h-agg-val'); if (valEl) valEl.textContent = `${aggressionLevel.toFixed(1)}x`;
@@ -10339,7 +11184,8 @@ let isRunning = false;
     }
     function triggerWinResetPulse() {
         const hud = document.getElementById('ratchet-master-container');
-        if (!hud || ACTIVE_MODE !== 'iow') return;
+        // IOW and Advanced IOW both flash when the progression resets to base.
+        if (!hud || (ACTIVE_MODE !== 'iow' && ACTIVE_MODE !== 'cond')) return;
         if (winResetPulseTimer) clearTimeout(winResetPulseTimer);
         hud.classList.remove('iow-win-reset-pulse');
         void hud.offsetWidth;
@@ -10349,6 +11195,834 @@ let isRunning = false;
             winResetPulseTimer = null;
         }, 800);
     }
+    /* ================== ADVANCED IOW (conditions + DiceTool panel) ================== */
+    /* ---- DiceTool panel (#dt-aio-panel) mount helpers. The panel is built by
+       tool_dice_tool() (bundled on Nuts) and parked off-screen in <body> via
+       its base CSS until Advanced IOW mounts it as a direct child of
+       #hud-content, where the injected bridge CSS makes it fill the tab. ---- */
+    function unmountDicePanel() {
+        const p = document.getElementById('dt-aio-panel');
+        if (p && p.parentElement && p.parentElement.id === 'hud-content') {
+            document.body.appendChild(p);
+            p.classList.remove('show');
+        }
+        // Empty the Stats tab whenever the panel is parked. Its controls reuse
+        // the HUD's element ids (h-rapid-toggle, h-autostop, …), so leaving them
+        // in a detached panel would create duplicate ids that getElementById
+        // could hand back to Manual / IOW / Smart mode.
+        const statsPanel = document.getElementById('dt-panel-stats');
+        if (statsPanel) statsPanel.textContent = '';
+    }
+    function mountDicePanel() {
+        const p = document.getElementById('dt-aio-panel');
+        const content = document.getElementById('hud-content');
+        if (!p || !content) return;
+        if (p.parentElement !== content) content.appendChild(p);
+        p.classList.add('show');
+    }
+    /** Grow the Nuts game container so the whole Advanced IOW panel is visible
+     *  without scrolling. The HUD is absolutely positioned (inset: 0) inside the
+     *  host, so its height IS the host's height — we can't measure a natural
+     *  height directly. Instead we read how much the panel body is overflowing
+     *  and add exactly that to the host's min-height, which converges in one or
+     *  two ticks. Growth-only, so it can't oscillate; capped so a 500-row
+     *  Strategy Finder result can't push the page to absurd heights (that tab
+     *  keeps its own scrollbar). Cleared when leaving Advanced IOW. */
+    /** Hide native game UI that bleeds through the HUD — the dice slider being
+     *  the visible offender.
+     *
+     *  Identifying the slider is a dead end: its classes are deploy hashes (the
+     *  old CSS pinned .dVJOJA/.dWEMRV/.ktRmlk and went stale) and it's a plain
+     *  div, so there is no tag, role or class stem to match on. Invert the
+     *  problem instead — the HUD covers the whole game area, so ANYTHING else
+     *  painting in there is bleed-through by definition.
+     *
+     *  Walk from the HUD up hiding each level's siblings. That can never hit the
+     *  HUD or its own ancestors. `visibility: hidden` rather than
+     *  `display: none` so the boxes keep their size and the container doesn't
+     *  collapse under the absolutely-positioned HUD.
+     *
+     *  The walk is bounded by GEOMETRY, not by a class. Pinning the top of the
+     *  walk to `.sc-1d9445d-0` is what made the first version a no-op on the
+     *  live site: that hash isn't an ancestor of the HUD at all (the real chain
+     *  is .sc-8d275cfe-0 < .sc-37732b3d-1 < .sc-37732b3d-0 < .sc-22ee21c-*),
+     *  so `root.contains(hud)` was false and the function returned immediately.
+     *  Instead: the HUD is inset:0 in the game host, so every wrapper that IS
+     *  the game area has the HUD's box; the first ancestor that is materially
+     *  bigger is page furniture (the 1920px-wide page column, the site nav) and
+     *  we stop before touching its children. A sibling is only hidden if it
+     *  actually paints inside the HUD's box — where the HUD is drawing over it
+     *  regardless, so hiding it can only remove bleed-through. */
+    function hideNativeBleedThrough() {
+        const hud = document.getElementById('ratchet-master-container');
+        const restore = el => {
+            el.style.removeProperty('visibility');
+            delete el.dataset.nutsBleedHidden;
+        };
+        if (!hud) {
+            // HUD gone (tool disabled / navigated away): give the page back.
+            document.querySelectorAll('[data-nuts-bleed-hidden]').forEach(restore);
+            return;
+        }
+        // Anything we've since adopted INTO the HUD must be visible again — the
+        // native bet panel and past-bets feed get re-parented on a later tick
+        // than they may first have been hidden on.
+        hud.querySelectorAll('[data-nuts-bleed-hidden]').forEach(restore);
+        const hb = hud.getBoundingClientRect();
+        if (hb.width < 40 || hb.height < 40) return;   // not laid out yet
+        let node = hud;
+        for (let hops = 0; hops < 6; hops++) {
+            const parent = node.parentElement;
+            if (!parent || parent === document.body || parent === document.documentElement) break;
+            const pb = parent.getBoundingClientRect();
+            if (pb.width > hb.width + 24 || pb.height > hb.height + 24) break;   // page furniture
+            for (const sib of Array.from(parent.children)) {
+                if (sib === node || sib === hud || sib.dataset.nutsBleedHidden) continue;
+                const sb = sib.getBoundingClientRect();
+                if (sb.width < 2 || sb.height < 2) continue;
+                if (sb.right <= hb.left || sb.left >= hb.right
+                    || sb.bottom <= hb.top || sb.top >= hb.bottom) continue;   // not under the HUD
+                sib.dataset.nutsBleedHidden = '1';
+                sib.style.setProperty('visibility', 'hidden', 'important');
+            }
+            node = parent;
+        }
+    }
+    const COND_HOST_MAX_H = 2400;
+    /** Undo every layout override fitCondHostHeight applied. */
+    function releaseCondHostHeight() {
+        document.querySelectorAll('[data-cond-fitted]').forEach(el => {
+            el.style.removeProperty('min-height');
+            el.style.removeProperty('overflow-y');
+            delete el.dataset.condFitted;
+        });
+    }
+    function fitCondHostHeight() {
+        const host = getHudHost();
+        const hud = document.getElementById('ratchet-master-container');
+        if (!host || !hud) return;
+        if (ACTIVE_MODE !== 'cond') {
+            // Leaving Advanced IOW: hand the page back exactly as we found it.
+            releaseCondHostHeight();
+            return;
+        }
+        /* How much taller does the content need to be than the box it's in?
+           Always a DIFFERENCE (scrollHeight - clientHeight), never an absolute:
+           comparing scrollHeight against the host's height creeps upward
+           forever, because for a box whose content fits, scrollHeight IS
+           clientHeight.
+
+           The HUD alone is not enough to measure. Its own scrollHeight only
+           sees content spilling past the HUD's bottom edge, but the panel
+           overflows into the footer slot INSIDE the HUD — the native
+           MULTIPLIER / ROLL OVER / WIN CHANCE bar — where it stays within the
+           HUD box and reports zero overflow while visibly sitting on top of the
+           stats rail. So probe the boxes that actually hold content too and
+           take the largest excess.
+
+           Note these must be scroll-overflow probes, not "deepest descendant
+           bottom": .dt-panel stretches to its container, so a geometric
+           deepest-bottom metric grows every time the host grows and never
+           converges. Measured on the live page this settles in one tick
+           (105 -> 0 -> 0). */
+        let overflow = hud.scrollHeight - hud.clientHeight;
+        for (const sel of ['#hud-content', '.dt-body', '.hud-left-col', '#hud-cond-left-slot']) {
+            const box = document.querySelector(sel);
+            if (!box) continue;
+            const excess = box.scrollHeight - box.clientHeight;
+            if (excess > overflow) overflow = excess;
+        }
+        if (overflow <= 2) return;
+        const current = Math.ceil(host.getBoundingClientRect().height);
+        const needed = Math.min(COND_HOST_MAX_H, current + overflow);
+        /* Grow the host AND every ancestor that would otherwise clip it. Nuts
+           nests the game area in flex wrappers that have their own heights (and
+           `flex: 1 1 0; min-height: 0` items never grow from content), so
+           sizing only the immediate host leaves a parent cutting it off — which
+           is exactly what happened on the live page while the mock, with a
+           single plain wrapper, looked fine. Everything touched is tagged so
+           releaseCondHostHeight() can put it back on exit. */
+        let el = host;
+        for (let hops = 0; el && hops < 8 && el !== document.body && el !== document.documentElement; hops++) {
+            if (el.clientHeight > 0 && el.clientHeight < needed) {
+                el.style.setProperty('min-height', needed + 'px', 'important');
+                el.dataset.condFitted = '1';
+            }
+            const oy = getComputedStyle(el).overflowY;
+            if (oy === 'hidden' || oy === 'auto' || oy === 'scroll') {
+                el.style.setProperty('overflow-y', 'visible', 'important');
+                el.dataset.condFitted = '1';
+            }
+            el = el.parentElement;
+        }
+    }
+    /** Build (or refill) the Advanced IOW "Stats" tab — the tab the user
+     *  actually plays from, mirroring the one Stake's integration injects: it
+     *  goes first in the tab strip and is the landing tab. Returns false until
+     *  the DiceTool panel exists. */
+    function ensureNutsStatsTab() {
+        const panel = document.getElementById('dt-aio-panel');
+        if (!panel) return false;
+        const tabsNav = panel.querySelector('.dt-tabs');
+        const body = panel.querySelector('.dt-body');
+        if (!tabsNav || !body) return false;
+        let statsBtn = tabsNav.querySelector('[data-tab="stats"]');
+        let statsPanel = panel.querySelector('#dt-panel-stats');
+        if (!statsBtn) {
+            statsBtn = document.createElement('button');
+            statsBtn.className = 'dt-tab-btn';
+            statsBtn.dataset.tab = 'stats';
+            statsBtn.textContent = 'Stats';
+            const calcBtn = tabsNav.querySelector('[data-tab="calc"]');
+            if (calcBtn) tabsNav.insertBefore(statsBtn, calcBtn);
+            else tabsNav.insertBefore(statsBtn, tabsNav.firstChild);
+        }
+        if (!statsPanel) {
+            statsPanel = document.createElement('section');
+            statsPanel.className = 'dt-panel';
+            statsPanel.id = 'dt-panel-stats';
+            body.insertBefore(statsPanel, body.firstChild);
+        }
+        statsPanel.innerHTML = condStatsTabHTML();
+        // Land on Stats when Advanced IOW opens (the dice tool's own delegated
+        // tab handler takes over from here).
+        tabsNav.querySelectorAll('.dt-tab-btn').forEach(b => b.classList.toggle('active', b === statsBtn));
+        panel.querySelectorAll('.dt-panel').forEach(p => p.classList.toggle('active', p === statsPanel));
+        panel.setAttribute('data-active-tab', 'stats');
+        body.scrollTop = 0;
+        return true;
+    }
+    /** Stats-tab markup. Uses the HUD's own .hud-* classes so the existing HUD
+     *  CSS paints it like the Manual / IOW / Smart panels, and keeps the element
+     *  ids updateUI() and attachListeners() already look up. */
+    function condStatsTabHTML() {
+        return `
+            <div class="hud-shell">
+                <div class="cond-actionbar hud-panel">
+                    <div class="input-group">
+                        <label>Base bet</label>
+                        <input id="h-cond-base" type="number" step="0.00000001" value="${condBaseBet.toFixed(8)}">
+                        <button id="h-cond-double" class="quick-btn">2x</button>
+                        <button id="h-cond-half" class="quick-btn">1/2</button>
+                    </div>
+                    <div class="input-group">
+                        <label>Bal divisor</label>
+                        <input id="h-stats-bet-div" type="number" step="any" min="1" title="Balance ÷ this = bet size (higher = smaller bets)">
+                    </div>
+                    <div class="input-group">
+                        <label>Profit mult</label>
+                        <input id="h-stats-profit-mult" type="number" step="any" min="0" title="Bet size × this = profit stop, which sets the balance target">
+                    </div>
+                    <div class="input-group">
+                        <label>Autostop</label>
+                        <input id="h-autostop" type="number" step="0.00000001" value="${autoStopBalance !== null ? autoStopBalance.toFixed(8) : ''}" placeholder="OFF">
+                    </div>
+                    <div class="cond-chip" title="Wins since the bet last reset to base (zeroes when the loss reset fires) / current loss streak">
+                        <span class="cond-chip-head"><span>Wins</span><span>L streak</span></span>
+                        <span class="cond-chip-vals"><b id="h-stats-ctr-w">0</b><b id="h-stats-ctr-l">0</b></span>
+                    </div>
+                    <div class="input-group" title="Stop autoplay after this many consecutive wins">
+                        <label>Autostop @ W streak</label>
+                        <input type="checkbox" id="h-stats-ws-chk" ${condWsStopOn ? 'checked' : ''}>
+                        <input id="h-stats-ws-target" type="number" min="1" step="1" value="${condWsTarget}">
+                    </div>
+                    <div class="input-group">
+                        <label>Track per</label>
+                        <select id="h-stats-track">
+                            <option value="session" ${condTrackPer === 'session' ? 'selected' : ''}>Session</option>
+                            <option value="cycle" ${condTrackPer === 'cycle' ? 'selected' : ''}>Cycle</option>
+                        </select>
+                    </div>
+                    <div class="input-group">
+                        <label>🔊 <span id="h-stats-vol-val">${condVolume}</span></label>
+                        <input type="range" id="h-stats-vol" min="0" max="100" step="1" value="${condVolume}">
+                    </div>
+                    <div class="status-bar" id="h-target">bet: ${formatCurrency(condBaseBet)} | conditions: ${condBlocks.length}</div>
+                    <div class="btn-group">
+                        <button id="h-cond-open" class="cond-open-btn" title="Open the strategy conditions editor">Conditions (${condBlocks.length})</button>
+                        <button id="h-stats-update" class="hud-update-btn" title="Read the current balance, recompute, and retune the loaded strategy">UPDATE</button>
+                        <button id="h-reset" class="hud-reset-btn">RESET</button>
+                        ${isOnDicePage() ? '<button id="h-switch-ou" class="hud-switch-ou-btn">Switch O/U</button>' : ''}
+                        <button id="h-rapid-toggle" class="hud-rapid-btn start">START</button>
+                    </div>
+                </div>
+                <div class="hud-body">
+                    <div class="graph-col">
+                        <div class="hud-graph-box"><canvas id="h-custom-graph"></canvas></div>
+                    </div>
+                    <div class="stats-col">
+                        <div class="hud-stats-grid">
+                            <div class="stats-col-inner">
+                                <div class="hud-row"><span class="hud-label">Starting Balance</span><span id="h-start-bal" class="hud-val">0.00</span></div>
+                                <div class="hud-row"><span class="hud-label">Profit/Loss</span><span id="h-profit" class="hud-val">0.00</span></div>
+                                <div class="hud-row"><span class="hud-label">Peak Balance</span><span id="h-peak-bal" class="hud-val" style="color:var(--hud-positive);">0.00</span></div>
+                                <div class="hud-row"><span class="hud-label">Peak Profit</span><span id="h-high-profit" class="hud-val" style="color:var(--hud-positive);">0.00</span></div>
+                            </div>
+                            <div class="stats-col-inner">
+                                <div class="hud-row"><span class="hud-label">Total Bets</span><span id="h-total-bets" class="hud-val">0</span></div>
+                                <div class="hud-row"><span class="hud-label">Total Wagered</span><span id="h-wagered" class="hud-val">0.00</span></div>
+                                <div class="hud-row"><span class="hud-label">Wins / Losses</span><span id="h-wl" class="hud-val">0 / 0</span></div>
+                                <div class="hud-row"><span class="hud-label">Session RTP</span><span id="h-rtp" class="hud-val">100.00%</span></div>
+                            </div>
+                            <div class="stats-col-inner">
+                                <div class="hud-row"><span class="hud-label">Balance Target</span><span id="h-stats-bal-target" class="hud-val" style="color:var(--hud-positive);">—</span></div>
+                                <div class="hud-row"><span class="hud-label">Profit Stop</span><span id="h-stats-profit-stop" class="hud-val">—</span></div>
+                                <div class="hud-row"><span class="hud-label">Streak (W|L)</span><span id="h-streaks" class="hud-val">0/0 | 0/0</span></div>
+                                <div class="hud-row"><span class="hud-label">Multiplier Performance</span><span id="h-mult-perf" class="hud-val">1 in 0.00</span></div>
+                            </div>
+                        </div>
+                        <div class="hud-meta-row">
+                            <div class="hud-meta-chip"><span class="hud-label">Best Streaks</span><span id="h-best-w" class="hud-val" style="color:var(--hud-positive);">-</span></div>
+                            <div class="hud-meta-chip"><span class="hud-label">Worst Streaks</span><span id="h-worst-l" class="hud-val" style="color:var(--hud-negative);">-</span></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
+    }
+    /** The Strategy / conditions editor, rendered into the LEFT column under the
+     *  native bet panel (see #hud-cond-left-slot) so it sits where Stake's
+     *  strategy editor does. Narrow layout — the column is 300px. */
+    function condDeckHTML() {
+        return `
+            <div id="h-cond-deck-wrap" class="cond-deck-wrap">
+                <div class="cond-deck-head">Strategy</div>
+                <div class="cond-strat-bar">
+                    <input id="h-strat-name" type="text" placeholder="Strategy name" spellcheck="false" autocomplete="off">
+                    <button id="h-strat-save" class="cond-btn">Save Strategy</button>
+                    <div class="cond-strat-sep"></div>
+                    <select id="h-strat-select" title="Load a saved strategy"></select>
+                    <button id="h-strat-del" class="cond-btn">Delete</button>
+                </div>
+                <div id="h-cond-list" class="cond-deck"></div>
+                <button id="h-cond-add" class="cond-add-btn">+ Add condition</button>
+            </div>
+        `;
+    }
+    function condModalHTML() {
+        return `
+            <div class="cond-modal-backdrop" data-cond-close="1"></div>
+            <div class="cond-modal-card">
+                <div class="cond-modal-head">
+                    <span class="cond-modal-title">Strategy Conditions</span>
+                    <button type="button" id="h-cond-modal-close" class="cond-modal-close" data-cond-close="1" title="Close">&times;</button>
+                </div>
+                ${condDeckHTML()}
+            </div>
+        `;
+    }
+    /** Create the conditions popup, hidden, as a child of the HUD.
+     *
+     *  Deliberately appended to the HUD and positioned `absolute; inset: 0`
+     *  rather than being a viewport-fixed dialog on document.body: the HUD root
+     *  carries `backdrop-filter`, which makes it the containing block for fixed
+     *  descendants AND clips them via `overflow: hidden`, so `position: fixed`
+     *  would be laid out against the HUD anyway — with none of the `.cond-*`
+     *  rules or `--hud-*` theme vars in scope, since both are scoped through
+     *  #ratchet-master-container. Overlaying the HUD gets the same modal effect
+     *  and keeps the editor's styling and theming for free.
+     *
+     *  Rebuilt with the HUD (it is a child), so the listener pass re-wires
+     *  #h-cond-add / #h-strat-* naturally. */
+    function ensureCondModal() {
+        const hud = document.getElementById('ratchet-master-container');
+        if (!hud) return false;
+        let modal = document.getElementById('h-cond-modal');
+        if (!modal) {
+            modal = document.createElement('div');
+            modal.id = 'h-cond-modal';
+            modal.className = 'cond-modal';
+            modal.innerHTML = condModalHTML();
+            hud.appendChild(modal);
+            // Backdrop and × both carry data-cond-close, so one handler covers both.
+            modal.addEventListener('click', e => {
+                if (e.target instanceof Element && e.target.closest('[data-cond-close]')) closeCondModal();
+            });
+            /* Escape closes. Registered once per page, not per HUD build, since
+               the HUD is rebuilt on SPA navigation and this would otherwise
+               stack duplicate listeners. Its own listener rather than the tool's
+               main keydown handler, which ignores events from inputs — you want
+               Escape to work while typing a condition amount. */
+            if (!window.__nuts_cond_esc__) {
+                window.__nuts_cond_esc__ = true;
+                document.addEventListener('keydown', e => { if (e.key === 'Escape') closeCondModal(); });
+            }
+        }
+        return true;
+    }
+    function openCondModal() {
+        if (!ensureCondModal()) return;
+        renderCondStrategyBar();
+        renderCondBlocks();
+        const m = document.getElementById('h-cond-modal');
+        if (m) m.classList.add('show');
+    }
+    function closeCondModal() {
+        const m = document.getElementById('h-cond-modal');
+        if (m) m.classList.remove('show');
+    }
+    /** Remove it entirely when leaving Advanced IOW, so its element ids can't
+     *  collide with another mode's markup. */
+    function clearCondModal() {
+        const m = document.getElementById('h-cond-modal');
+        if (m) m.remove();
+    }
+    /** The opener doubles as the condition count, so the strategy is legible
+     *  without opening the popup. */
+    function refreshCondOpenBtn() {
+        const b = document.getElementById('h-cond-open');
+        if (b) b.textContent = 'Conditions (' + condBlocks.length + ')';
+    }
+    /* ---- Cross-scope bridge: the DiceTool panel (a separate function scope)
+       calls these when its "Create Strategy" / "Send To Game" buttons fire on
+       Nuts, since it can't reach this tool's condition engine directly. ---- */
+    window.__nuts_cond_balance__ = function () { return getCurrentBalance(); };
+    /** "Update Strategy" / "Send To Game" — the Nuts equivalent of
+     *  stake_updateExisting. Keeps the loaded condition list and only retunes it
+     *  for the current balance: new bet size (from Balance ÷ Balance Divisor) and
+     *  a new balance-target stop (from Profit Multiplier). Win increase, loss
+     *  reset and payout are deliberately left alone, so this is safe to hit
+     *  between cycles as the bankroll grows. */
+    window.__nuts_cond_update__ = function (v) {
+        const bet = parseFloat(v.bet_size);
+        const target = parseFloat(v.balance_target);
+        if (isFinite(bet) && bet > 0) {
+            condBaseBet = Math.max(minBaseBet, bet);
+            const ci = document.getElementById('h-cond-base');
+            if (ci) ci.value = condBaseBet.toFixed(8);
+            forceSetBet(condBaseBet);
+        }
+        if (isFinite(target)) {
+            // Retune the existing "balance ≥ X → stop" block; add one if the
+            // loaded strategy doesn't have a stop yet.
+            const stop = condBlocks.find(b => b.trigger === 'balance' && b.action === 'stop');
+            if (stop) stop.amount = target.toFixed(8);
+            else condBlocks.push({ trigger: 'balance', count: 1, result: 'win', cmp: 'gte', amount: target.toFixed(8), action: 'stop', value: '' });
+        }
+        resetCondRuntime();
+        saveCondState();
+        if (ACTIVE_MODE === 'cond') renderCondBlocks();
+        condNotice = {
+            text: `Updated for balance ${formatCurrency(getCurrentBalance())} — bet ${formatCurrency(condBaseBet)}, stop at ${isFinite(target) ? formatCurrency(target) : '—'}`,
+            until: Date.now() + 5000
+        };
+        updateUI();
+    };
+    /** Build the 4-condition Advanced IOW strategy from the panel's calculator
+     *  outputs — the same strategy the Stake/Shuffle native import creates:
+     *  every win → +win_inc%, streak of loss_reset losses → reset to base,
+     *  balance ≥ target → stop. Also sets the payout + base bet. */
+    window.__nuts_cond_import__ = function (v) {
+        const bet = parseFloat(v.bet_size);
+        const target = parseFloat(v.balance_target);
+        const winInc = parseFloat(v.win_increase);
+        const lossReset = Math.max(1, parseInt(v.loss_reset, 10) || 1);
+        const mult = parseFloat(v.multiplier);
+        if (isFinite(mult)) { const pay = getNutsPayoutInput(); if (pay) typeIntoInput(pay, mult.toFixed(2)); }
+        if (isFinite(bet) && bet > 0) {
+            condBaseBet = Math.max(minBaseBet, bet);
+            const ci = document.getElementById('h-cond-base');
+            if (ci) ci.value = condBaseBet.toFixed(8);
+            forceSetBet(condBaseBet);
+        }
+        condBlocks = [
+            { trigger: 'every', count: 1, result: 'win', cmp: 'gte', amount: '', action: 'increaseBet', value: isFinite(winInc) ? winInc : 100 },
+            { trigger: 'streak', count: lossReset, result: 'lose', cmp: 'gte', amount: '', action: 'resetBet', value: '' },
+            { trigger: 'balance', count: 1, result: 'win', cmp: 'gte', amount: isFinite(target) ? target.toFixed(8) : '', action: 'stop', value: '' }
+        ];
+        resetCondRuntime();
+        saveCondState();
+        if (ACTIVE_MODE === 'cond') renderCondBlocks();
+        // Pre-fill the strategy name with the multiplier, the same way Stake's
+        // native "Create Strategy" names it `<multiplier>x` before you save.
+        const nameInp = document.getElementById('h-strat-name');
+        if (nameInp && isFinite(mult)) nameInp.value = mult.toFixed(2) + 'x';
+        condNotice = { text: `Strategy imported: ${isFinite(mult) ? mult.toFixed(2) : '?'}x — Save Strategy or press START`, until: Date.now() + 5000 };
+        updateUI();
+    };
+    function condDefaultRuntime() { return { count: 0, streak: 0, armed: true }; }
+    function resetCondRuntime() { condRuntime = condBlocks.map(condDefaultRuntime); }
+    function loadCondState() {
+        try {
+            const raw = localStorage.getItem(COND_STORE_KEY);
+            if (raw) {
+                const st = JSON.parse(raw);
+                if (st && typeof st === 'object') {
+                    const base = parseFloat(st.baseBet);
+                    if (isFinite(base) && base >= minBaseBet) condBaseBet = base;
+                    if (st.calc && typeof st.calc === 'object') Object.assign(condCalc, st.calc);
+                    const p = st.prefs;
+                    if (p && typeof p === 'object') {
+                        condWsStopOn = !!p.wsStopOn;
+                        if (Number.isFinite(+p.wsTarget) && +p.wsTarget > 0) condWsTarget = +p.wsTarget;
+                        if (p.trackPer === 'cycle' || p.trackPer === 'session') condTrackPer = p.trackPer;
+                        if (Number.isFinite(+p.volume)) condVolume = Math.max(0, Math.min(100, +p.volume));
+                    }
+                    if (Array.isArray(st.blocks)) return st.blocks.filter(b => b && typeof b === 'object' && b.trigger && b.action);
+                }
+            }
+        } catch (e) {}
+        // First run: seed with the classic IOW shape so the mode demonstrates
+        // itself (every win +125%, 3-loss streak resets to base).
+        return [
+            { trigger: 'every', count: 1, result: 'win', cmp: 'gte', amount: '', action: 'increaseBet', value: 125 },
+            { trigger: 'streak', count: 3, result: 'lose', cmp: 'gte', amount: '', action: 'resetBet', value: '' }
+        ];
+    }
+    function saveCondState() {
+        try {
+            localStorage.setItem(COND_STORE_KEY, JSON.stringify({
+                baseBet: condBaseBet, blocks: condBlocks, calc: condCalc,
+                prefs: { wsStopOn: condWsStopOn, wsTarget: condWsTarget, trackPer: condTrackPer, volume: condVolume }
+            }));
+        } catch (e) {}
+    }
+    /* ---- Win beep. Same shape as the dice tool's Advanced IOW sound (880Hz
+       sine, 200ms, gain = volume × 0.35) and likewise only ever heard in
+       Advanced IOW — the other modes stay silent. ---- */
+    let condAudioCtx = null;
+    function condPlayWinSound() {
+        if (ACTIVE_MODE !== 'cond') return;
+        const vol = condVolume / 100;
+        if (!vol) return;
+        try {
+            const Ctx = window.AudioContext || window.webkitAudioContext;
+            if (!Ctx) return;
+            /* ONE AudioContext for the page, reused. The first version built a
+               fresh context per win and closed it on a 200ms timer: browsers cap
+               how many a page may create (mobile Safari throws once a handful are
+               live), so a long run leaked contexts until the beep started
+               throwing and the page was under needless memory pressure. Schedule
+               the stop on the audio clock and release the nodes on ended. */
+            if (!condAudioCtx) condAudioCtx = new Ctx();
+            const ctx = condAudioCtx;
+            if (ctx.state === 'suspended') { try { ctx.resume(); } catch (e) {} }
+            const osc = ctx.createOscillator();
+            const gain = ctx.createGain();
+            osc.type = 'sine';
+            osc.frequency.setValueAtTime(880, ctx.currentTime);
+            osc.connect(gain);
+            gain.connect(ctx.destination);
+            gain.gain.value = vol * 0.35;
+            osc.onended = () => { try { osc.disconnect(); gain.disconnect(); } catch (e) {} };
+            osc.start();
+            osc.stop(ctx.currentTime + 0.18);
+        } catch (e) {}
+    }
+    /** Snapshot the counters so the deck can report per-cycle ("since START")
+     *  stats, which is what Stake's Stats Track Per = Cycle shows. */
+    function condStartCycle() {
+        const bal = getCurrentBalance();
+        condCycle = {
+            balance: bal, peakBalance: bal, peakProfit: 0,
+            totalBets: totalBets, totalWagered: totalWagered,
+            totalWins: totalWins, totalLosses: totalLosses
+        };
+    }
+    /** Keep the cycle's peaks current; called once per settled bet. */
+    function condTrackCycle() {
+        if (!condCycle) return;
+        const bal = getCurrentBalance();
+        if (bal > condCycle.peakBalance) condCycle.peakBalance = bal;
+        const profit = bal - condCycle.balance;
+        if (profit > condCycle.peakProfit) condCycle.peakProfit = profit;
+    }
+    /** The numbers the deck paints — session-wide, or just this cycle. */
+    function condStatsView() {
+        const bal = getCurrentBalance();
+        if (condTrackPer === 'cycle' && condCycle) {
+            const c = condCycle;
+            const wagered = totalWagered - c.totalWagered;
+            const profit = bal - c.balance;
+            return {
+                startBal: c.balance, profit, peakBal: c.peakBalance, peakProfit: c.peakProfit,
+                bets: totalBets - c.totalBets, wagered,
+                wins: totalWins - c.totalWins, losses: totalLosses - c.totalLosses,
+                rtp: wagered > 0 ? ((wagered + profit) / wagered) * 100 : 100
+            };
+        }
+        return {
+            startBal: initialBalance, profit: bal - initialBalance, peakBal: sessionPeak, peakProfit: highestProfit,
+            bets: totalBets, wagered: totalWagered, wins: totalWins, losses: totalLosses,
+            rtp: totalWagered > 0 ? ((totalWagered + (bal - initialBalance)) / totalWagered) * 100 : 100
+        };
+    }
+    /* ---- Saved strategies — the Nuts stand-in for Stake's native strategy
+       list. A strategy is the condition set plus the bet size and payout it was
+       built for (the calculator keeps its own state in the panel, exactly as it
+       does on Stake). Name it, "Save Strategy" stores it, and picking it from
+       the dropdown loads it straight back. ---- */
+    function loadCondStrategies() {
+        try {
+            const arr = JSON.parse(localStorage.getItem(COND_STRAT_KEY) || 'null');
+            if (Array.isArray(arr)) return arr.filter(s => s && typeof s.name === 'string' && Array.isArray(s.blocks));
+        } catch (e) {}
+        return [];
+    }
+    function saveCondStrategies() {
+        try { localStorage.setItem(COND_STRAT_KEY, JSON.stringify(condStrategies)); } catch (e) {}
+    }
+    function condSaveStrategy(rawName) {
+        const name = String(rawName || '').trim().slice(0, 60);
+        if (!name) {
+            condNotice = { text: 'Name the strategy first.', until: Date.now() + 3000 };
+            updateUI();
+            return;
+        }
+        const payEl = getNutsPayoutInput();
+        const entry = {
+            name,
+            baseBet: condBaseBet,
+            blocks: JSON.parse(JSON.stringify(condBlocks)),
+            payout: payEl ? (parseFloat(payEl.value) || null) : null
+        };
+        const i = condStrategies.findIndex(s => s.name.toLowerCase() === name.toLowerCase());
+        if (i >= 0) condStrategies[i] = entry; else condStrategies.push(entry);
+        condStrategies.sort((a, b) => a.name.localeCompare(b.name));
+        saveCondStrategies();
+        renderCondStrategyBar(name);
+        condNotice = { text: `Saved strategy “${name}”.`, until: Date.now() + 3500 };
+        updateUI();
+    }
+    function condLoadStrategy(name) {
+        const s = condStrategies.find(x => x.name === name);
+        if (!s) return;
+        if (isRapidFiring) stopRapidFire();
+        condBlocks = JSON.parse(JSON.stringify(s.blocks));
+        if (isFinite(s.baseBet) && s.baseBet >= minBaseBet) {
+            condBaseBet = s.baseBet;
+            const ci = document.getElementById('h-cond-base');
+            if (ci) ci.value = condBaseBet.toFixed(8);
+            forceSetBet(condBaseBet);
+        }
+        if (isFinite(s.payout) && s.payout > 0) {
+            const pay = getNutsPayoutInput();
+            if (pay) typeIntoInput(pay, Number(s.payout).toFixed(2));
+        }
+        resetCondRuntime();
+        saveCondState();
+        renderCondBlocks();
+        const nameInp = document.getElementById('h-strat-name');
+        if (nameInp) nameInp.value = s.name;
+        condNotice = { text: `Loaded “${s.name}” — press START`, until: Date.now() + 4000 };
+        updateUI();
+    }
+    function condDeleteStrategy(name) {
+        const i = condStrategies.findIndex(s => s.name === name);
+        if (i < 0) return;
+        condStrategies.splice(i, 1);
+        saveCondStrategies();
+        renderCondStrategyBar('');
+        condNotice = { text: `Deleted “${name}”.`, until: Date.now() + 3000 };
+        updateUI();
+    }
+    /** Repopulate the saved-strategy dropdown. Options are built with the DOM
+     *  API so user-entered names can never inject markup. */
+    function renderCondStrategyBar(selected) {
+        const sel = document.getElementById('h-strat-select');
+        if (!sel) return;
+        const keep = selected != null ? selected : sel.value;
+        sel.textContent = '';
+        const ph = document.createElement('option');
+        ph.value = '';
+        ph.textContent = condStrategies.length ? 'Load saved strategy…' : 'No saved strategies';
+        sel.appendChild(ph);
+        condStrategies.forEach(s => {
+            const o = document.createElement('option');
+            o.value = s.name;
+            o.textContent = s.name;
+            sel.appendChild(o);
+        });
+        sel.value = condStrategies.some(s => s.name === keep) ? keep : '';
+        const del = document.getElementById('h-strat-del');
+        if (del) del.disabled = !sel.value;
+    }
+    /** Nuts payout/multiplier input. aria-label first (Target page), then a
+     *  generic label scan outside our HUD, then the hashed dice class. Used by
+     *  the Create Strategy bridge to set the payout the calculator produced. */
+    function getNutsPayoutInput() {
+        const target = document.querySelector('input[aria-label="payout selector"]');
+        if (target) return target;
+        const generic = Array.from(document.querySelectorAll('input')).find(inp => {
+            if (inp.closest('#ratchet-master-container')) return false;
+            const label = [inp.getAttribute('aria-label'), inp.getAttribute('placeholder'), inp.getAttribute('name'), inp.getAttribute('data-testid')].join(' ');
+            return /(payout|multiplier)/i.test(label) && isFinite(parseFloat(inp.value));
+        });
+        if (generic) return generic;
+        return document.querySelector('input.sc-941e0ad-0.eaPPXw');
+    }
+    function condSetBet(amount) {
+        if (!isFinite(amount)) return;
+        forceSetBet(Math.min(Math.max(amount, minBaseBet), maxBaseBet));
+    }
+    function condSwitchOverUnder() {
+        // Same pause-swap-resume dance as the Switch Over/Under button: the
+        // swap click is ignored if it lands mid rapid-fire click cycle. Bet
+        // and per-block counters are restored after the restart so a switch
+        // doesn't reset the progression.
+        if (condResumePending) return;
+        const wasRunning = isRapidFiring;
+        const savedBet = lastPlacedBet;
+        const savedRuntime = condRuntime;
+        condResumePending = true;
+        if (wasRunning) stopRapidFire();
+        setTimeout(() => {
+            const swap = getRollOverUnderSwap();
+            if (swap) swap.click();
+            setTimeout(() => {
+                condResumePending = false;
+                if (wasRunning && ACTIVE_MODE === 'cond' && !isRapidFiring) {
+                    startRapidFire();
+                    condRuntime = savedRuntime;
+                    condSetBet(savedBet);
+                }
+            }, 80);
+        }, 40);
+    }
+    function applyCondAction(b) {
+        const val = parseFloat(b.value);
+        if (b.action === 'increaseBet') { if (isFinite(val)) condSetBet(lastPlacedBet * (1 + val / 100)); }
+        else if (b.action === 'decreaseBet') { if (isFinite(val)) condSetBet(lastPlacedBet * Math.max(0, 1 - val / 100)); }
+        else if (b.action === 'resetBet') {
+            condSetBet(condBaseBet);
+            // Back to base bet = a fresh progression, so the win counter starts
+            // over — same as IOW mode, where hitting the loss reset zeroes it.
+            counter = 0;
+            triggerWinResetPulse();
+        }
+        else if (b.action === 'setBet') { if (isFinite(val) && val > 0) condSetBet(val); }
+        else if (b.action === 'switchOverUnder') condSwitchOverUnder();
+        else if (b.action === 'stop') stopRapidFire();
+    }
+    /** Evaluate every condition block against the bet that just resolved.
+     *  Trigger semantics mirror Stake's native Advanced autobet:
+     *  - every N wins/losses/bets: cumulative counter, fires then resets;
+     *  - every streak of N: consecutive run, fires at N, 2N, ...;
+     *  - first streak of N: fires once when the run reaches exactly N;
+     *  - balance/profit >=/<= X: edge-triggered — fires on crossing, re-arms
+     *    when the comparison goes false again (so % actions can't compound
+     *    on every bet while the threshold stays true). */
+    function runConditionEngine(won) {
+        if (!isRapidFiring || ACTIVE_MODE !== 'cond') return;
+        const balance = getCurrentBalance();
+        const profit = balance - initialBalance;
+        for (let i = 0; i < condBlocks.length; i++) {
+            const b = condBlocks[i];
+            const rt = condRuntime[i] || (condRuntime[i] = condDefaultRuntime());
+            let fire = false;
+            if (b.trigger === 'every') {
+                const match = b.result === 'bet' || (b.result === 'win' ? won : !won);
+                if (match && ++rt.count >= Math.max(1, parseInt(b.count, 10) || 1)) { rt.count = 0; fire = true; }
+            } else if (b.trigger === 'streak' || b.trigger === 'firstStreak') {
+                const match = b.result === 'bet' || (b.result === 'win' ? won : !won);
+                if (match) {
+                    rt.streak++;
+                    const n = Math.max(1, parseInt(b.count, 10) || 1);
+                    if (b.trigger === 'streak') {
+                        if (rt.streak >= n) { rt.streak = 0; fire = true; }
+                    } else if (rt.streak === n) fire = true;
+                } else {
+                    rt.streak = 0;
+                }
+            } else if (b.trigger === 'balance' || b.trigger === 'profit') {
+                const threshold = parseFloat(b.amount);
+                if (!isFinite(threshold)) continue; // blank amount = inactive block
+                const lhs = b.trigger === 'balance' ? balance : profit;
+                const hit = b.cmp === 'lte' ? lhs <= threshold : lhs >= threshold;
+                if (hit && rt.armed) { rt.armed = false; fire = true; }
+                else if (!hit) rt.armed = true;
+            }
+            if (fire) applyCondAction(b);
+            if (!isRapidFiring) break; // a stop / O/U-switch action ended the run
+        }
+    }
+    function renderCondBlocks() {
+        // Before the early return: the count on the opener has to stay live even
+        // while the popup (and therefore #h-cond-list) does not exist.
+        refreshCondOpenBtn();
+        const list = document.getElementById('h-cond-list');
+        if (!list) return;
+        list.innerHTML = '';
+        if (!condBlocks.length) {
+            list.innerHTML = '<div class="cond-empty">No conditions — add one to build a strategy.</div>';
+            return;
+        }
+        condBlocks.forEach((b, i) => list.appendChild(buildCondRow(b, i)));
+    }
+    function syncCondRowVisibility(row, b) {
+        const isCount = b.trigger === 'every' || b.trigger === 'streak' || b.trigger === 'firstStreak';
+        row.querySelector('.cond-count').style.display = isCount ? '' : 'none';
+        row.querySelector('.cond-result').style.display = isCount ? '' : 'none';
+        row.querySelector('.cond-cmp').style.display = isCount ? 'none' : '';
+        row.querySelector('.cond-amount').style.display = isCount ? 'none' : '';
+        const needsValue = b.action === 'increaseBet' || b.action === 'decreaseBet' || b.action === 'setBet';
+        row.querySelector('.cond-value').style.display = needsValue ? '' : 'none';
+    }
+    function buildCondRow(b, i) {
+        const row = document.createElement('div');
+        row.className = 'cond-row';
+        row.innerHTML = `
+            <select class="cond-trigger">
+                <option value="every">Every</option>
+                <option value="streak">Every streak of</option>
+                <option value="firstStreak">First streak of</option>
+                <option value="balance">On balance</option>
+                <option value="profit">On profit</option>
+            </select>
+            <input class="cond-count" type="number" min="1" step="1">
+            <select class="cond-result">
+                <option value="win">wins</option>
+                <option value="lose">losses</option>
+                <option value="bet">bets</option>
+            </select>
+            <select class="cond-cmp">
+                <option value="gte">&ge;</option>
+                <option value="lte">&le;</option>
+            </select>
+            <input class="cond-amount" type="number" step="0.00000001" placeholder="amount">
+            <span class="cond-arrow">&rarr;</span>
+            <select class="cond-action">
+                <option value="increaseBet">increase bet by %</option>
+                <option value="decreaseBet">decrease bet by %</option>
+                <option value="resetBet">reset bet to base</option>
+                <option value="setBet">set bet to</option>
+                <option value="switchOverUnder">switch over/under</option>
+                <option value="stop">stop autoplay</option>
+            </select>
+            <input class="cond-value" type="number" step="any" placeholder="value">
+            <button class="cond-del" title="Remove condition">&times;</button>
+        `;
+        row.querySelector('.cond-trigger').value = b.trigger;
+        row.querySelector('.cond-count').value = b.count;
+        row.querySelector('.cond-result').value = b.result;
+        row.querySelector('.cond-cmp').value = b.cmp;
+        row.querySelector('.cond-amount').value = b.amount;
+        row.querySelector('.cond-action').value = b.action;
+        row.querySelector('.cond-value').value = b.value;
+        const commit = () => {
+            b.trigger = row.querySelector('.cond-trigger').value;
+            b.count = row.querySelector('.cond-count').value;
+            b.result = row.querySelector('.cond-result').value;
+            b.cmp = row.querySelector('.cond-cmp').value;
+            b.amount = row.querySelector('.cond-amount').value;
+            b.action = row.querySelector('.cond-action').value;
+            b.value = row.querySelector('.cond-value').value;
+            condRuntime[i] = condDefaultRuntime();
+            saveCondState();
+            syncCondRowVisibility(row, b);
+        };
+        row.querySelectorAll('select').forEach(el => el.addEventListener('change', commit));
+        row.querySelectorAll('input').forEach(el => el.addEventListener('input', commit));
+        row.querySelector('.cond-del').addEventListener('click', () => {
+            condBlocks.splice(i, 1);
+            condRuntime.splice(i, 1);
+            saveCondState();
+            renderCondBlocks();
+        });
+        syncCondRowVisibility(row, b);
+        return row;
+    }
+
     // Tracks bet tile DOM nodes we've already counted. WeakSet so we don't
     // pin DOM nodes alive after Nuts GC's old bets out of the feed. Solves
     // the double-count seen on Nuts target/limbo when hotkeys are off:
@@ -10441,6 +12115,17 @@ let isRunning = false;
                 }
             }
             if (isRapidFiring && autoStopBalance && getCurrentBalance() >= autoStopBalance) stopRapidFire();
+        } else if (ACTIVE_MODE === 'cond') {
+            if (won) { lossStreak = 0; counter++; condPlayWinSound(); } else { lossStreak++; }
+            condTrackCycle();
+            if (isRapidFiring) runConditionEngine(won);
+            // Autostop @ Win Streak — checked after the engine so a condition
+            // that fires on the same bet still gets to run.
+            if (isRapidFiring && condWsStopOn && curWinStreak >= condWsTarget) {
+                stopRapidFire();
+                condNotice = { text: `Stopped: ${curWinStreak} win streak reached.`, until: Date.now() + 5000 };
+            }
+            if (isRapidFiring && autoStopBalance && getCurrentBalance() >= autoStopBalance) stopRapidFire();
         }
         updateUI();
     }
@@ -10481,35 +12166,20 @@ let isRunning = false;
             clickInterval = setInterval(() => { playButton.click(); }, clickIntervalTime);
         }
     }
-    function updateSpacePWM(duty) {
-        if (spaceTimeout) { clearTimeout(spaceTimeout); spaceTimeout = null; }
-        if (spaceInterval) { clearInterval(spaceInterval); spaceInterval = null; }
-        if (isSpaceHeldDown && duty !== 100) {
-            simulateKeyUp(32);
-            isSpaceHeldDown = false;
-        }
-        if (duty <= 0) { if (!isSpaceHeldDown) simulateKeyUp(32); return; }
-        if (duty === 100) {
-            if (!isSpaceHeldDown) {
-                simulateKeyDown(32, false);
-                isSpaceHeldDown = true;
-                spaceTimeout = setTimeout(() => {
-                    spaceInterval = setInterval(() => { simulateKeyDown(32, true); }, 30);
-                }, 400);
-            }
-            return;
-        }
-        const period = 100;
-        const downTime = (duty / 100) * period;
-        const upTime = period - downTime;
-        function pulse() {
-            simulateKeyDown(32, false);
-            spaceTimeout = setTimeout(() => {
-                simulateKeyUp(32);
-                spaceTimeout = setTimeout(pulse, upTime);
-            }, downTime);
-        }
-        pulse();
+    /* Spacebar: pressed ONCE and genuinely held for the whole run, released on
+       stop. No feathering of any kind — not the old PWM duty cycle, and not the
+       30ms auto-repeat that replaced it. The play-button click loop
+       (updateClicks) is what actually paces the bets here, so the key only has
+       to stay down; re-firing it just made the cadence uneven. */
+    function startSpaceHold() {
+        if (isSpaceHeldDown) return;
+        simulateKeyDown(32, false);
+        isSpaceHeldDown = true;
+    }
+    function stopSpaceHold() {
+        if (!isSpaceHeldDown) return;
+        simulateKeyUp(32);
+        isSpaceHeldDown = false;
     }
     function simulateKeyDown(keyCode, repeat = false) {
         const downEvent = new KeyboardEvent('keydown', { key: ' ', code: 'Space', keyCode: keyCode, which: keyCode, bubbles: true, cancelable: true, repeat: repeat });
@@ -10528,8 +12198,9 @@ let isRunning = false;
         rapidFireStartedAt = Date.now();
         lastObservedBetTime = 0;
         syncLastSeenBet();
-        lastPlacedBet = baseBet;
+        lastPlacedBet = ACTIVE_MODE === 'cond' ? condBaseBet : baseBet;
         if (ACTIVE_MODE === 'iow') forceSetBet(baseBet);
+        if (ACTIVE_MODE === 'cond') { resetCondRuntime(); condStartCycle(); forceSetBet(condBaseBet); }
         if (ACTIVE_MODE === 'manual') forceSetBet(manualBet);
         if (ACTIVE_MODE === 'smart') updateBetAmount();
         startBetGuardian();
@@ -10541,10 +12212,10 @@ let isRunning = false;
             return;
         }
         updateClicks(30);
-        updateSpacePWM(70);
-        if (ACTIVE_MODE === 'iow' && !iowEnforcerInterval) {
+        startSpaceHold();
+        if ((ACTIVE_MODE === 'iow' || ACTIVE_MODE === 'cond') && !iowEnforcerInterval) {
             iowEnforcerInterval = setInterval(() => {
-                if (isRapidFiring && ACTIVE_MODE === 'iow') {
+                if (isRapidFiring && (ACTIVE_MODE === 'iow' || ACTIVE_MODE === 'cond')) {
                     const current = getCurrentBet();
                     if (Math.abs(current - lastPlacedBet) > 0.00000005) {
                         forceSetBet(lastPlacedBet);
@@ -10556,10 +12227,7 @@ let isRunning = false;
     function stopRapidFire() {
         isRapidFiring = false;
         updateClicks(0);
-        if (spaceTimeout) { clearTimeout(spaceTimeout); spaceTimeout = null; }
-        if (spaceInterval) { clearInterval(spaceInterval); spaceInterval = null; }
-        simulateKeyUp(32);
-        isSpaceHeldDown = false;
+        stopSpaceHold();
         if (iowEnforcerInterval) {
             clearInterval(iowEnforcerInterval);
             iowEnforcerInterval = null;
@@ -10667,6 +12335,55 @@ let isRunning = false;
         if (ACTIVE_MODE === 'iow') {
             const targetEl = document.getElementById('h-target');
             if (targetEl) targetEl.innerHTML = `base bet: ${formatCurrency(baseBet)} | Wins: <span style="color:var(--hud-positive)">${counter}</span> | LossStreak: <span style="color:var(--hud-negative)">${lossStreak}</span>`;
+            populateAdvancedStats();
+        } else if (ACTIVE_MODE === 'cond') {
+            const targetEl = document.getElementById('h-target');
+            if (targetEl) {
+                if (condNotice && Date.now() < condNotice.until) targetEl.innerHTML = condNotice.text;
+                else targetEl.innerHTML = `bet: ${formatCurrency(lastPlacedBet)} | base: ${formatCurrency(condBaseBet)} | conditions: ${condBlocks.length} | Wins: <span style="color:var(--hud-positive)">${counter}</span> | LossStreak: <span style="color:var(--hud-negative)">${lossStreak}</span>`;
+            }
+            /* Repaint the stat rows for the selected scope (Session or Cycle).
+               These ids were already written above with session values, so this
+               overwrite is what makes "Track per = Cycle" work. */
+            const sv = condStatsView();
+            const setTxt = (id, text, color) => {
+                const el = document.getElementById(id);
+                if (!el) return;
+                el.textContent = text;
+                if (color) el.style.color = color;
+            };
+            setTxt('h-start-bal', formatCurrency(sv.startBal));
+            setTxt('h-profit', formatCurrency(sv.profit),
+                sv.profit > 0 ? 'var(--hud-positive)' : (sv.profit < 0 ? 'var(--hud-negative)' : 'var(--hud-text)'));
+            setTxt('h-peak-bal', formatCurrency(sv.peakBal));
+            setTxt('h-high-profit', formatCurrency(sv.peakProfit));
+            setTxt('h-total-bets', String(sv.bets));
+            setTxt('h-wagered', formatCurrency(sv.wagered));
+            setTxt('h-rtp', sv.rtp.toFixed(2) + '%', sv.rtp >= 100 ? 'var(--hud-positive)' : 'var(--hud-negative)');
+            const wlEl2 = document.getElementById('h-wl');
+            if (wlEl2) wlEl2.innerHTML = `<span style="color:var(--hud-positive);">${sv.wins}</span> / <span style="color:var(--hud-negative);">${sv.losses}</span>`;
+            /* The chip shows the PROGRESSION counters, not session totals: wins
+               since the bet was last reset to base (so it zeroes when the loss
+               reset fires) and the current loss streak. Session/cycle totals
+               live in the "Wins / Losses" stat row below. */
+            setTxt('h-stats-ctr-w', String(counter));
+            setTxt('h-stats-ctr-l', String(lossStreak));
+            const ctrL = document.getElementById('h-stats-ctr-l');
+            if (ctrL) ctrL.classList.toggle('has-loss', lossStreak > 0);
+            /* Balance Target / Profit Stop mirror the calculator's outputs, so
+               they track whatever the divisor + profit multiplier currently say
+               (and the live balance after an UPDATE). */
+            const balTargetEl = document.getElementById('h-stats-bal-target');
+            const profStopEl = document.getElementById('h-stats-profit-stop');
+            if (balTargetEl || profStopEl) {
+                const fmtOut = id => {
+                    const el = document.getElementById(id);
+                    const n = el ? parseFloat(el.value) : NaN;
+                    return isFinite(n) ? formatCurrency(n) : '—';
+                };
+                if (balTargetEl) balTargetEl.textContent = fmtOut('dt-out_target');
+                if (profStopEl) profStopEl.textContent = fmtOut('dt-out_profit');
+            }
             populateAdvancedStats();
         } else if (ACTIVE_MODE === 'smart') {
             const streaksEl = document.getElementById('h-streaks'); if (streaksEl) streaksEl.innerHTML = `<span style="color:var(--hud-positive);">${curWinStreak}/${maxWinStreak}</span> | <span style="color:var(--hud-negative);">${curLossStreak}/${maxLossStreak}</span>`;
@@ -10810,6 +12527,18 @@ let isRunning = false;
             const lossResetEl = document.getElementById('h-loss-reset'); if (lossResetEl) lossStreakReset = parseInt(lossResetEl.value, 10) || 3;
             const winsResetEl = document.getElementById('h-wins-reset'); if (winsResetEl) winsBeforeReset = parseInt(winsResetEl.value, 10) || null;
         }
+        if (ACTIVE_MODE === 'cond') {
+            const condInp = document.getElementById('h-cond-base'); if (condInp) condBaseBet = parseFloat(condInp.value) || minBaseBet;
+            // The DiceTool panel builds asynchronously (document-ready), so it
+            // may not have existed when the tab was first opened. Once it shows
+            // up, mount it, build the Stats tab, and wire its controls.
+            const dp = document.getElementById('dt-aio-panel');
+            const hc = document.getElementById('hud-content');
+            if (dp && hc && (dp.parentElement !== hc || !document.getElementById('h-rapid-toggle'))) {
+                mountDicePanel();
+                if (ensureNutsStatsTab()) attachListeners();
+            }
+        }
         if (ACTIVE_MODE === 'manual') {
             // Keep manualBet synced from the HUD input so user edits take
             // effect even if the input listener missed an event.
@@ -10822,6 +12551,8 @@ let isRunning = false;
         updateUI();
         startObserverWrapper();
         monitorRapidFireHealth();
+        hideNativeBleedThrough();
+        fitCondHostHeight();
         if (ACTIVE_MODE === 'smart') updateBetAmount();
         if (isRapidFiring) startBetGuardian();
         else stopBetGuardian();
@@ -10847,7 +12578,7 @@ let isRunning = false;
         }
     });
     setTimeout(() => { buildHUD(); startObserver(); }, 800);
-    console.log('%c✅ IOW / Smart v3.5 loaded - DICE SLIDER THUMB/TRACK NOW FULLY HIDDEN', 'color:#43f6ff;font-weight:900;font-size:14px');
+    console.log('%c✅ IOW / Smart v3.6 loaded - CONDITIONS MODE + SOLID SPACEBAR HOLD', 'color:#43f6ff;font-weight:900;font-size:14px');
 
     }
 
@@ -12942,7 +14673,7 @@ let isRunning = false;
     }
 
 
-/* === source: stake-7day-tracker (desktop) v2.20.2 — embedded as a bundle tool === */
+/* === source: stake-7day-tracker (desktop) v2.21.0 — embedded as a bundle tool === */
 function tool_stake_7day_tracker() {
     'use strict';
     if (window.__stk7wToolBooted) return;
@@ -13004,7 +14735,7 @@ function tool_stake_7day_tracker() {
        PRIVACY: everything is stored locally in this browser. Nothing is sent out.
        ========================================================================= */
 
-    var VERSION   = '2.20.2';                       // bump on every change; surfaced in the HUD (data-ver) so the running build is verifiable
+    var VERSION   = '2.24.2';                       // bump on every change; surfaced in the HUD (data-ver) so the running build is verifiable
     var WINDOW_MS = 7 * 24 * 60 * 60 * 1000;       // rolling window: 7 days
     var KEEP_MS   = 8 * 24 * 60 * 60 * 1000;       // retain bets a little past the window
     var STORE_KEY = 'stk7w:v5';   // v5: data partitioned per account (userId)
@@ -13911,11 +15642,217 @@ function tool_stake_7day_tracker() {
         return Date.now();
     }
 
+    /* ---------------- CODE CLAIM TRACKER ----------------
+       Stake caps bonus-drop code claims at CODES_LIMIT per FIXED daily window
+       that resets at CODES_RESET_HOUR — the site's own claim dialog states
+       "Claim up to 10 bonus drops daily, your claims reset at 7:00 PM each day".
+       The whole allowance returns at once on that boundary.
+
+       This was previously modelled as a ROLLING 24h window where each claim
+       freed its own slot 24h after it was made. That under-reports what is
+       actually available: claim 10 drops at 18:55 and the real site gives all
+       10 back five minutes later at 19:00, while the rolling model showed 0
+       left for another 24 hours.
+
+       Counting is authoritative: fetchCodeClaims() polls Stake's transaction
+       ledger (bonusDrop, SC rows, in the current window) so claims from every
+       method and device are reflected; in-browser claim mutations and the
+       ledger response seen passively update the HUD instantly between polls. The −/+
+       buttons in the HUD correct over/under-counts. Stored per account. */
+    var CODES_KEY = 'stk7w:codes:v2';     // v2: claim timestamps (v1 stored a bare count)
+    var CODES_LIMIT = 10;
+    /* Local time. The dialog says "7:00 PM" with no timezone qualifier, which is
+       how a site renders a boundary it has already converted for the viewer — so
+       the reset is treated as 19:00 in the browser's own zone. If Stake turns out
+       to mean a fixed zone (e.g. 7 PM ET for everyone), this one constant is the
+       only thing that needs to change. */
+    var CODES_RESET_HOUR = 19;
+    var codesLastSeen = 0;
+    var codesLastClaimAt = 0;
+    /* Epoch ms of the most recent reset boundary: today's if it has already
+       passed, otherwise yesterday's. Everything claimed before this is spent
+       history and no longer counts against the cap. */
+    function codesWindowStart() {
+        var d = new Date();
+        d.setHours(CODES_RESET_HOUR, 0, 0, 0);
+        if (d.getTime() > Date.now()) d.setDate(d.getDate() - 1);
+        return d.getTime();
+    }
+    /* Epoch ms of the next reset boundary. Built by setting the wall-clock hour
+       and then stepping the date, so a DST shift keeps it at 19:00 local rather
+       than drifting an hour (which adding 24h to the window start would do). */
+    function codesNextResetAt() {
+        var d = new Date();
+        d.setHours(CODES_RESET_HOUR, 0, 0, 0);
+        if (d.getTime() <= Date.now()) d.setDate(d.getDate() + 1);
+        return d.getTime();
+    }
+    function codesFmtLeft(ms) {
+        if (ms <= 0) return '0s';
+        if (ms < 3600000) { var m0 = Math.floor(ms / 60000), s0 = Math.floor((ms % 60000) / 1000); return m0 + 'm ' + (s0 < 10 ? '0' : '') + s0 + 's'; }
+        return formatDur(ms);
+    }
+    function codesLoadAll() { try { var v = JSON.parse(localStorage.getItem(CODES_KEY) || '{}'); return (v && typeof v === 'object') ? v : {}; } catch (e) { return {}; } }
+    function codesSaveAll(all) { try { localStorage.setItem(CODES_KEY, JSON.stringify(all)); } catch (e) {} }
+    // Per-account record { claims: [epochMs,...] }: timestamps of drop-code claims,
+    // pruned to the current daily window on every read, so crossing the reset
+    // boundary drops the count to 0 with no reset event to schedule.
+    function codesRec() {
+        var id = S.active || 'default';
+        var all = codesLoadAll(), r = all[id];
+        if (!r || !Array.isArray(r.claims)) r = { claims: [] };
+        all[id] = r;
+        var cutoff = codesWindowStart(), before = r.claims.length;
+        r.claims = r.claims.filter(function (t) { return typeof t === 'number' && t > cutoff; }).sort(function (a, b) { return a - b; });
+        if (r.claims.length !== before) codesSaveAll(all);
+        return { all: all, rec: r };
+    }
+    function codesCount() { return codesRec().rec.claims.length; }
+    // Record an in-browser drop claim: +N appends N claim timestamps at now — the
+    // instant fast-path when a claim mutation is seen; the ledger poll then reconciles.
+    function codesBump(d) {
+        var c = codesRec();
+        if (d > 0) { for (var i = 0; i < d; i++) c.rec.claims.push(Date.now()); }
+        else if (d < 0) { for (var j = 0; j < -d && c.rec.claims.length; j++) c.rec.claims.pop(); }
+        c.rec.claims.sort(function (a, b) { return a - b; });
+        codesSaveAll(c.all);
+        scheduleRender();
+    }
+    // ms until the whole allowance comes back (the next reset boundary).
+    function codesResetMs() {
+        return Math.max(0, codesNextResetAt() - Date.now());
+    }
+    // Replace stored claim timestamps with the authoritative set from Stake's ledger.
+    // The ledger reflects every method + device, so it is the source of truth. A local
+    // claim made <15s ago (not yet committed to the ledger) is preserved to avoid a brief
+    // flicker; the list is pruned to the current window and capped at CODES_LIMIT.
+    function codesSetAuthoritative(tsList) {
+        if (!Array.isArray(tsList)) return;
+        var c = codesRec();
+        var merged = tsList.slice();
+        if (Date.now() - codesLastClaimAt < 15000) {
+            c.rec.claims.forEach(function (t) {
+                if (Date.now() - t < 15000 && !merged.some(function (m) { return Math.abs(m - t) < 4000; })) merged.push(t);
+            });
+        }
+        var cutoff = codesWindowStart();
+        merged = merged.filter(function (t) { return t > cutoff; }).sort(function (a, b) { return a - b; });
+        if (merged.length > CODES_LIMIT) merged = merged.slice(merged.length - CODES_LIMIT);
+        c.rec.claims = merged;
+        codesSaveAll(c.all);
+        scheduleRender();
+        note('codes authoritative -> ' + merged.length);
+    }
+
+    // Extract in-window drop-claim timestamps (epoch ms) from a Transaction-query
+    // response. A claim = a bonusDrop row with currency "sweeps" (each drop = 1 SC + 1
+    // gold row at the same createdAt; the SC row is the claim). Gold rows and all other
+    // transaction types are ignored. Returns null when the response isn't a tx list.
+    function codesExtractDropClaims(root) {
+        try {
+            var tx = root && root.user && root.user.transaction;
+            if (!Array.isArray(tx)) return null;
+            var cutoff = codesWindowStart(), out = [];
+            for (var i = 0; i < tx.length; i++) {
+                var t = tx[i];
+                if (t && t.type === 'bonusDrop' && t.currency === 'sweeps') {
+                    var at = Date.parse(t.createdAt);
+                    if (isFinite(at) && at > cutoff) out.push(at);
+                }
+            }
+            return out;
+        } catch (e) { return null; }
+    }
+
+    // Poll the authoritative ledger: Stake's Transaction query filtered to bonusDrop,
+    // authenticated exactly like the tracker's other queries (session-cookie access
+    // token). limit 50 covers a daily window many times over (cap is CODES_LIMIT).
+    // This is what makes the count reflect claims from ANY method and ANY device within
+    // one poll. Social-only: the drop/sweeps code system is stake.us; nothing to poll on stake.com.
+    var CODES_QUERY = 'query CodeClaims($types:[TransactionTypeEnum!],$limit:Int){user{id transaction(types:$types,limit:$limit){id type currency createdAt}}}';
+    function fetchCodeClaims() {
+        if (!IS_SOCIAL) return;
+        try {
+            fetch(location.origin + '/_api/graphql', {
+                method: 'POST', credentials: 'include',
+                headers: { 'content-type': 'application/json', 'x-access-token': getCookie('session'), 'x-language': 'en' },
+                body: JSON.stringify({ operationName: 'CodeClaims', query: CODES_QUERY, variables: { types: ['bonusDrop'], limit: 50 } })
+            }).then(function (r) { return r.json(); }).then(function (j) {
+                if (!j || j.errors || !j.data) return;   // not authed / blocked -> leave in-browser + passive counting in place
+                var claims = codesExtractDropClaims(j.data);
+                if (claims) codesSetAuthoritative(claims);
+            }).catch(function () {});
+        } catch (e) {}
+    }
+
+    // ALL drop-code claims count, regardless of how or where they were made. The
+    // authoritative source is Stake's transaction ledger (fetchCodeClaims polls it every
+    // ~45s and on tab focus), reflecting claims from every device and method. Between
+    // polls, fast-path signals keep the HUD live from what THIS browser sees:
+    //   (1) the ledger's own Transaction response seen passively (e.g. opening
+    //       Transactions > Bonuses > Drops) -> reconcile authoritatively;
+    //   (2) a successful claim mutation in this browser (claimConditionBonusCode) -> record
+    //       the claim now, then a confirming poll;
+    //   (3) a daily-limit error on the claim path -> poll immediately for the true state.
+    // Non-limit failures never count. Unrecognized claim ops are breadcrumbed via diag().
+    function codesScanClaims(data) {
+        try {
+            if (!data || typeof data !== 'object') return;
+            var root = data.data || (data.payload && data.payload.data);    // plain GraphQL or graphql-ws frame
+
+            // (3) daily-limit error -> the window is full; poll for the authoritative timestamps
+            if (data.errors && data.errors.length) {
+                for (var e = 0; e < data.errors.length; e++) {
+                    var er = data.errors[e] || {};
+                    var em = ((er.message || '') + ' ' + (er.errorType || '')).trim();
+                    var path = (er.path || []).join('.');
+                    if (/daily|24\s*h|per\s*day|reached|maximum|too many|limit/i.test(em) &&
+                        (/bonus|code|claim|drop|redeem/i.test(em) || /BonusCode/i.test(path))) {
+                        note('code limit signalled: ' + em.slice(0, 70)); fetchCodeClaims(); return;
+                    }
+                }
+                return;   // other errors never count
+            }
+            if (!root || typeof root !== 'object') return;
+
+            // (1) authoritative ledger response seen passively (Transaction query)
+            var claims = codesExtractDropClaims(root);
+            if (claims != null) { codesSetAuthoritative(claims); return; }
+
+            // (2) successful in-browser claim mutation -> record it now, then confirm via poll
+            var hit = root.claimConditionBonusCode;
+            if (!hit) {
+                var keys = Object.keys(root);
+                for (var i = 0; i < keys.length; i++) {
+                    var k = keys[i], v = root[k];
+                    if (/(claim|redeem).*bonus.*code|bonus.*code.*(claim|redeem)/i.test(k) &&
+                        v && typeof v === 'object' && !Array.isArray(v) && v.amount != null) { hit = v; break; }
+                    else if (/claim|redeem/i.test(k) && /code|promo|coupon/i.test(k) && !Array.isArray(v)) diag('code? unmatched op "' + k + '"');
+                }
+            }
+            if (hit && typeof hit === 'object' && hit.amount != null) {
+                var now = Date.now();
+                if (now - codesLastSeen < 1500) return;      // fetch + WS double-report guard for the same claim
+                codesLastSeen = now; codesLastClaimAt = now;
+                codesBump(1);                                // append a claim at now
+                setTimeout(fetchCodeClaims, 2500);           // reconcile against the ledger once it commits
+                note('code claim +' + hit.amount + ' ' + (hit.currency || ''));
+            }
+        } catch (e) {}
+    }
+
     var nameSamples = 0;
     function handlePayload(text) {
         if (!text || text.length > 1500000) return;
         if (!IS_SOCIAL && text.indexOf('baseRate') >= 0) {
             try { var d0 = JSON.parse(text); var cc = d0 && d0.data && d0.data.currencyConfiguration; if (cc && cc.baseRates) applyRates(cc.baseRates); } catch (e) {}
+        }
+        // ---- code-claim detection (runs BEFORE the 'amount' pre-filter). Cheap
+        //      substring gate: "onusCode" catches the claim mutation and its daily-limit
+        //      error (field/path echoes claimConditionBonusCode); "bonusDrop" catches the
+        //      authoritative Transaction ledger response (Transactions > Bonuses > Drops). ----
+        if (text.length < 400000 && (text.indexOf('onusCode') >= 0 || text.indexOf('bonusDrop') >= 0)) {
+            try { codesScanClaims(JSON.parse(text)); } catch (e) {}
         }
         if (text.indexOf('amount') < 0) return;     // cheap pre-filter
         var data;
@@ -14342,6 +16279,23 @@ function tool_stake_7day_tracker() {
             { name: 'High Roller', tiers: [{ v: '$12.50', req: 50000 }, { v: '$25', req: 100000 }, { v: '$50', req: 200000 }] }
         ];
         hud.elig = w.querySelector('#stk7w-elig');
+        // ---- code-claim counter (daily limit + reset countdown; −/+ manual correction) ----
+        var cst = document.createElement('style');
+        cst.textContent = '#stk7w .ecw{display:flex;align-items:center;gap:10px;margin:0 0 10px;padding:10px 12px;border:1px solid rgba(122,150,165,.3);border-radius:12px;background:rgba(9,18,24,.5)}'
+            + '#stk7w .ecw .etn{flex:1;display:flex;flex-direction:column;gap:2px}'
+            + '#stk7w .ecw .etn b{font-size:12px;letter-spacing:.2px}'
+            + '#stk7w .ecw .rq{font-size:11px}'
+            + '#stk7w .ecw .ep{width:11px;height:11px}'
+            + '#stk7w-ccount{font-size:26px;font-weight:800;letter-spacing:.5px;line-height:1;font-variant-numeric:tabular-nums}';
+        document.head.appendChild(cst);
+        var cw = document.createElement('div'); cw.className = 'ecw';
+        cw.innerHTML = '<span class="ep no" id="stk7w-cpip"></span>'
+            + '<span class="etn"><b>Codes claimed</b><span class="rq" id="stk7w-creset">—</span></span>'
+            + '<span class="es mono" id="stk7w-ccount">—</span>';
+        hud.elig.appendChild(cw);
+        hud.cpip = cw.querySelector('#stk7w-cpip');
+        hud.creset = cw.querySelector('#stk7w-creset');
+        hud.ccount = cw.querySelector('#stk7w-ccount');
         hud.drops = [];
         DROPS.forEach(function (grp) {
             var head = document.createElement('div'); head.className = 'egp';
@@ -14515,6 +16469,19 @@ function tool_stake_7day_tracker() {
             });
         }
 
+        // code-claim counter + reset countdown (ticks with the 1s render loop)
+        if (hud.ccount) {
+            var ccN = codesCount(), ccReset = codesResetMs();
+            hud.ccount.textContent = ccN + '/' + CODES_LIMIT;
+            hud.ccount.style.color = ccN >= CODES_LIMIT ? '#ff6b76' : (ccN >= CODES_LIMIT - 2 ? '#ffb020' : '#1fd655');
+            hud.cpip.className = 'ep ' + (ccN >= CODES_LIMIT ? 'no' : 'ok');
+            /* The allowance returns all at once, so the countdown is to the reset
+               boundary. "+1 in" was rolling-window wording and would now be a
+               lie — at the boundary the user gets all CODES_LIMIT back, not one. */
+            hud.creset.textContent = ccN >= CODES_LIMIT ? ('all ' + CODES_LIMIT + ' back in ' + codesFmtLeft(ccReset))
+                : (ccN > 0 ? ((CODES_LIMIT - ccN) + ' left · resets in ' + codesFmtLeft(ccReset)) : (CODES_LIMIT + ' available'));
+        }
+
         if (S.ui.open) drawGraph();
     }
 
@@ -14628,7 +16595,9 @@ function tool_stake_7day_tracker() {
         setInterval(fetchRaffle, 60 * 1000);
         fetchBuckets();                        // server-sourced RTP split (consistent across devices)
         setInterval(fetchBuckets, BUCKET_MS);
-        document.addEventListener('visibilitychange', function () { if (!document.hidden) { fetchLifetime(); fetchRaffle(); fetchBuckets(); } });
+        fetchCodeClaims();                     // authoritative drop-code claim count (stake.us; all methods/devices)
+        setInterval(fetchCodeClaims, 45 * 1000);
+        document.addEventListener('visibilitychange', function () { if (!document.hidden) { fetchLifetime(); fetchRaffle(); fetchBuckets(); fetchCodeClaims(); } });
         setInterval(render, 1000);             // keep the rolling window + fall-off current
     }
     if (document.readyState === 'loading') {
@@ -14637,6 +16606,5042 @@ function tool_stake_7day_tracker() {
         start();
     }
 }
+
+
+    /* === source: perfect-blackjack (Stake / Shuffle / Nuts) === */
+    /* === source: perfect-blackjack (Stake / Shuffle / Nuts) === */
+    /* === source: perfect-blackjack (Stake / Shuffle / Nuts) === */
+    /* === source: perfect-blackjack (Stake / Shuffle / Nuts) === */
+    /* === source: perfect-blackjack (Stake / Shuffle / Nuts) === */
+    /* === source: perfect-blackjack (Stake / Shuffle / Nuts) === */
+    /* === source: perfect-blackjack (Stake / Shuffle / Nuts) === */
+    /* === source: perfect-blackjack (Stake / Shuffle / Nuts) === */
+    /* === source: perfect-blackjack (Stake / Shuffle / Nuts) === */
+    /* === source: perfect-blackjack (Stake / Shuffle / Nuts) === */
+    /* === source: perfect-blackjack (Stake / Shuffle / Nuts) === */
+    /* === source: perfect-blackjack (Stake / Shuffle / Nuts) === */
+    /* === source: perfect-blackjack (Stake / Shuffle / Nuts) === */
+    /* === source: perfect-blackjack (Stake / Shuffle / Nuts) === */
+    /* === source: perfect-blackjack (Stake / Shuffle / Nuts) === */
+    /* === source: perfect-blackjack (Stake / Shuffle / Nuts) === */
+    /* === source: perfect-blackjack (Stake / Shuffle / Nuts) === */
+    /* === source: perfect-blackjack (Stake / Shuffle / Nuts) === */
+    /* === source: perfect-blackjack (Stake / Shuffle / Nuts) === */
+    /**
+     * Perfect Blackjack — basic-strategy advisor + optional auto-player.
+     *
+     * The panel docks into the game's betting column, the same place the Moles
+     * HUD lives, rather than floating over the table.
+     *
+     * Cards come from the site's own network payloads (authoritative: every
+     * bet/hit/stand response carries the whole hand) and fall back to reading
+     * the rendered board when no payload has arrived yet. The dealer's hole
+     * card is never read — sites only send it once the hand is over, which is
+     * also when we stop advising.
+     *
+     * Turn detection is button-driven: if HIT is enabled, it is the player's
+     * turn. That one signal is stable across all three sites and saves us
+     * modelling each site's per-hand `actions` list.
+     *
+     * Auto-play only ever presses buttons the site has already enabled, and
+     * only once per distinct game state (see stateHash). Auto-deal is a
+     * separate opt-in because it is the only path that wagers on its own.
+     */
+    function tool_blackjack() {
+        'use strict';
+        // The panel lives inside a container the site owns and re-renders, so
+        // the ticker below must survive being detached. That makes it immortal,
+        // which in turn means a second call would leave two tickers racing to
+        // press the same button. Boot exactly once per page.
+        if (tool_blackjack._booted) return;
+        tool_blackjack._booted = true;
+
+        // Shown in the panel title so the running build is verifiable at a
+        // glance. Bump this whenever the tool body changes.
+        var BJ_VERSION = '2.90';
+
+        var PAGE_WIN = (typeof unsafeWindow !== 'undefined' && unsafeWindow) ? unsafeWindow : window;
+
+        var isShuf = /shuffle\./i.test(location.hostname);
+        var isNut  = /(^|\.)nuts\.gg$/i.test(location.hostname);
+        var SITE    = isShuf ? 'Shuffle' : isNut ? 'Nuts' : 'Stake';
+        var TOOL_ID = (isShuf ? 'shuffle' : isNut ? 'nuts' : 'stake') + '-blackjack';
+
+        function isOnBjPage() {
+            var p = location.pathname || '';
+            if (isShuf) return /games\/originals\/blackjack(?:\/|$|\?|#)/i.test(p);
+            if (isNut)  return /^\/blackjack(?:\/|$|\?|#)/i.test(p);
+            return /casino\/games\/blackjack(?:\/|$|\?|#)/i.test(p);
+        }
+
+        /** The control panel's switch. Unknown ids read as enabled. */
+        function bjEnabled() {
+            try { return isToolIdEnabled(TOOL_ID); } catch (e) { return true; }
+        }
+
+        /* ---------------------------------------------------------------
+           TABLE RULES — fixed per site, applied automatically.
+           These are house rules, not user preferences, so the tool sets them
+           from the site rather than asking. Sourced from each site's own
+           published blackjack rules:
+             Stake   — 8 decks,  dealer STANDS on soft 17, double after split,
+                       one split (no re-split), no surrender.
+             Shuffle — infinite decks, same rule set (help.shuffle.com).
+             Nuts    — no public rule sheet found; defaults to the same and is
+                       corrected here if its in-game rules differ.
+           strafe/blackjackreview confirm Stake S17; Shuffle help centre
+           confirms "Dealer always stands on 17", "Double any first 2", "Can
+           double after split", "No re-splitting".
+           --------------------------------------------------------------- */
+        var SITE_RULES = {
+            Stake:   { h17: false, das: true, resplit: false, decks: '8 decks',       verified: true },
+            Shuffle: { h17: false, das: true, resplit: false, decks: 'infinite decks', verified: true },
+            Nuts:    { h17: false, das: true, resplit: false, decks: '',               verified: false }
+        };
+        var RULES = SITE_RULES[SITE] || SITE_RULES.Stake;
+
+        var CFG_KEY = 'bj-perfect-cfg-' + SITE.toLowerCase();
+        var DEFAULTS = {
+            delayMs: 700,
+            collapsed: false,
+            overlay: true
+        };
+        var cfg = DEFAULTS;
+        try { cfg = Object.assign({}, DEFAULTS, JSON.parse(localStorage.getItem(CFG_KEY) || '{}')); }
+        catch (e) { cfg = Object.assign({}, DEFAULTS); }
+        // Rules always come from the site, never from stored config — they are
+        // facts about the table, and letting a stale saved value override them
+        // was how the advisor ended up reading the wrong strategy chart.
+        cfg.h17 = RULES.h17; cfg.das = RULES.das; cfg.resplit = RULES.resplit;
+        cfg.overlay = true;   // on-felt stats are always shown; no toggle for it
+        function saveCfg() { try { localStorage.setItem(CFG_KEY, JSON.stringify(cfg)); } catch (e) {} }
+
+        /* ---------------------------------------------------------------
+           STRATEGY ENGINE
+           Cells transcribed from Blackjack Apprenticeship's S17 and H17
+           basic-strategy charts:
+             https://www.blackjackapprenticeship.com/blackjack-strategy-charts/
+           Stake is an 8-deck shoe and Shuffle deals from an infinite shoe; for
+           4+ decks the chart is identical, so one table set serves all three
+           sites. The tables below hold the S17 chart, and the three cells H17
+           changes (11 vs A, soft 18 vs 2, soft 19 vs 6) are patched inline.
+
+           BJA's late-surrender rows are deliberately absent: none of the three
+           sites offer surrender, so there is no button to press.
+
+           Actions: H hit · S stand · D double-else-hit · Ds double-else-stand
+                    P split · Ph split-if-DAS-else-hit
+           Dealer upcard 2..10,A maps to index 0..9.
+           --------------------------------------------------------------- */
+        var HARD = {
+            9:  ['H','D','D','D','D','H','H','H','H','H'],
+            10: ['D','D','D','D','D','D','D','D','H','H'],
+            11: ['D','D','D','D','D','D','D','D','D','H'],
+            12: ['H','H','S','S','S','H','H','H','H','H'],
+            13: ['S','S','S','S','S','H','H','H','H','H'],
+            14: ['S','S','S','S','S','H','H','H','H','H'],
+            15: ['S','S','S','S','S','H','H','H','H','H'],
+            16: ['S','S','S','S','S','H','H','H','H','H']
+        };
+        var SOFT = {
+            13: ['H','H','H','D','D','H','H','H','H','H'],
+            14: ['H','H','H','D','D','H','H','H','H','H'],
+            15: ['H','H','D','D','D','H','H','H','H','H'],
+            16: ['H','H','D','D','D','H','H','H','H','H'],
+            17: ['H','D','D','D','D','H','H','H','H','H'],
+            18: ['S','Ds','Ds','Ds','Ds','S','S','H','H','H'],   // vs 2 stands under S17; H17 flips it to Ds
+            19: ['S','S','S','S','S','S','S','S','S','S'],
+            20: ['S','S','S','S','S','S','S','S','S','S']
+        };
+        var PAIRS = {
+            2:  ['Ph','Ph','P','P','P','P','H','H','H','H'],
+            3:  ['Ph','Ph','P','P','P','P','H','H','H','H'],
+            4:  ['H','H','H','Ph','Ph','H','H','H','H','H'],
+            6:  ['Ph','P','P','P','P','H','H','H','H','H'],
+            7:  ['P','P','P','P','P','P','H','H','H','H'],
+            8:  ['P','P','P','P','P','P','P','P','P','P'],
+            9:  ['P','P','P','P','P','S','P','P','S','S'],
+            10: ['S','S','S','S','S','S','S','S','S','S'],
+            11: ['P','P','P','P','P','P','P','P','P','P']
+        };
+
+        function cardValue(rank) {
+            if (rank == null) return 0;
+            var r = String(rank).toUpperCase().trim();
+            if (r === 'A' || r === 'ACE' || r === '1' || r === '11') return 11;
+            if (r === 'K' || r === 'Q' || r === 'J' || r === 'T' ||
+                r === 'KING' || r === 'QUEEN' || r === 'JACK') return 10;
+            var n = parseInt(r, 10);
+            return (n >= 2 && n <= 10) ? n : 0;
+        }
+
+        function handInfo(ranks) {
+            var total = 0, aces = 0, i;
+            for (i = 0; i < ranks.length; i++) {
+                var v = cardValue(ranks[i]);
+                total += v;
+                if (v === 11) aces++;
+            }
+            while (total > 21 && aces > 0) { total -= 10; aces--; }
+            var pair = ranks.length === 2 && cardValue(ranks[0]) === cardValue(ranks[1]);
+            return {
+                total: total,
+                soft: aces > 0,
+                pair: pair,
+                pairRank: pair ? cardValue(ranks[0]) : 0,   // 11 for A,A
+                busted: total > 21
+            };
+        }
+
+        function dealerIdx(upRank) {
+            var v = cardValue(upRank);
+            return v === 11 ? 9 : v - 2;
+        }
+
+        function resolve(code, canDouble) {
+            if (code === 'D')  return canDouble ? { action: 'DOUBLE', why: 'double, else hit' }
+                                                : { action: 'HIT',    why: 'double unavailable' };
+            if (code === 'Ds') return canDouble ? { action: 'DOUBLE', why: 'double, else stand' }
+                                                : { action: 'STAND',  why: 'double unavailable' };
+            if (code === 'S')  return { action: 'STAND', why: 'basic strategy' };
+            return { action: 'HIT', why: 'basic strategy' };
+        }
+
+        function decide(ranks, up, canDouble, canSplit) {
+            var h = handInfo(ranks);
+            var di = dealerIdx(up);
+            if (di < 0 || di > 9) return { action: '—', why: 'no dealer upcard' };
+            if (h.busted)      return { action: 'STAND', why: 'busted' };
+            if (h.total >= 21) return { action: 'STAND', why: h.total === 21 ? '21' : 'busted' };
+
+            var code;
+            // 5,5 is never split — it falls through and plays as a hard 10.
+            if (h.pair && h.pairRank !== 5 && canSplit) {
+                code = PAIRS[h.pairRank][di];
+                if (code === 'P') return { action: 'SPLIT', why: 'pair chart' };
+                if (code === 'Ph') {
+                    if (cfg.das) return { action: 'SPLIT', why: 'pair chart (DAS)' };
+                    code = 'H';
+                }
+                if (code === 'S') return { action: 'STAND', why: 'pair chart' };
+                if (code === 'H') return { action: 'HIT',   why: 'pair chart' };
+            }
+
+            // Soft 12 (A,A that could not be split) can never bust on a hit,
+            // so it is never a stand — the SOFT table only starts at 13.
+            if (h.soft && h.total <= 12) return { action: 'HIT', why: 'soft ' + h.total };
+
+            if (h.soft && h.total >= 13 && h.total <= 20) {
+                code = SOFT[h.total][di];
+                if (cfg.h17) {
+                    if (h.total === 18 && di === 0) code = 'Ds';   // soft 18 vs 2
+                    if (h.total === 19 && di === 4) code = 'Ds';   // soft 19 vs 6
+                }
+                return resolve(code, canDouble);
+            }
+
+            var t = h.total;
+            if (t <= 8)  return { action: 'HIT',   why: 'hard ' + t };
+            if (t >= 17) return { action: 'STAND', why: 'hard ' + t };
+            code = HARD[t][di];
+            if (cfg.h17 && t === 11 && di === 9) code = 'D';       // 11 vs A
+            return resolve(code, canDouble);
+        }
+
+        /* ---------------------------------------------------------------
+           WIN-PROBABILITY ENGINE
+           Exact infinite-deck equity (Stake is 8-deck, Shuffle infinite; the
+           difference is negligible for a live read-out). Models the dealer
+           drawing to completion and the player following optimal hit/stand,
+           then reports P(win) / P(push) / P(lose) for the hand as it stands.
+           Peek-conditioned: once a hand proceeds past a dealer ace or ten, the
+           hole card is known not to be a natural, so those are excluded.
+           --------------------------------------------------------------- */
+        var DRAWS = (function () {
+            var d = [], v;
+            for (v = 2; v <= 9; v++) d.push({ add: v, soft: false, p: 1 / 13 });
+            d.push({ add: 10, soft: false, p: 4 / 13 });   // 10 / J / Q / K
+            d.push({ add: 11, soft: true,  p: 1 / 13 });   // ace
+            return d;
+        })();
+
+        function dealerDist(upRank, h17) {
+            var memo = {};
+            function rec(total, soft) {
+                if (total > 21) { if (soft) return rec(total - 10, false); return { bust: 1 }; }
+                var stand = total > 17 || (total === 17 && !(soft && h17));
+                if (total >= 17 && stand) { var s = {}; s[total] = 1; return s; }
+                var key = total + '|' + (soft ? 1 : 0);
+                if (memo[key]) return memo[key];
+                var dist = {}, i;
+                for (i = 0; i < DRAWS.length; i++) {
+                    var dr = DRAWS[i], nt = total + dr.add, ns = soft || dr.soft;
+                    if (nt > 21 && ns) { nt -= 10; ns = false; }
+                    var sub = rec(nt, ns);
+                    for (var k in sub) dist[k] = (dist[k] || 0) + dr.p * sub[k];
+                }
+                memo[key] = dist;
+                return dist;
+            }
+            var up = cardValue(upRank), soft0 = up === 11;
+            var excl = up === 11 ? 10 : (up === 10 ? 11 : null);   // the blackjack hole
+            var norm = excl == null ? 1 : 1 - (excl === 10 ? 4 / 13 : 1 / 13);
+            var dist = {}, i;
+            for (i = 0; i < DRAWS.length; i++) {
+                var dr = DRAWS[i];
+                if (excl != null && dr.add === excl) continue;
+                var nt = up + dr.add, ns = soft0 || dr.soft;
+                if (nt > 21 && ns) { nt -= 10; ns = false; }
+                var sub = rec(nt, ns);
+                for (var k in sub) dist[k] = (dist[k] || 0) + (dr.p / norm) * sub[k];
+            }
+            return dist;
+        }
+
+        function standEquity(playerTotal, dealerUp, h17) {
+            var dd = dealerDist(dealerUp, h17), win = 0, push = 0, lose = 0;
+            for (var k in dd) {
+                var p = dd[k];
+                if (k === 'bust') { win += p; continue; }
+                var dt = +k;
+                if (dt < playerTotal) win += p; else if (dt === playerTotal) push += p; else lose += p;
+            }
+            return { win: win, push: push, lose: lose };
+        }
+
+        var eqMemo = {};
+        function bestEquity(total, soft, dealerUp, h17) {
+            if (total > 21) return { win: 0, push: 0, lose: 1 };
+            var st = standEquity(total, dealerUp, h17);
+            if (total >= 21) return st;
+            var key = total + '|' + (soft ? 1 : 0) + '|' + dealerUp + '|' + (h17 ? 1 : 0);
+            if (eqMemo[key]) return eqMemo[key];
+            eqMemo[key] = st;                     // break any recursion cycle
+            var hw = 0, hp = 0, hl = 0, i;
+            for (i = 0; i < DRAWS.length; i++) {
+                var dr = DRAWS[i], nt = total + dr.add, ns = soft || dr.soft;
+                if (nt > 21 && ns) { nt -= 10; ns = false; }
+                var eq = nt > 21 ? { win: 0, push: 0, lose: 1 } : bestEquity(nt, ns, dealerUp, h17);
+                hw += dr.p * eq.win; hp += dr.p * eq.push; hl += dr.p * eq.lose;
+            }
+            var hit = { win: hw, push: hp, lose: hl };
+            var chosen = (hit.win - hit.lose) > (st.win - st.lose) ? hit : st;
+            eqMemo[key] = chosen;
+            return chosen;
+        }
+
+        /** P(win/push/lose) for the player's hand against the dealer's upcard,
+         *  under optimal hit/stand. Recomputed as each card is dealt. */
+        function handEquity(playerCards, dealerUp, h17) {
+            var info = handInfo(playerCards);
+            if (info.busted) return { win: 0, push: 0, lose: 1 };
+            var di = dealerIdx(dealerUp);
+            if (di < 0 || di > 9) return null;
+            eqMemo = {};
+            return bestEquity(info.total, info.soft, dealerUp, h17);
+        }
+
+        /* ---------------------------------------------------------------
+           CARD EXTRACTION — network (authoritative)
+           Every site returns the whole hand on each action, so instead of
+           binding to one schema we search the response for any node holding
+           both `player` and `dealer` whose shapes look like cards. Mirrors
+           the 7-day tracker's approach of walking the payload generically.
+           --------------------------------------------------------------- */
+        var RANK_RE = /^(10|[23456789]|[AJQKT])$/i;
+
+        function rankOfCard(c) {
+            if (c == null) return null;
+            if (typeof c === 'string') {
+                // Strip suit glyphs so suit-first strings parse too: Nuts sends
+                // suit-then-rank ("<spade>7", "<diamond>10", "<club>J"); Shuffle
+                // sends rank-first ("10DIAMONDS"). Both leave the rank at the
+                // front after the glyphs are removed. Escapes = spade/club/heart/diamond.
+                var s = c.trim().toUpperCase().replace(/[♠♣♥♦]/g, '');
+                var m = s.match(/^(10|[23456789AJQKT])/);
+                return m ? (m[1] === 'T' ? '10' : m[1]) : null;
+            }
+            if (typeof c === 'object') {
+                var cand = c.rank != null ? c.rank
+                         : c.card != null ? c.card
+                         : c.name != null ? c.name
+                         : c.value;
+                if (cand == null || typeof cand === 'object') return null;
+                var r = String(cand).trim().toUpperCase();
+                if (RANK_RE.test(r)) return r === 'T' ? '10' : r;
+                return null;
+            }
+            return null;
+        }
+
+        function cardsOf(node) {
+            if (!node) return null;
+            var arr = Array.isArray(node) ? node
+                    : Array.isArray(node.cards) ? node.cards
+                    : null;
+            if (!arr) return null;
+            var out = [], i;
+            for (i = 0; i < arr.length; i++) {
+                var r = rankOfCard(arr[i]);
+                if (r) out.push(r);
+            }
+            return out.length ? out : null;
+        }
+
+        /** Player side may be one hand or a list of hands (post-split). */
+        function handsOf(node) {
+            if (!node) return null;
+            var direct = cardsOf(node);
+            if (direct) return [{ cards: direct, raw: node }];
+            if (Array.isArray(node)) {
+                var hands = [], i;
+                for (i = 0; i < node.length; i++) {
+                    var c = cardsOf(node[i]);
+                    if (c) hands.push({ cards: c, raw: node[i] });
+                }
+                return hands.length ? hands : null;
+            }
+            return null;
+        }
+
+        function normalizeState(node) {
+            // The dealer, like the player, can arrive as a single hand-object
+            // OR as an array wrapping one hand-object (Stake: dealer:[{value,
+            // actions, cards:[...]}]) — never as a bare array of raw cards.
+            // Reading it with plain cardsOf() only "succeeds" by coincidence,
+            // when the dealer shows exactly one card whose numeric value
+            // happens to also read as a valid rank string (2-10); the moment
+            // the dealer reveals its hole card or draws further, .value becomes
+            // a multi-card total (17, 22, ...) that never matches a rank, so
+            // parsing silently failed and the tool fell back to comparing the
+            // player's FINAL hand against the dealer's frozen up-card alone —
+            // which looks like a win almost every time. handsOf() already has
+            // the correct array-of-hand-objects unwrap (used for the player
+            // side); reuse it here and take the dealer's one hand from it.
+            var dealerHands = handsOf(node.dealer);
+            var dealer = dealerHands && dealerHands.length ? dealerHands[0].cards : null;
+            var hands  = handsOf(node.player);
+            if (!dealer || !dealer.length || !hands || !hands.length) return null;
+            return { dealer: dealer, hands: hands, source: 'net', at: Date.now() };
+        }
+
+        /* The wager and payout do not live on the state node — they sit on the
+           object that OWNS it (Stake: { id, active, amount, payout,
+           payoutMultiplier, state: { player, dealer } }). So the walk carries
+           the parent down and reads the money off whichever of the two has it. */
+        var MONEY_KEYS = ['amount', 'payout', 'payoutMultiplier', 'currency',
+                          'active', 'id', 'iid', 'profit'];
+
+        function moneyOf(node) {
+            if (!node || typeof node !== 'object') return null;
+            var out = null, i, k;
+            for (i = 0; i < MONEY_KEYS.length; i++) {
+                k = MONEY_KEYS[i];
+                if (Object.prototype.hasOwnProperty.call(node, k) && typeof node[k] !== 'object') {
+                    out = out || {};
+                    out[k] = node[k];
+                }
+            }
+            if (!out) return null;
+            var useful = ('amount' in out) || ('payout' in out) ||
+                         ('payoutMultiplier' in out) || ('active' in out);
+            return useful ? out : null;
+        }
+
+        /** Does the acting player hand expose available moves? Only the live
+         *  game does; a settled bet from the feed has none. */
+        function handHasActions(node) {
+            var p = Array.isArray(node.player) ? node.player[0] : node.player;
+            return !!(p && typeof p === 'object' && Array.isArray(p.actions) && p.actions.length);
+        }
+
+        /* Collect EVERY blackjack state in the payload, not just the first.
+           Stake's bet feeds (AllHouseBets / MyBetList) carry many, and each is
+           a real player+dealer node — indistinguishable from the game to a
+           first-match walker, which is why the tracker was counting strangers'
+           hands and your own history. */
+        function collectBjStates(o, depth, owner, acc, feed) {
+            if (!o || typeof o !== 'object' || depth > 8) return;
+            if (Object.prototype.hasOwnProperty.call(o, 'player') &&
+                Object.prototype.hasOwnProperty.call(o, 'dealer')) {
+                var st = normalizeState(o);
+                if (st) {
+                    st.bet = moneyOf(owner) || moneyOf(o) || null;
+
+                    // --- Nuts (nuts.gg) schema bridge --------------------------
+                    // Nuts is graphql-ws and describes a bet differently from
+                    // Stake: the money is wager/multiplier, and the lifecycle is
+                    // the __typename (SinglePlayerGameBetInProgress while playing,
+                    // SinglePlayerGameBet once settled) rather than amount/payout/
+                    // active. Map those onto the canonical fields the resolver
+                    // already understands so the rest of the pipeline is unchanged.
+                    var owns = owner || o;
+                    if (owns && /SinglePlayerGameBet/i.test(String(owns.__typename))) {
+                        st.bet = st.bet || {};
+                        if (owns.wager != null)      st.bet.amount = num(owns.wager);
+                        if (owns.multiplier != null) st.bet.payoutMultiplier = num(owns.multiplier);
+                        st.bet.active = /InProgress/i.test(String(owns.__typename));
+                        st.bet._nuts = true;
+                    }
+
+                    // "Live" = a hand in progress, on any schema:
+                    //   - the site exposes available moves (actions), or
+                    //   - the bet is flagged active, or
+                    //   - it's an opening deal (you hold two cards, the dealer
+                    //     shows one). A settled feed bet never looks like that:
+                    //     a bust has 3+ player cards, a played-out hand shows
+                    //     2+ dealer cards.
+                    var openingDeal = st.dealer.length === 1 &&
+                                      st.hands.length === 1 && st.hands[0].cards.length === 2;
+                    // An explicitly-settled bet is never live — Nuts keeps the
+                    // played-out action list on a finished hand, which would
+                    // otherwise read as "moves still available" and let stale
+                    // feed hands (myGames) masquerade as the game in play. The
+                    // one exception is an instant natural: a two-card 21 settles
+                    // immediately and still needs to be picked up and scored.
+                    var pInfo = st.hands.length === 1 ? handInfo(st.hands[0].cards) : null;
+                    var instantNatural = openingDeal && pInfo && pInfo.total === 21;
+                    st.live = instantNatural ? true :
+                              (st.bet && st.bet.active === false) ? false :
+                              (handHasActions(o) || (st.bet && st.bet.active === true) || openingDeal);
+                    st.id = st.bet && st.bet.id != null ? String(st.bet.id) : null;
+                    // Nuts issues a DIFFERENT bet id for the in-progress hand
+                    // (_id) than for its settlement (id), so an id can't tie a
+                    // hand to its own updates. Key it by dealer up-card + the
+                    // player's FIRST card. Both stay constant from the deal
+                    // through every hit AND through a split (the first hand keeps
+                    // its original first card), so one hand maps to one round for
+                    // its whole life. Using the first TWO cards broke on a split,
+                    // where the second card is replaced by the drawn card and the
+                    // key changed mid-hand, spawning phantom rounds.
+                    if (st.bet && st.bet._nuts) {
+                        st.id = st.dealer[0] + '|' + st.hands[0].cards[0];
+                    }
+                    // Mark states that came from a feed (any array of bets — Nuts myGames,
+                    // Stake AllHouseBets/MyBetList, etc.). The orphan-blackjack rescue in
+                    // ingest must never pull a hand from a feed (that would count strangers'
+                    // hands or double-count our own history), only from the single live game op.
+                    st.feed = !!feed;
+                    acc.push(st);
+                    return;             // a matched node is a leaf for our purposes
+                }
+            }
+            for (var k in o) {
+                if (!Object.prototype.hasOwnProperty.call(o, k)) continue;
+                var v = o[k];
+                if (v && typeof v === 'object') collectBjStates(v, depth + 1, o, acc, feed || Array.isArray(o));
+            }
+        }
+
+        /* ---- Shuffle (shuffle.us) schema ---------------------------------
+           Shuffle's graphql doesn't use player/dealer keys at all, so the walk
+           above never matched it and the tool silently fell back to a DOM
+           reader that CANNOT tell a split's two hands apart — which is exactly
+           what broke splits. The real state is a Bet whose `shuffleOriginalActions`
+           is a list of snapshots (newest last); the current one lives at
+           `action.blackjack`, cards are integer deck indices (rank = floor(n/4)
+           over 2..A), and the two player hands are SEPARATE arrays
+           (mainPlayerHand / splitPlayerHand). The Bet id is stable for the whole
+           hand, so it also keys the round with no synthetic id needed. */
+        var SHUF_RANKS = ['2','3','4','5','6','7','8','9','10','J','Q','K','A'];
+        function shufRank(n) {
+            return (typeof n === 'number' && n >= 0 && n < 52) ? SHUF_RANKS[Math.floor(n / 4)] : null;
+        }
+        function shufCards(arr) {
+            if (!Array.isArray(arr)) return null;
+            var out = [], i, r;
+            for (i = 0; i < arr.length; i++) { r = shufRank(arr[i]); if (r) out.push(r); }
+            return out.length ? out : null;
+        }
+        function collectShuffleStates(o, depth, acc) {
+            if (!o || typeof o !== 'object' || depth > 8) return;
+            if (Array.isArray(o.shuffleOriginalActions) && ('id' in o)) {
+                var acts = o.shuffleOriginalActions, bj = null, i;
+                for (i = acts.length - 1; i >= 0; i--) {
+                    var a = acts[i] && acts[i].action && acts[i].action.blackjack;
+                    if (a && (a.mainPlayerHand || a.dealerHand)) { bj = a; break; }
+                }
+                if (bj) {
+                    var dealer = shufCards(bj.dealerHand), hands = [];
+                    var mh = shufCards(bj.mainPlayerHand);
+                    if (mh) hands.push({ cards: mh, raw: bj });
+                    var sh = shufCards(bj.splitPlayerHand);
+                    if (sh) hands.push({ cards: sh, raw: bj });
+                    if (dealer && dealer.length && hands.length) {
+                        var settled = o.completedAt != null;
+                        var opening = dealer.length === 1 && hands.length === 1 &&
+                                      hands[0].cards.length === 2;
+                        var pInfo = handInfo(hands[0].cards);
+                        var st = { dealer: dealer, hands: hands, source: 'net', at: Date.now() };
+                        st.bet = {
+                            id: o.id != null ? String(o.id) : null,
+                            amount: num(o.amount),
+                            payout: num(o.payout),
+                            payoutMultiplier: o.multiplier != null ? num(o.multiplier) : null,
+                            active: !settled
+                        };
+                        st.live = (opening && pInfo.total === 21) ? true :
+                                  settled ? false :
+                                  (bj.mainHandOutcome === 'PENDING' || opening);
+                        st.id = st.bet.id;
+                        acc.push(st);
+                        return;                 // this bet is a leaf
+                    }
+                }
+            }
+            for (var key in o) {
+                if (!Object.prototype.hasOwnProperty.call(o, key)) continue;
+                var v = o[key];
+                if (v && typeof v === 'object') collectShuffleStates(v, depth + 1, acc);
+            }
+        }
+
+        /* The transport hooks install once per page; park the parsed state and
+           the id of the hand we're following on the page window so the hook and
+           this instance always agree. */
+        function publishNetState(st) {
+            try {
+                PAGE_WIN.__bjNetState = st;
+                if (st.live && st.id) PAGE_WIN.__bjLiveId = st.id;
+            } catch (e) {}
+        }
+        function netState() { try { return PAGE_WIN.__bjNetState || null; } catch (e) { return null; } }
+        function liveId()   { try { return PAGE_WIN.__bjLiveId || null; } catch (e) { return null; } }
+
+        /* Accept a state only if it's OUR game:
+             - a live state (moves available / active) — the hand being played, or
+             - the settlement of the hand whose id we've been following.
+           A stray settled bet from the feed carries an id we've never seen, so
+           it is rejected. This is what keeps other players' hands and the bet
+           history out of your session stats. */
+        function ingest(text) {
+            if (!text || text.length > 1500000) return;
+            if (text.indexOf('dealer') < 0) return;      // cheap pre-filter
+            var data;
+            try { data = JSON.parse(text); } catch (e) { return; }
+
+            var acc = [];
+            collectBjStates(data, 0, null, acc);
+            if (isShuf) collectShuffleStates(data, 0, acc);   // Shuffle's own schema
+            if (!acc.length) return;
+
+            var i, live = [];
+            for (i = 0; i < acc.length; i++) if (acc[i].live) live.push(acc[i]);
+
+            var chosen = null;
+            if (live.length === 1) {
+                chosen = live[0];                        // the game in play
+            } else if (live.length === 0) {
+                // No live state — could be the settlement of our hand, or feed
+                // bets. Accept a single node only if it is the hand we've been
+                // following (id match) or it carries no id at all (a schema
+                // without bet ids, where the feed can't masquerade by id).
+                // A Stake feed push has an id we've never seen, so it is dropped.
+                var known = liveId(), mine = [];
+                for (i = 0; i < acc.length; i++) {
+                    if ((known && acc[i].id === known) || acc[i].id === null) mine.push(acc[i]);
+                }
+                if (mine.length === 1) chosen = mine[0];
+                else if (mine.length === 0) {
+                    // Rescue an instant-settled blackjack (a player natural or a dealer
+                    // blackjack) that never had a live/opening frame. Nuts delivers these
+                    // as ONE already-settled playBlackjack frame with the dealer already
+                    // showing two cards — so it isn't opening-shaped (the instantNatural
+                    // rescue misses it) and its synthetic id (dealer-up + first card)
+                    // matches no tracked round, so the id-guard above dropped it and both
+                    // blackjack counters stayed at zero. Accept it only from the live game
+                    // op (feed states excluded), and only when it is unambiguous.
+                    var orphans = [];
+                    for (i = 0; i < acc.length; i++) {
+                        var a = acc[i];
+                        if (a.feed) continue;
+                        if (!(a.bet && a.bet.active === false)) continue;
+                        if (a.hands.length !== 1 || a.hands[0].cards.length !== 2) continue;
+                        var pBjOrphan = handInfo(a.hands[0].cards).total === 21;
+                        var dBjOrphan = a.dealer.length === 2 && handInfo(a.dealer).total === 21;
+                        if (pBjOrphan || dBjOrphan) orphans.push(a);
+                    }
+                    if (orphans.length === 1) chosen = orphans[0];
+                }
+            }
+            // live.length > 1 means several games in one payload — a feed. Skip.
+            if (chosen) {
+                publishNetState(chosen);
+                // Resolve SYNCHRONOUSLY, right here, off the wire — not on the
+                // next 350ms poll. Resolution used to wait for a polling tick to
+                // read the single "latest state" slot this function writes to;
+                // under fast auto-play the NEXT payload (e.g. the next deal's
+                // opening state) could overwrite that slot before the poll ever
+                // consumed the settle, silently dropping the hand's result. A
+                // captured live run showed exactly that: the tool recorded 3 of
+                // 21 real hands. Feeding every payload straight into trackState
+                // the instant it arrives means a settle can never be skipped.
+                try { trackState(chosen); } catch (e) {}
+            }
+        }
+
+        /* ---- transport hooks (fetch / XHR / WebSocket on the page window) ---- */
+        (function installNetHooks() {
+            if (PAGE_WIN.__bjNetHookInstalled) return;
+            PAGE_WIN.__bjNetHookInstalled = true;
+            var URL_RE = /graphql|\/main-api\/|\/_api\//i;
+
+            try {
+                var origFetch = PAGE_WIN.fetch;
+                if (origFetch) {
+                    PAGE_WIN.fetch = function (input, init) {
+                        var url = '';
+                        try { url = typeof input === 'string' ? input : (input && input.url) || ''; } catch (e) {}
+                        var p = origFetch.apply(this, arguments);
+                        if (URL_RE.test(url)) {
+                            try {
+                                p.then(function (res) {
+                                    try { res.clone().text().then(ingest, function () {}); } catch (e) {}
+                                    return res;
+                                }, function () {});
+                            } catch (e) {}
+                        }
+                        return p;
+                    };
+                }
+            } catch (e) {}
+
+            try {
+                var oOpen = PAGE_WIN.XMLHttpRequest.prototype.open;
+                var oSend = PAGE_WIN.XMLHttpRequest.prototype.send;
+                PAGE_WIN.XMLHttpRequest.prototype.open = function (m, u) {
+                    this.__bjUrl = (typeof u === 'string') ? u : '';
+                    return oOpen.apply(this, arguments);
+                };
+                PAGE_WIN.XMLHttpRequest.prototype.send = function () {
+                    var self = this;
+                    if (URL_RE.test(self.__bjUrl || '')) {
+                        self.addEventListener('load', function () {
+                            try { ingest(self.responseText); } catch (e) {}
+                        });
+                    }
+                    return oSend.apply(this, arguments);
+                };
+            } catch (e) {}
+
+            // Shuffle pushes results over a socket; Nuts uses graphql-ws.
+            try {
+                var OrigWS = PAGE_WIN.WebSocket;
+                if (OrigWS) {
+                    var WrappedWS = function (url, protocols) {
+                        var ws = protocols === undefined ? new OrigWS(url) : new OrigWS(url, protocols);
+                        try {
+                            ws.addEventListener('message', function (ev) {
+                                if (typeof ev.data === 'string') ingest(ev.data);
+                            });
+                        } catch (e) {}
+                        return ws;
+                    };
+                    WrappedWS.prototype = OrigWS.prototype;
+                    ['CONNECTING', 'OPEN', 'CLOSING', 'CLOSED'].forEach(function (k) {
+                        try { WrappedWS[k] = OrigWS[k]; } catch (e) {}
+                    });
+                    PAGE_WIN.WebSocket = WrappedWS;
+                }
+            } catch (e) {}
+
+            // Nuts (graphql-ws) opens its game socket during app boot, before
+            // this hook installs — so wrapping WebSocket alone never sees a
+            // single Nuts frame. Intercept MessageEvent's `data` getter instead:
+            // it fires for every socket message the page itself reads, including
+            // sockets that were already open when we arrived. Idempotent with the
+            // WebSocket wrap above (re-ingesting a frame is a no-op — each hand
+            // latches once), and it returns the original value untouched.
+            try {
+                var ME = PAGE_WIN.MessageEvent;
+                var dataDesc = ME && ME.prototype &&
+                               Object.getOwnPropertyDescriptor(ME.prototype, 'data');
+                if (dataDesc && dataDesc.get && !PAGE_WIN.__bjMsgHook) {
+                    PAGE_WIN.__bjMsgHook = true;
+                    var seenMsg = (typeof WeakSet !== 'undefined') ? new WeakSet() : null;
+                    Object.defineProperty(ME.prototype, 'data', {
+                        configurable: true,
+                        get: function () {
+                            var v = dataDesc.get.call(this);
+                            try {
+                                if (typeof v === 'string' && v.length < 1500000 &&
+                                    v.indexOf('dealer') >= 0) {
+                                    if (!seenMsg || !seenMsg.has(this)) {
+                                        if (seenMsg) seenMsg.add(this);
+                                        ingest(v);
+                                    }
+                                }
+                            } catch (e) {}
+                            return v;
+                        }
+                    });
+                }
+            } catch (e) {}
+        })();
+
+        /* ---------------------------------------------------------------
+           CARD EXTRACTION — DOM fallback
+           Used until the first payload lands. Blackjack layouts always stack
+           the dealer above the player, so cluster rendered ranks by their
+           vertical midpoint rather than guessing per-site selectors. Split
+           hands are not resolved here; the payload covers those.
+           --------------------------------------------------------------- */
+        function rankFromEl(el) {
+            var probe = el.getAttribute('data-rank') || el.getAttribute('aria-label') ||
+                        el.getAttribute('alt') || el.textContent || '';
+            // Shuffle concatenates the rank straight into the suit name with no
+            // separator (e.g. "10DIAMONDS", "5SPADES") — digit-to-letter isn't a
+            // \b word boundary, so a trailing \b silently rejected every card
+            // whose rank text ran into a spelled-out suit. A negative lookahead
+            // for another digit is enough to still refuse a false partial match
+            // (e.g. never read "1" out of "100") while accepting any letter,
+            // symbol, or end-of-string right after the rank.
+            var m = String(probe).trim().toUpperCase().match(/^(10|[23456789AJQKT])(?!\d)/);
+            return m ? (m[1] === 'T' ? '10' : m[1]) : null;
+        }
+
+        function domReadState() {
+            var nodes = document.querySelectorAll(
+                '[data-testid*="card" i], [class*="card" i], [data-rank]');
+            var hits = [], i;
+            for (i = 0; i < nodes.length; i++) {
+                var el = nodes[i];
+                if (hud && hud.contains(el)) continue;      // never read our own panel
+                var r = rankFromEl(el);
+                if (!r) continue;
+                var rect = el.getBoundingClientRect();
+                if (rect.width < 8 || rect.height < 8) continue;
+                hits.push({ el: el, rank: r, x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 });
+            }
+            // A card face and its wrapper both match; keep only the innermost.
+            var kept = hits.filter(function (h) {
+                return !hits.some(function (o) { return o !== h && h.el.contains(o.el); });
+            });
+            if (kept.length < 2) return null;
+
+            var ys = kept.map(function (h) { return h.y; });
+            var mid = (Math.min.apply(null, ys) + Math.max.apply(null, ys)) / 2;
+            var byX = function (a, b) { return a.x - b.x; };
+            var dealer = kept.filter(function (h) { return h.y <  mid; }).sort(byX).map(function (h) { return h.rank; });
+            var player = kept.filter(function (h) { return h.y >= mid; }).sort(byX).map(function (h) { return h.rank; });
+            if (!dealer.length || !player.length) return null;
+            return { dealer: dealer, hands: [{ cards: player, raw: null }], source: 'dom', at: Date.now() };
+        }
+
+        /* ---------------------------------------------------------------
+           BUTTONS
+           Observed on the live sites:
+             Stake   — all four actions share data-testid="action"; text is
+                       "Hit" / "Stand" / "Split" / "Double". Bet adjusters are
+                       [data-testid="amount-halve"] ("½") and "amount-double" ("2×").
+             Shuffle — only "stand-button" and "bet-button" carry testids; the
+                       rest are text-only. Its bet adjuster is labelled "2x".
+             Nuts    — no testids at all; button text is lowercase.
+
+           "2x" must NOT be treated as Double: on Shuffle that button doubles
+           the WAGER, it is enabled while the real Double is disabled, and a
+           text scan would reach it first. Doubling the bet instead of the hand
+           is a money bug, so bet adjusters are excluded outright and Double is
+           matched only on its own word.
+           --------------------------------------------------------------- */
+        var TEXT_RE = {
+            hit:    /^hit$/i,
+            stand:  /^(stand|stay)$/i,
+            double: /^(double|double down)$/i,
+            split:  /^split$/i,
+            deal:   /^(bet|deal|play)$/i
+        };
+        var BET_ADJUSTER_TEXT = /^(2x|2×|½|1\/2|x2|max|min)$/i;
+
+        function clickable(el) {
+            return !!el && !el.disabled &&
+                   el.getAttribute('aria-disabled') !== 'true' &&
+                   el.offsetParent !== null;
+        }
+
+        /** Not our own control, and not a bet-amount adjuster. */
+        function candidate(el) {
+            if (!el) return false;
+            if (hud && hud.contains(el)) return false;
+            var tid = el.getAttribute && el.getAttribute('data-testid');
+            if (tid && /^amount-/i.test(tid)) return false;          // Stake ½ / 2×
+            if (BET_ADJUSTER_TEXT.test((el.textContent || '').trim())) return false;  // Shuffle 2x
+            return true;
+        }
+
+        function findBtn(kind) {
+            var i, el;
+            var ids = [
+                '[data-testid="' + kind + '-button"]',
+                '[data-testid="' + kind + '"]',
+                '[data-test="' + kind + '-button"]'
+            ];
+            if (kind === 'deal') ids.unshift('[data-testid="bet-button"]');
+            for (i = 0; i < ids.length; i++) {
+                el = document.querySelector(ids[i]);
+                if (candidate(el)) return el;
+            }
+            var re = TEXT_RE[kind];
+            if (!re) return null;
+
+            // Stake groups the four actions under one shared testid. Search
+            // that group before scanning every button on the page.
+            var scoped = document.querySelectorAll('[data-testid="action"]');
+            for (i = 0; i < scoped.length; i++) {
+                if (candidate(scoped[i]) && re.test((scoped[i].textContent || '').trim())) return scoped[i];
+            }
+            var cands = document.querySelectorAll('button, [role="button"]');
+            for (i = 0; i < cands.length; i++) {
+                el = cands[i];
+                if (!candidate(el)) continue;
+                var txt = (el.textContent || '').trim();
+                if (txt && re.test(txt)) return el;
+            }
+            return null;
+        }
+
+        /** Last line of defence: never press a button whose label disagrees
+         *  with the move we decided on. Only enforced for the four actions —
+         *  a Deal button may legitimately read "Bet $1.00". */
+        function labelAgrees(el, kind) {
+            if (kind === 'deal') return true;
+            return !!el && TEXT_RE[kind].test((el.textContent || '').trim());
+        }
+
+        /**
+         * One logical click, expressed as the full pointer/mouse sequence.
+         * Shuffle's controls drop a bare .click(); Stake and Nuts accept
+         * either. Passing `view` breaks when Tampermonkey proxies window, so
+         * it is only included when the real page window is reachable.
+         */
+        function realClick(el) {
+            var base = { bubbles: true, cancelable: true, composed: true, button: 0 };
+            var opts = PAGE_WIN ? Object.assign({}, base, { view: PAGE_WIN }) : base;
+            var fire = function (Ctor, type) {
+                try { el.dispatchEvent(new Ctor(type, opts)); }
+                catch (e) { try { el.dispatchEvent(new Ctor(type, base)); } catch (e2) {} }
+            };
+            fire(PointerEvent, 'pointerdown');
+            fire(MouseEvent,   'mousedown');
+            fire(PointerEvent, 'pointerup');
+            fire(MouseEvent,   'mouseup');
+            fire(MouseEvent,   'click');
+        }
+
+        /* ---------------------------------------------------------------
+           ADVICE
+           --------------------------------------------------------------- */
+        function currentState() {
+            // A payload older than the last DOM change can be stale across a
+            // fresh deal, so prefer the net state only while it is recent.
+            var ns = netState();
+            if (ns && Date.now() - ns.at < 60000) return ns;
+            return domReadState();
+        }
+
+        /** The hand the site is currently asking about. */
+        var BJ_TERMINAL_ACTION = /^(stand|bust|blackjack|double|surrender|push|lose|win)$/i;
+        function activeHand(st) {
+            var i, info;
+            // 1. Explicit active flag, when a site exposes one (Stake/Shuffle).
+            for (i = 0; i < st.hands.length; i++) {
+                var raw = st.hands[i].raw;
+                if (raw && (raw.active === true || raw.isActive === true)) return st.hands[i];
+            }
+            // 2. Nuts (and any schema where each hand carries an action HISTORY) has no
+            //    active flag, so pick the leftmost hand that has NOT yet finished — i.e.
+            //    whose action list holds no round-ending action (Stand/Bust/Blackjack/
+            //    Double/…). Without this, the fallback below always returns hand[0], so
+            //    after you stand hand 1 of a split the advice stayed stuck on hand 1
+            //    instead of moving to the hand you're actually playing. ("Split" and
+            //    "Deal" appear on BOTH split hands as history and are NOT terminal.)
+            var hasActionHistory = st.hands.some(function (h) { return h.raw && Array.isArray(h.raw.actions); });
+            if (hasActionHistory) {
+                for (i = 0; i < st.hands.length; i++) {
+                    var acts = (st.hands[i].raw && st.hands[i].raw.actions) || [];
+                    var finished = acts.some(function (x) { return BJ_TERMINAL_ACTION.test(String(x)); });
+                    info = handInfo(st.hands[i].cards);
+                    if (!finished && !info.busted && info.total < 21) return st.hands[i];
+                }
+            }
+            // 3. Fallback: first non-busted hand under 21.
+            for (i = 0; i < st.hands.length; i++) {
+                info = handInfo(st.hands[i].cards);
+                if (!info.busted && info.total < 21) return st.hands[i];
+            }
+            return st.hands[st.hands.length - 1];
+        }
+
+        function advise() {
+            var st = currentState();
+            if (!st) return { st: null };
+            var hand = activeHand(st);
+            var up = st.dealer[0];
+            var maxHands = cfg.resplit ? 4 : 2;
+            var info = handInfo(hand.cards);
+            var canDouble = hand.cards.length === 2 && (cfg.das || st.hands.length === 1);
+            var canSplit  = info.pair && st.hands.length < maxHands;
+            var d = decide(hand.cards, up, canDouble, canSplit);
+            var eq = null;
+            try { eq = handEquity(hand.cards, up, cfg.h17); } catch (e) {}
+            return { st: st, hand: hand, info: info, up: up, dec: d, eq: eq };
+        }
+
+        function stateHash(st, hand) {
+            return st.dealer.join(',') + '|' +
+                   st.hands.map(function (h) { return h.cards.join(''); }).join('/') + '|' +
+                   hand.cards.join('');
+        }
+
+        /* ---------------------------------------------------------------
+           SESSION STATISTICS
+           Hand outcomes, money and strategy adherence. Money needs the
+           payload's wager/payout; hands and adherence are derived from the
+           cards alone, so they still work if a site's schema drifts.
+           --------------------------------------------------------------- */
+        var STATS_KEY = 'bj-perfect-stats-' + SITE.toLowerCase();
+        var LOG_MAX = 2000, MISTAKE_MAX = 60;
+        var BLANK_STATS = {
+            hands: 0, wins: 0, losses: 0, pushes: 0, blackjacks: 0, busts: 0,
+            dealerBlackjacks: 0,
+            doubles: 0, doublesWon: 0, doublesLost: 0,
+            splits: 0, splitHands: 0, splitsWon: 0, splitsLost: 0, splitsPushed: 0,
+            wagered: 0, returned: 0, biggest: 0,
+            streak: 0, bestStreak: 0, worstStreak: 0,
+            decisions: 0, correct: 0,
+            startedAt: 0, mistakes: [], log: []
+        };
+        var stats;
+        try { stats = Object.assign({}, BLANK_STATS, JSON.parse(localStorage.getItem(STATS_KEY) || '{}')); }
+        catch (e) { stats = Object.assign({}, BLANK_STATS); }
+        if (!stats.startedAt) stats.startedAt = Date.now();
+        if (!Array.isArray(stats.log)) stats.log = [];
+        if (!Array.isArray(stats.mistakes)) stats.mistakes = [];
+
+        var statsDirty = false;
+        function saveStats() { statsDirty = true; }
+        setInterval(function () {        // batch writes; the ticker touches these often
+            if (!statsDirty) return;
+            statsDirty = false;
+            try { localStorage.setItem(STATS_KEY, JSON.stringify(stats)); } catch (e) {}
+        }, 1000);
+
+        function resetStats() {
+            stats = Object.assign({}, BLANK_STATS, { startedAt: Date.now(), mistakes: [], log: [] });
+            saveStats();
+        }
+
+        function num(v) { var n = parseFloat(v); return isFinite(n) ? n : 0; }
+        function pnl() { return stats.returned - stats.wagered; }
+        function rtp() { return stats.wagered > 0 ? (stats.returned / stats.wagered) * 100 : null; }
+        function winRate() {
+            var decided = stats.wins + stats.losses;
+            return decided > 0 ? (stats.wins / decided) * 100 : null;
+        }
+        function adherence() {
+            return stats.decisions > 0 ? (stats.correct / stats.decisions) * 100 : null;
+        }
+
+        /* ---- hand lifecycle ---------------------------------------------
+           A hand is identified by the bet id when the payload gives us one;
+           otherwise by the opening deal (dealer upcard + two player cards).
+           It resolves when the payload says the bet is no longer active. */
+        var round = null;
+        var lastOpenKey = '';
+        var lastWager = 0;   // last positive stake seen; recovers the wager on
+                             // instant settles that report amount:0 (blackjack).
+
+        function openKey(st) {
+            return st.dealer[0] + '|' + st.hands[0].cards.slice(0, 2).join('');
+        }
+
+        /** The bet amount from the site's own input — used when the network
+         *  feed isn't delivering a bet object (DOM-only reads). */
+        function readWagerFromDom() {
+            var el = document.querySelector('[data-testid="input-game-amount"]') ||
+                     document.querySelector('[data-testid="bet-amount"]') ||
+                     document.querySelector('[data-testid="amount-input"]');
+            if (!el) return 0;
+            var n = parseFloat(String(el.value || (el.getAttribute && el.getAttribute('value')) || '')
+                        .replace(/[^0-9.]/g, ''));
+            return isFinite(n) ? n : 0;
+        }
+
+        /** Can the player still act on the current hand? */
+        function playerCanAct() {
+            return clickable(findBtn('hit')) || clickable(findBtn('stand')) ||
+                   clickable(findBtn('double')) || clickable(findBtn('split'));
+        }
+
+        /** The dealer can no longer draw: busted, 18+, or a 17 it must stand on
+         *  (S17 stands on every 17; H17 hits soft 17). "Hole card is showing"
+         *  (>= 2 cards) is NOT enough — a 2-card 14 must still draw. */
+        function dealerFinished(dealerCards) {
+            if (!dealerCards || dealerCards.length < 2) return false;
+            var di = handInfo(dealerCards);
+            return di.busted || di.total >= 18 ||
+                   (di.total === 17 && !(cfg.h17 && di.soft));
+        }
+        function trackState(st) {
+            if (!st || !st.hands.length) return;
+            var bet = st.bet;
+            var key = bet && bet.id != null ? 'id:' + bet.id : null;
+
+            var isNew;
+            if (key) {
+                isNew = !round || round.key !== key;
+                // A hand's key can repeat (Nuts keys by dealer-up + first card,
+                // and holds it constant across a split). Once the current round
+                // has resolved, a fresh two-card opening carrying that same key
+                // is a genuinely new hand, not a stray update to the old one.
+                if (!isNew && round && round.resolved &&
+                    st.dealer.length === 1 && st.hands.length === 1 &&
+                    st.hands[0].cards.length === 2 &&
+                    !(st.bet && st.bet.active === false)) {
+                    isNew = true;
+                }
+            } else {
+                // No id (DOM read): a fresh two-card hand whose opening differs
+                // from the last one we opened counts as a new hand.
+                var ok = openKey(st);
+                isNew = st.hands.length === 1 && st.hands[0].cards.length === 2 &&
+                        st.dealer.length === 1 && ok !== lastOpenKey;
+                if (isNew) lastOpenKey = ok;
+            }
+
+            // A new deal starting is itself proof the previous hand is over —
+            // blackjack cannot deal hand #2 while hand #1 is unresolved. So this
+            // fallback must be UNCONDITIONAL: gating it on isTerminalView() sounds
+            // safe but isn't — it silently DROPPED whole hands whenever the last
+            // card view we happened to capture looked mid-draw (a stale snapshot),
+            // even though the hand had genuinely ended, undercounting stats against
+            // the real balance. resolveRound() still prefers the authoritative
+            // settled payout on round.lastBet when we have one; card comparison is
+            // only the last-resort fallback, same as always.
+            if (isNew && round && !round.resolved && round.last) {
+                resolveRound(round.last, round.lastBet);
+            }
+
+            if (isNew) {
+                round = {
+                    key: key || 'k' + Date.now(),
+                    wager: (bet && bet.amount) ? num(bet.amount) : readWagerFromDom(),
+                    dealerUp: st.dealer[0],
+                    doubled: false, split: false, resolved: false,
+                    last: null, lastBet: null, at: Date.now()
+                };
+            }
+            if (!round) return;
+            if (st.hands.length > 1) round.split = true;
+
+            // Latch the wager the first moment it's readable, from either source.
+            if (!round.wager) round.wager = (bet && bet.amount) ? num(bet.amount) : (readWagerFromDom() || round.wager);
+            if (round.wager > 0) lastWager = round.wager;
+            // Keep the latest fully-dealt view so the hand can be scored even if
+            // the final frame vanishes before we notice it ended.
+            if (st.hands[0].cards.length >= 2) { round.last = st; round.lastBet = bet || null; }
+
+            // The hand is over when the network settles the bet (authoritative),
+            // OR the cards themselves show it ended: the dealer finished drawing,
+            // every player hand busted, or the player has a natural. Merely
+            // "the hole card is showing" is NOT enough — a 2-card 14 must still
+            // draw, and scoring against it booked almost every hand as a win.
+            var netDone = bet && Object.prototype.hasOwnProperty.call(bet, 'active') && bet.active === false;
+            var playerBusted = st.hands.every(function (h) { return handInfo(h.cards).busted; });
+            var playerNatural = st.hands.length === 1 && st.hands[0].cards.length === 2 &&
+                                handInfo(st.hands[0].cards).total === 21;
+            var cardsDone = !playerCanAct() && (dealerFinished(st.dealer) || playerBusted || playerNatural);
+
+            if (!round.resolved && (netDone || cardsDone)) resolveRound(st, bet);
+        }
+
+        function resolveRound(st, bet) {
+            if (!round || round.resolved) return;
+            round.resolved = true;
+            recordResult(st, bet || null);
+        }
+
+        /** Result of one player hand vs the dealer's final hand, from cards.
+         *  `playerBj` = this hand is a two-card 21; `dealerBj` = dealer natural.
+         *  A player blackjack beats any non-blackjack (incl. a drawn 21) and
+         *  pushes only against a dealer natural. */
+        function handVsDealer(hInfo, dInfo, playerBj, dealerBj) {
+            if (hInfo.busted) return 'loss';
+            if (playerBj) return dealerBj ? 'push' : 'win';
+            if (dealerBj) return 'loss';
+            if (dInfo.busted) return 'win';
+            if (hInfo.total > dInfo.total) return 'win';
+            if (hInfo.total < dInfo.total) return 'loss';
+            return 'push';
+        }
+
+        function recordResult(st, bet) {
+            bet = bet || {};
+            var wager = round.wager || num(bet.amount) || readWagerFromDom() || lastWager;
+            if (wager > 0) lastWager = wager;
+
+            var dInfo = handInfo(st.dealer);
+            var dealerBj = st.dealer.length === 2 && dInfo.total === 21;
+            // A blackjack is a two-card 21 on an unsplit hand.
+            var natural = st.hands.length === 1 && st.hands[0].cards.length === 2 &&
+                          handInfo(st.hands[0].cards).total === 21;
+
+            // Score every hand from the cards. This is the source of truth for
+            // win/loss/push; the network payout only refines the money figures.
+            var best = null, bustHigh = null, net = 0, i, perHand = [];
+            for (i = 0; i < st.hands.length; i++) {
+                var hi = handInfo(st.hands[i].cards);
+                if (!hi.busted && (best == null || hi.total > best)) best = hi.total;
+                // Track the busted total too, so a busted hand still logs its
+                // number (e.g. 24) instead of null when every hand busts.
+                if (hi.busted && (bustHigh == null || hi.total > bustHigh)) bustHigh = hi.total;
+                var handBj = st.hands.length === 1 && st.hands[i].cards.length === 2 && hi.total === 21;
+                var r = handVsDealer(hi, dInfo, handBj, dealerBj);
+                perHand.push(r);
+                net += (r === 'win' ? 1 : r === 'loss' ? -1 : 0);
+            }
+            var busted = best == null;                       // every hand busted
+            var outcome = net > 0 ? 'win' : net < 0 ? 'loss' : 'push';
+
+            // Money + outcome. A SETTLED bet (active === false) carries the final
+            // payout, and it is authoritative — INCLUDING a payout of 0, which is a
+            // real loss, not missing data. This is the fix for the core bug: the
+            // card comparison above races the dealer's on-screen draw (the socket
+            // settles before the DOM finishes animating the dealer's hits, so
+            // st.dealer is often still mid-draw here — e.g. 4,7=14 when the dealer
+            // actually made 20), which mis-scored almost every hand as a win. The
+            // payout can't race. Only fall back to a card-estimated payout when the
+            // bet isn't settled (pure DOM, no network).
+            var unit = wager * (round.doubled ? 2 : 1);
+            var staked = unit * (st.hands.length || 1);
+            var settled = bet.active === false && (bet.payout != null || bet.payoutMultiplier != null);
+            // payoutMultiplier is the reliable settle signal: on an instant
+            // blackjack Stake sends amount:0 / payout:0 but payoutMultiplier:2.5,
+            // so trusting the raw payout alone booked every natural 21 as a
+            // zero-stake loss. Prefer a positive paid amount; otherwise derive
+            // the return from the multiplier against the stake.
+            var payMult = bet.payoutMultiplier != null ? num(bet.payoutMultiplier) : null;
+            var payout;
+            if (settled) {
+                if (bet.payout != null && num(bet.payout) > 0) payout = num(bet.payout);
+                else if (payMult != null && payMult > 0) payout = staked * payMult;
+                else payout = 0;
+            } else if (bet.payout != null && num(bet.payout) > 0) {
+                payout = num(bet.payout);
+            } else if (bet.payoutMultiplier != null && num(bet.payoutMultiplier) > 0) {
+                payout = wager * num(bet.payoutMultiplier);
+            } else {
+                payout = 0;
+                for (i = 0; i < perHand.length; i++) {
+                    if (perHand[i] === 'win') payout += unit * (natural && st.hands.length === 1 ? 2.5 : 2);
+                    else if (perHand[i] === 'push') payout += unit;
+                }
+            }
+
+            // When the bet is settled, take win/loss/push from the settle
+            // multiplier when the casino gives one (0 = loss, 1 = push, >1 =
+            // win) — it stays correct even on an instant blackjack whose
+            // amount/payout arrive as 0. Fall back to comparing the paid amount
+            // against the stake only when no multiplier is present.
+            if (settled) {
+                if (payMult != null) {
+                    outcome = payMult <= 1e-9 ? 'loss'
+                            : (Math.abs(payMult - 1) <= 1e-6 ? 'push' : 'win');
+                } else {
+                    var epsM = Math.max(1e-6, staked * 1e-4);
+                    outcome = payout <= epsM ? 'loss'
+                            : (Math.abs(payout - staked) <= epsM ? 'push' : 'win');
+                }
+            }
+
+            stats.hands++;
+            stats.wagered += staked;
+            stats.returned += payout;
+            if (payout > stats.biggest) stats.biggest = payout;
+            if (busted) stats.busts++;
+            if (dealerBj) stats.dealerBlackjacks++;
+
+            if (round.doubled) {
+                stats.doubles++;
+                if (outcome === 'win') stats.doublesWon++;
+                else if (outcome === 'loss') stats.doublesLost++;
+            }
+            if (round.split) {
+                stats.splits++;
+                for (i = 0; i < perHand.length; i++) {
+                    stats.splitHands++;
+                    if (perHand[i] === 'win') stats.splitsWon++;
+                    else if (perHand[i] === 'loss') stats.splitsLost++;
+                    else stats.splitsPushed++;
+                }
+            }
+
+            if (outcome === 'win') {
+                stats.wins++;
+                if (natural && st.hands.length === 1) stats.blackjacks++;
+                stats.streak = stats.streak >= 0 ? stats.streak + 1 : 1;
+                if (stats.streak > stats.bestStreak) stats.bestStreak = stats.streak;
+            } else if (outcome === 'loss') {
+                stats.losses++;
+                stats.streak = stats.streak <= 0 ? stats.streak - 1 : -1;
+                if (stats.streak < stats.worstStreak) stats.worstStreak = stats.streak;
+            } else {
+                stats.pushes++;
+            }
+
+            stats.log.push({
+                t: Date.now(), wager: staked, payout: payout,
+                mult: staked > 0 ? payout / staked : null, outcome: outcome,
+                total: best != null ? best : bustHigh, up: round.dealerUp,
+                doubled: round.doubled, split: round.split,
+                pnl: stats.returned - stats.wagered
+            });
+            if (stats.log.length > LOG_MAX) stats.log.shift();
+            saveStats();
+        }
+
+        /* ---- strategy adherence -----------------------------------------
+           Watches which action YOU press against what the chart said. Our own
+           auto-play clicks are excluded — they always agree, so counting them
+           would just inflate the number. */
+        var lastAdvice = null;
+        var suppressAdherenceUntil = 0;
+
+        function kindOfButton(el) {
+            var tid = (el.getAttribute && el.getAttribute('data-testid')) || '';
+            if (/^amount-/i.test(tid)) return null;
+            var txt = (el.textContent || '').trim();
+            if (BET_ADJUSTER_TEXT.test(txt)) return null;
+            for (var k in TEXT_RE) {
+                if (TEXT_RE[k].test(txt)) return k;
+                if (tid === k + '-button' || tid === k) return k;
+            }
+            return null;
+        }
+
+        document.addEventListener('click', function (e) {
+            try {
+                var el = e.target && e.target.closest && e.target.closest('button, [role="button"]');
+                if (!el || (hud && hud.contains(el)) || (overlay && overlay.contains(el))) return;
+                var kind = kindOfButton(el);
+                if (kind === 'deal') {
+                    // Capture the stake the instant Deal is pressed — the bet
+                    // input is cleared once the hand starts, and an instant
+                    // blackjack never reports a usable amount on the wire.
+                    var dw = readWagerFromDom();
+                    if (dw > 0) lastWager = dw;
+                    return;
+                }
+                if (!kind) return;
+
+                if (kind === 'double' && round) round.doubled = true;
+                if (kind === 'split'  && round) round.split = true;
+
+                if (Date.now() < suppressAdherenceUntil) return;   // our own click
+                var a = lastAdvice;
+                if (!a || !a.st || !a.dec || a.dec.action === '—') return;
+
+                stats.decisions++;
+                if (a.dec.action === kind.toUpperCase()) {
+                    stats.correct++;
+                } else {
+                    stats.mistakes.push({
+                        t: Date.now(), hand: a.hand.cards.join(' '), up: a.up,
+                        should: a.dec.action, did: kind.toUpperCase()
+                    });
+                    if (stats.mistakes.length > MISTAKE_MAX) stats.mistakes.shift();
+                }
+                saveStats();
+            } catch (err) { /* never break the page's own click handling */ }
+        }, true);
+
+        function exportCsv() {
+            if (!stats.log.length) return;
+            var head = 'iso,wager,payout,multiplier,outcome,player_total,dealer_up,doubled,split,running_pnl';
+            var rows = stats.log.map(function (r) {
+                return [new Date(r.t).toISOString(), r.wager, r.payout,
+                        r.mult == null ? '' : r.mult, r.outcome, r.total == null ? '' : r.total,
+                        r.up, r.doubled ? 1 : 0, r.split ? 1 : 0, r.pnl.toFixed(8)].join(',');
+            });
+            var blob = new Blob([head + '\n' + rows.join('\n')], { type: 'text/csv' });
+            var url = URL.createObjectURL(blob);
+            var a = document.createElement('a');
+            a.href = url;
+            a.download = 'blackjack-' + SITE.toLowerCase() + '-' +
+                         new Date().toISOString().replace(/[:.]/g, '-') + '.csv';
+            document.body.appendChild(a); a.click(); a.remove();
+            setTimeout(function () { URL.revokeObjectURL(url); }, 5000);
+        }
+
+        /* ---------------------------------------------------------------
+           AUTO-PLAY
+           Acts once per distinct state, only on buttons the site has already
+           enabled, and never starts a new hand unless auto-deal is on.
+           --------------------------------------------------------------- */
+        var lastActedHash = '';
+        var pendingUntil = 0;
+        // Single master switch for autoplay, like the Dice/Limbo Start button.
+        // NOT persisted — it always starts OFF on load so the tool never wagers
+        // on its own until you press Start. While running it both deals and plays.
+        var running = false;
+        var BTN_FOR = { HIT: 'hit', STAND: 'stand', DOUBLE: 'double', SPLIT: 'split' };
+
+        /* When the dealer shows an ace, Stake replaces Hit/Stand/Split/Double
+           with an insurance prompt in the same slot: two buttons, both
+           data-testid="action", reading "Accept insurance" and "No insurance".
+           While it is up, the normal actions are gone, so auto-play would sit
+           frozen — and any split on that hand is stuck behind it. Basic
+           strategy always declines, so we press "No insurance". We match the
+           decline text exactly and never touch "Accept insurance". */
+        function insuranceDeclineBtn() {
+            var i, el, txt, cands = document.querySelectorAll('button, [role="button"]');
+            // Explicit decline labels (Stake: "No insurance" / "Decline").
+            for (i = 0; i < cands.length; i++) {
+                el = cands[i];
+                if (hud && hud.contains(el)) continue;
+                txt = (el.textContent || '').trim();
+                if (/accept/i.test(txt)) continue;                 // never take it
+                if (/^no\s*insurance$/i.test(txt) || /^decline$/i.test(txt) ||
+                    /^no\s*thanks$/i.test(txt)) return el;
+            }
+            // Nuts: the prompt is an "insurance?" heading with bare "No" / "Yes"
+            // buttons and no testid. Only treat a plain "No" as the decline when
+            // a nearby ancestor actually mentions insurance AND offers a "Yes"
+            // beside it — so a stray "No" elsewhere on the page is never pressed.
+            for (i = 0; i < cands.length; i++) {
+                el = cands[i];
+                if (hud && hud.contains(el)) continue;
+                if (!/^no$/i.test((el.textContent || '').trim())) continue;
+                for (var p = el.parentElement, hops = 0; p && hops < 4; p = p.parentElement, hops++) {
+                    var t = p.textContent || '';
+                    if (t.length > 80 || !/insurance/i.test(t)) continue;
+                    var hasYes = Array.prototype.some.call(
+                        p.querySelectorAll('button, [role="button"]'),
+                        function (b) { return /^yes$/i.test((b.textContent || '').trim()); });
+                    if (hasYes) return el;
+                }
+            }
+            return null;
+        }
+
+        function autoTick() {
+            if (!running) return;
+            if (Date.now() < pendingUntil) return;
+
+            // Clear the insurance prompt first — nothing else can happen until
+            // it is answered, and the answer is always "no".
+            var decline = insuranceDeclineBtn();
+            if (clickable(decline)) {
+                pendingUntil = Date.now() + cfg.delayMs + 400;
+                suppressAdherenceUntil = Date.now() + 250;   // our click, not a decision
+                setStatus('declining insurance');
+                setTimeout(function () {
+                    var live = insuranceDeclineBtn();
+                    if (running && clickable(live)) realClick(live);
+                }, Math.min(cfg.delayMs, 400));
+                return;
+            }
+
+            var myTurn = clickable(findBtn('hit'));
+
+            if (!myTurn) {
+                // Running means deal the next hand too — one button drives the
+                // whole loop, so there is no separate auto-deal switch to forget.
+                var deal = findBtn('deal');
+                if (clickable(deal)) {
+                    lastActedHash = '';
+                    pendingUntil = Date.now() + Math.max(400, cfg.delayMs);
+                    suppressAdherenceUntil = Date.now() + 250;
+                    realClick(deal);
+                    setStatus('dealing next hand');
+                }
+                return;
+            }
+
+            var a = advise();
+            if (!a.st) { setStatus('waiting for cards'); return; }
+
+            var hash = stateHash(a.st, a.hand);
+            if (hash === lastActedHash) return;
+
+            var action = a.dec.action;
+            if (!BTN_FOR[action]) return;
+
+            // Downgrade to a legal move if the site has not enabled the ideal
+            // one (e.g. double after the first hit, or a split slot used up).
+            if (!clickable(findBtn(BTN_FOR[action])) && (action === 'DOUBLE' || action === 'SPLIT')) {
+                action = decide(a.hand.cards, a.up, false, false).action;
+            }
+            if (!clickable(findBtn(BTN_FOR[action]))) { setStatus('cannot press ' + action); return; }
+
+            // Claim the state now so the next tick can't queue a second click,
+            // and hold the gate past the click itself.
+            lastActedHash = hash;
+            pendingUntil = Date.now() + cfg.delayMs + 400;
+            setTimeout(function () {
+                // Re-resolve: the site may have re-rendered the button between
+                // scheduling and firing, leaving the old node detached.
+                var live = findBtn(BTN_FOR[action]);
+                if (!running || !clickable(live)) {
+                    lastActedHash = '';      // let the next tick retry this hand
+                    return;
+                }
+                if (!labelAgrees(live, BTN_FOR[action])) {
+                    // Whatever we resolved is not the button we meant. Pressing
+                    // it could stake money (a bet adjuster, a re-bet). Stop.
+                    lastActedHash = '';
+                    setStatus('refused: "' + (live.textContent || '').trim().slice(0, 12) +
+                              '" is not ' + action);
+                    return;
+                }
+                // Flag it so the adherence counter ignores our own click.
+                suppressAdherenceUntil = Date.now() + 250;
+                realClick(live);
+                setStatus('auto: ' + action);
+            }, cfg.delayMs);
+        }
+
+        /* ---------------------------------------------------------------
+           DOCKING
+           The panel sits in the game's betting panel, under the native
+           controls, the same way the Moles HUD sits in .game-sidebar.
+
+           Only Stake has a selector worth hard-coding: .game-sidebar is its
+           betting column, and both Moles and the dice tool already rely on it.
+           Shuffle ships no sidebar at all (its controls are a footer beneath
+           the table) and Nuts names things with styled-components hashes that
+           change between deploys. So for those two we anchor on a control that
+           must exist inside the betting panel — the bet-amount input, or
+           failing that an action button — and climb to the first ancestor big
+           enough to be the panel itself.
+           --------------------------------------------------------------- */
+        /* Verified against the live blackjack pages of all three sites. Nuts'
+           class is a styled-components hash and will churn between deploys, so
+           the anchored walk-up below stays as its safety net. */
+        var DIRECT_DOCKS = {
+            stake:   ['.game-sidebar'],
+            shuffle: ['[class*="CasinoOriginalGameControlLayout_root"]'],
+            nuts:    ['.sc-8d275cfe-1.eGfUZM', '.sc-8d275cfe-1']
+        };
+        var BET_ANCHORS = [
+            '[class*="InfoBetInput_inputContainer"]',   // Shuffle
+            '[data-testid="input-game-amount"]',        // Stake
+            '[data-testid="bet-amount"]',               // Shuffle (alt)
+            '[data-testid="amount-input"]'
+        ];
+
+        /* Board container for the stats overlay. Measured on the live pages:
+             Stake   [data-testid="game-blackjack"]          868 x 781
+             Shuffle .BlackjackContent_contentContainer__…   902 x 795
+             Nuts    .sc-8d275cfe-3                          800 x 763
+           Shuffle's blackjack page has no GameLayout_gameContent — that class
+           belongs to the dice/limbo runtime — so it needs its own selector. */
+        var BOARD_SELECTORS = {
+            stake:   ['[data-testid="game-blackjack"]', '[data-testid="game-frame"]'],
+            shuffle: ['[class*="BlackjackContent_contentContainer"]',
+                      '[class*="OriginalGameRuntime_gameContent"]',
+                      '[class*="GameLayout_gameContent"]'],
+            nuts:    ['.sc-8d275cfe-3.eertbI', '.sc-8d275cfe-3']
+        };
+
+        function bigEnough(el) {
+            if (!el || !el.isConnected) return false;
+            var r = el.getBoundingClientRect();
+            return r.width >= 300 && r.height >= 200;
+        }
+
+        function findBoard() {
+            var sels = BOARD_SELECTORS[isShuf ? 'shuffle' : isNut ? 'nuts' : 'stake'] || [];
+            var i, el;
+            for (i = 0; i < sels.length; i++) {
+                el = document.querySelector(sels[i]);
+                if (bigEnough(el)) return el;
+            }
+            // Last resort: climb from the dealer's area to the first ancestor
+            // big enough to be the table. Keeps the overlay alive through a
+            // class rename instead of silently never mounting.
+            var anchor = document.querySelector('[data-testid="dealer-container"], [data-testid="dealer"]');
+            for (el = anchor; el && el !== document.body; el = el.parentElement) {
+                if (bigEnough(el) && !(hud && el.contains(hud))) return el;
+            }
+            return null;
+        }
+
+        var dockMissTicks = 0;
+        var floatFallback = false;
+
+        /* ---------------------------------------------------------------
+           THEME
+           Each casino restyles constantly and stake.com / stake.us do not even
+           share an accent colour, so the panel's chrome is sampled from the
+           page rather than hard-coded: the surface comes from the first opaque
+           ancestor of the dock, the font and text colour from the dock itself,
+           and the accent from the Bet button (its background, or the first
+           colour of its gradient).
+
+           The four action colours are deliberately NOT sampled. Green, red,
+           amber and blue mean Hit, Stand, Double and Split — they carry the
+           information, so they stay put on every site.
+           --------------------------------------------------------------- */
+        function firstOpaqueBg(el) {
+            for (var e = el, i = 0; e && i < 6; e = e.parentElement, i++) {
+                var bg = getComputedStyle(e).backgroundColor;
+                if (bg && bg !== 'transparent' && !/rgba\(0,\s*0,\s*0,\s*0\)/.test(bg)) return bg;
+            }
+            return null;
+        }
+
+        function sampleAccent() {
+            var el = document.querySelector('[data-testid="bet-button"]');
+            if (!el) {
+                el = Array.prototype.find.call(document.querySelectorAll('button'), function (b) {
+                    return /^(bet|play|deal)$/i.test((b.textContent || '').trim());
+                });
+            }
+            if (!el) return null;
+            var cs = getComputedStyle(el);
+            if (cs.backgroundColor && !/rgba\(0,\s*0,\s*0,\s*0\)/.test(cs.backgroundColor)) return cs.backgroundColor;
+            var m = (cs.backgroundImage || '').match(/rgba?\([^)]+\)|#[0-9a-f]{3,8}/i);   // gradient (Nuts)
+            return m ? m[0] : null;
+        }
+
+        function applyTheme(el, dock) {
+            try {
+                var cs = getComputedStyle(dock);
+                var radius = parseInt(cs.borderRadius, 10);
+                el.style.setProperty('--bj-surface', firstOpaqueBg(dock) || '#0f212e');
+                el.style.setProperty('--bj-text',    cs.color || '#b1bad3');
+                el.style.setProperty('--bj-font',    cs.fontFamily || 'inherit');
+                el.style.setProperty('--bj-radius',  (radius > 0 && radius <= 16 ? radius : 8) + 'px');
+                el.style.setProperty('--bj-accent',  sampleAccent() || '#1fff20');
+            } catch (e) { /* fall back to the defaults baked into the CSS */ }
+        }
+
+        /** The betting panel, or null while the game is still rendering. */
+        function findDock() {
+            var key = isShuf ? 'shuffle' : isNut ? 'nuts' : 'stake';
+            var sels = DIRECT_DOCKS[key], i, el;
+            for (i = 0; i < sels.length; i++) {
+                el = document.querySelector(sels[i]);
+                if (el && el.isConnected) return el;
+            }
+
+            var anchor = null;
+            for (i = 0; i < BET_ANCHORS.length && !anchor; i++) {
+                anchor = document.querySelector(BET_ANCHORS[i]);
+            }
+            anchor = anchor || findBtn('deal') || findBtn('hit') || findBtn('stand');
+            if (!anchor || (hud && hud.contains(anchor))) return null;
+
+            // Climb until the ancestor looks like a panel rather than a button
+            // wrapper, and stop before we swallow the whole page.
+            var node = anchor.parentElement, hops = 0;
+            var maxW = Math.max(320, window.innerWidth * 0.75);
+            while (node && node !== document.body && hops++ < 8) {
+                var r = node.getBoundingClientRect();
+                if (r.width >= 200 && r.height >= 120 && r.width <= maxW) return node;
+                node = node.parentElement;
+            }
+            return null;
+        }
+
+        /* ---------------------------------------------------------------
+           HUD + OVERLAY STYLES
+           Chrome is driven by the --bj-* custom properties applyTheme() sets
+           from the live page. The action colours are fixed on purpose.
+
+           The toggles are drawn by us rather than being native checkboxes:
+           Stake sets `appearance: none` on inputs site-wide, which turned a
+           bare checkbox into a 14x14 fully transparent box — present and
+           clickable, but invisible. Hence !important on the switch geometry.
+           --------------------------------------------------------------- */
+        var CSS = '' +
+            '#bj-perfect-hud{--bj-surface:#0f212e;--bj-text:#b1bad3;--bj-accent:#1fff20;' +
+            '--bj-radius:8px;--bj-font:inherit;--bj-line:rgba(255,255,255,.12);' +
+            '--bj-sunk:rgba(0,0,0,.22);--bj-head:#fff;' +
+            'box-sizing:border-box;width:100%;flex:0 0 auto;margin:10px 0 0;' +
+            'background:var(--bj-surface,#0f212e);color:var(--bj-text,#b1bad3);border:1px solid var(--bj-line,rgba(255,255,255,.12));' +
+            'border-radius:var(--bj-radius);font-family:var(--bj-font);font-size:12px;' +
+            'overflow:hidden;user-select:none}' +
+            '#bj-perfect-hud *{box-sizing:border-box}' +
+            '#bj-perfect-hud.bj-float{position:fixed;top:20px;right:20px;width:246px;z-index:999999;' +
+            'box-shadow:0 4px 20px rgba(0,0,0,.4)}' +
+            '#bj-perfect-hud.bj-collapsed .bj-body{display:none}' +
+            '#bj-perfect-hud .bj-head{display:flex;align-items:center;justify-content:space-between;' +
+            'padding:9px 11px;border-bottom:1px solid var(--bj-line,rgba(255,255,255,.12))}' +
+            '#bj-perfect-hud .bj-title{font-weight:700;color:var(--bj-head,#fff);font-size:11px;' +
+            'letter-spacing:.4px;text-transform:uppercase}' +
+            '#bj-perfect-hud .bj-min{background:transparent;border:1px solid var(--bj-line,rgba(255,255,255,.12));' +
+            'color:var(--bj-text,#b1bad3);width:20px;height:20px;border-radius:5px;cursor:pointer;' +
+            'font-weight:800;line-height:1;padding:0}' +
+            '#bj-perfect-hud .bj-min:hover{color:var(--bj-head,#fff)}' +
+            '#bj-perfect-hud .bj-body{padding:10px 11px 11px}' +
+
+            /* action tile — colours are semantic, never themed */
+            '#bj-perfect-hud .bj-act{text-align:center;font-size:22px;font-weight:900;letter-spacing:1px;' +
+            'padding:9px 0;border-radius:calc(var(--bj-radius) - 2px);background:var(--bj-sunk);' +
+            'color:var(--bj-head,#fff);margin-bottom:7px}' +
+            '#bj-perfect-hud .bj-act[data-a="HIT"]{background:#1fff20;color:#08130c}' +
+            '#bj-perfect-hud .bj-act[data-a="STAND"]{background:#ef4444;color:#fff}' +
+            '#bj-perfect-hud .bj-act[data-a="DOUBLE"]{background:#f59e0b;color:#1b1200}' +
+            '#bj-perfect-hud .bj-act[data-a="SPLIT"]{background:#3b82f6;color:#fff}' +
+            '#bj-perfect-hud .bj-why{text-align:center;font-size:10px;opacity:.72;margin:-3px 0 7px}' +
+            '#bj-perfect-hud .bj-row{display:flex;justify-content:space-between;margin:4px 0;font-size:12px}' +
+            '#bj-perfect-hud .bj-row span:last-child{color:var(--bj-head,#fff);font-weight:700}' +
+            '#bj-perfect-hud .bj-ins{background:#7f1d1d;color:#fff;text-align:center;font-weight:800;' +
+            'padding:5px;border-radius:5px;margin:6px 0;font-size:11px;display:none}' +
+            '#bj-perfect-hud .bj-eq{margin:2px 0 8px}' +
+            '#bj-perfect-hud .bj-eq-bar{display:flex;height:8px;border-radius:4px;overflow:hidden;' +
+            'background:rgba(255,255,255,.08)}' +
+            '#bj-perfect-hud .bj-eq-win{background:#1fff20}' +
+            '#bj-perfect-hud .bj-eq-push{background:#94a3b8}' +
+            '#bj-perfect-hud .bj-eq-lose{background:#ef4444}' +
+            '#bj-perfect-hud .bj-eq-nums{display:flex;justify-content:space-between;gap:6px;' +
+            'font-size:9px;font-weight:700;margin-top:3px;font-variant-numeric:tabular-nums}' +
+            '#bj-perfect-hud .bj-eq-nums span:first-child{color:#1fff20}' +
+            '#bj-perfect-hud .bj-eq-nums span:last-child{color:#ef4444}' +
+            '#bj-perfect-hud .bj-sec{border-top:1px solid var(--bj-line,rgba(255,255,255,.12));margin-top:9px;padding-top:8px}' +
+            '#bj-perfect-hud .bj-sec-t{color:var(--bj-accent,#1fff20);font-size:10px;font-weight:700;' +
+            'text-transform:uppercase;letter-spacing:.6px;text-align:center;margin-bottom:6px}' +
+            '#bj-perfect-hud .bj-chk{display:flex;align-items:center;justify-content:space-between;' +
+            'margin:6px 0;font-size:11px;cursor:pointer;gap:8px}' +
+            '#bj-perfect-hud .bj-warn{color:#f59e0b;font-size:10px;line-height:1.35;margin-top:4px}' +
+            /* one-button Start/Stop, same idea as the Dice/Limbo rapid button */
+            '#bj-perfect-hud .bj-run{width:100%;border:none;border-radius:8px;height:38px;cursor:pointer;' +
+            'font-size:12px;font-weight:900;text-transform:uppercase;letter-spacing:.5px;' +
+            'background:var(--bj-accent,#1fff20);color:#0b1013;transition:background .15s,filter .15s}' +
+            '#bj-perfect-hud .bj-run:hover{filter:brightness(1.08)}' +
+            '#bj-perfect-hud .bj-run.bj-run-on{background:#ef4444;color:#fff}' +
+            '#bj-perfect-hud .bj-rules{display:flex;flex-direction:column;gap:3px}' +
+            '#bj-perfect-hud .bj-rule{font-size:10px;opacity:.82;padding-left:12px;position:relative}' +
+            '#bj-perfect-hud .bj-rule:before{content:"·";position:absolute;left:3px;opacity:.6}' +
+            '#bj-perfect-hud .bj-rule-note{color:#f59e0b;opacity:.9;padding-left:12px;line-height:1.35;margin-top:2px}' +
+            '#bj-perfect-hud .bj-rule-note:before{content:"⚠";left:0;font-size:9px}' +
+            '#bj-perfect-hud .bj-status{font-size:10px;opacity:.72;text-align:center;min-height:1.2em;margin-top:8px}' +
+            '#bj-perfect-hud .bj-src{font-size:9px;opacity:.5;text-align:center;margin-top:2px}' +
+
+            /* drawn switch — immune to the sites' input resets */
+            '.bj-sw{position:relative!important;display:inline-block!important;width:34px!important;' +
+            'height:18px!important;flex:0 0 34px!important}' +
+            '.bj-sw input{position:absolute!important;inset:0!important;width:100%!important;' +
+            'height:100%!important;margin:0!important;opacity:0!important;cursor:pointer;z-index:2}' +
+            '.bj-sw .bj-tr{position:absolute;inset:0;border-radius:999px;background:rgba(255,255,255,.16);' +
+            'border:1px solid var(--bj-line,rgba(255,255,255,.12));transition:background .15s}' +
+            '.bj-sw .bj-th{position:absolute;top:3px;left:3px;width:12px;height:12px;border-radius:50%;' +
+            'background:#9aa4b2;transition:transform .15s,background .15s}' +
+            '.bj-sw input:checked ~ .bj-tr{background:var(--bj-accent,#1fff20);opacity:.9}' +
+            '.bj-sw input:checked ~ .bj-tr .bj-th{transform:translateX(16px);background:#fff}' +
+            '#bj-perfect-hud input[type=range]{width:92px;accent-color:var(--bj-accent,#1fff20);cursor:pointer;flex:none}' +
+
+            /* small buttons */
+            '#bj-perfect-hud .bj-btns{display:flex;gap:6px;margin-top:8px}' +
+            '#bj-perfect-hud .bj-btn{flex:1;background:transparent;border:1px solid var(--bj-line,rgba(255,255,255,.12));' +
+            'color:var(--bj-text,#b1bad3);border-radius:6px;padding:6px 4px;font-size:10px;font-weight:700;' +
+            'text-transform:uppercase;letter-spacing:.4px;cursor:pointer;font-family:inherit}' +
+            '#bj-perfect-hud .bj-btn:hover{color:var(--bj-head,#fff);border-color:var(--bj-accent,#1fff20)}' +
+
+            /* ---------------- board overlay ---------------- */
+            '#bj-board-overlay{--bj-surface:#0f212e;--bj-text:#b1bad3;--bj-accent:#1fff20;' +
+            '--bj-line:rgba(255,255,255,.12);--bj-head:#fff;--bj-font:inherit;' +
+            'position:absolute;inset:0;z-index:60;pointer-events:none;font-family:var(--bj-font);' +
+            'color:var(--bj-text,#b1bad3);font-size:12px}' +
+            '#bj-board-overlay *{box-sizing:border-box}' +
+            /* Two columns pinned to the felt's edges. The middle — where the
+               cards are dealt — is left empty and click-through on purpose.
+               Nothing goes along the bottom: on Stake the player's cards reach
+               to within 11px of the board's bottom edge. */
+            '#bj-board-overlay .bj-ov-col{position:absolute;top:10px;bottom:10px;width:min(168px,21%);' +
+            'display:flex;flex-direction:column;gap:3px;overflow:hidden}' +
+            '#bj-board-overlay .bj-ov-l{left:10px}' +
+            '#bj-board-overlay .bj-ov-r{right:10px}' +
+            '#bj-board-overlay .bj-ov-t{font-size:9px;font-weight:800;letter-spacing:.8px;' +
+            'text-transform:uppercase;color:var(--bj-accent,#1fff20);margin-bottom:3px;' +
+            'text-shadow:0 1px 3px rgba(0,0,0,.9)}' +
+            '#bj-board-overlay .bj-ov-t2{margin-top:9px}' +
+            '#bj-board-overlay .bj-st{display:flex;justify-content:space-between;align-items:baseline;gap:6px;' +
+            'padding:3px 7px;border-radius:5px;background:rgba(6,10,16,.62)}' +
+            '#bj-board-overlay .bj-k{font-size:9px;text-transform:uppercase;letter-spacing:.4px;opacity:.7;' +
+            'white-space:nowrap}' +
+            '#bj-board-overlay .bj-v{font-size:11px;font-weight:800;color:var(--bj-head,#fff);' +
+            'font-variant-numeric:tabular-nums;white-space:nowrap}' +
+            '#bj-board-overlay .bj-v[data-sign="pos"]{color:#1fff20}' +
+            '#bj-board-overlay .bj-v[data-sign="neg"]{color:#ef4444}' +
+            '#bj-board-overlay .bj-spark{display:block;width:100%;height:60px;margin:6px 0 5px;' +
+            'background:rgba(6,10,16,.62);border-radius:6px}' +
+            '#bj-board-overlay .bj-hist{display:flex;gap:3px;flex-wrap:nowrap;justify-content:flex-end;' +
+            'padding:4px 6px;border-radius:6px;background:rgba(6,10,16,.62);' +
+            'margin-bottom:5px;overflow:hidden}' +
+            '#bj-board-overlay .bj-hist:empty{display:none}' +
+            '#bj-board-overlay .bj-chip{font-size:9px;font-weight:800;padding:2px 4px;border-radius:3px;' +
+            'border:1px solid;min-width:18px;text-align:center;font-variant-numeric:tabular-nums}' +
+            '#bj-board-overlay .bj-chip.win{color:#1fff20;border-color:#1fff20;background:rgba(31,255,32,.10)}' +
+            '#bj-board-overlay .bj-chip.loss{color:#ef4444;border-color:#ef4444;background:rgba(239,68,68,.10)}' +
+            '#bj-board-overlay .bj-chip.push{color:#94a3b8;border-color:#94a3b8;background:rgba(148,163,184,.10)}' +
+            '#bj-board-overlay .bj-ov-btns{display:flex;gap:5px;pointer-events:auto}' +
+            '#bj-board-overlay .bj-btn{flex:1;background:rgba(6,10,16,.72);' +
+            'border:1px solid rgba(255,255,255,.12);' +
+            'color:var(--bj-text,#b1bad3);border-radius:5px;padding:5px 4px;font-size:9px;font-weight:700;' +
+            'text-transform:uppercase;letter-spacing:.4px;cursor:pointer;font-family:inherit}' +
+            '#bj-board-overlay .bj-btn:hover{color:var(--bj-head,#fff);border-color:var(--bj-accent,#1fff20)}' +
+            /* Narrow boards (mobile) cannot spare two 168px gutters. These
+               rules are only a fallback: relocateStatsCols() normally moves
+               both columns out of the overlay and into the panel instead. */
+            '@media (max-width:700px){' +
+            '#bj-board-overlay .bj-ov-col{top:auto;bottom:6px;max-height:42%;width:calc(50% - 9px);overflow-y:auto;' +
+            'padding:8px 9px;border-radius:11px;background:rgba(8,17,25,.94);border:1px solid rgba(255,255,255,.09);' +
+            'box-shadow:0 10px 30px -14px rgba(0,0,0,.85)}' +
+            '#bj-board-overlay .bj-ov-l{left:6px;right:auto}' +
+            '#bj-board-overlay .bj-ov-r{right:6px;left:auto}' +
+            '#bj-board-overlay .bj-ov-t{font-size:8px}' +
+            '#bj-board-overlay .bj-spark{display:none}}' +
+
+            /* Phone layout: the stat columns live at the bottom of the panel
+               (see relocateStatsCols), restyled as stacked flow content. */
+            '#bj-perfect-hud .bj-stats-dock{display:flex;flex-wrap:wrap;gap:10px 8px}' +
+            '#bj-perfect-hud .bj-stats-dock .bj-sec-t{flex:1 1 100%;margin-bottom:0}' +
+            '#bj-perfect-hud .bj-ov-col{flex:1 1 46%;min-width:132px;display:flex;flex-direction:column;gap:3px}' +
+            '#bj-perfect-hud .bj-ov-t{font-size:9px;font-weight:800;letter-spacing:.8px;' +
+            'text-transform:uppercase;color:var(--bj-accent,#1fff20);margin-bottom:3px}' +
+            '#bj-perfect-hud .bj-ov-t2{margin-top:9px}' +
+            '#bj-perfect-hud .bj-st{display:flex;justify-content:space-between;align-items:baseline;gap:6px;' +
+            'padding:3px 7px;border-radius:5px;background:var(--bj-sunk,rgba(0,0,0,.22))}' +
+            '#bj-perfect-hud .bj-k{font-size:9px;text-transform:uppercase;letter-spacing:.4px;opacity:.7;' +
+            'white-space:nowrap}' +
+            '#bj-perfect-hud .bj-v{font-size:11px;font-weight:800;color:var(--bj-head,#fff);' +
+            'font-variant-numeric:tabular-nums;white-space:nowrap}' +
+            '#bj-perfect-hud .bj-v[data-sign="pos"]{color:#1fff20}' +
+            '#bj-perfect-hud .bj-v[data-sign="neg"]{color:#ef4444}' +
+            '#bj-perfect-hud .bj-spark{display:block;width:100%;height:56px;margin:6px 0 5px;' +
+            'background:var(--bj-sunk,rgba(0,0,0,.22));border-radius:6px}' +
+            '#bj-perfect-hud .bj-hist{display:flex;gap:3px;flex-wrap:nowrap;justify-content:flex-end;' +
+            'padding:4px 6px;border-radius:6px;background:var(--bj-sunk,rgba(0,0,0,.22));' +
+            'margin-bottom:5px;overflow:hidden}' +
+            '#bj-perfect-hud .bj-hist:empty{display:none}' +
+            '#bj-perfect-hud .bj-chip{font-size:9px;font-weight:800;padding:2px 4px;border-radius:3px;' +
+            'border:1px solid;min-width:18px;text-align:center;font-variant-numeric:tabular-nums}' +
+            '#bj-perfect-hud .bj-chip.win{color:#1fff20;border-color:#1fff20;background:rgba(31,255,32,.10)}' +
+            '#bj-perfect-hud .bj-chip.loss{color:#ef4444;border-color:#ef4444;background:rgba(239,68,68,.10)}' +
+            '#bj-perfect-hud .bj-chip.push{color:#94a3b8;border-color:#94a3b8;background:rgba(148,163,184,.10)}' +
+            '#bj-perfect-hud .bj-ov-btns{display:flex;gap:5px}' +
+
+            /* full takeover, only while auto-play is driving */
+            '#bj-board-overlay .bj-ov-stage{position:absolute;inset:0;display:none;align-items:center;' +
+            'justify-content:center;flex-direction:column;gap:14px;' +
+            'background:rgba(4,8,12,.90);pointer-events:auto}' +
+            '#bj-board-overlay.bj-ov-live .bj-ov-stage{display:flex}' +
+            '#bj-board-overlay .bj-ov-badge{font-size:10px;font-weight:800;letter-spacing:1.4px;' +
+            'text-transform:uppercase;color:var(--bj-accent,#1fff20);border:1px solid var(--bj-accent,#1fff20);' +
+            'border-radius:999px;padding:4px 12px}' +
+            '#bj-board-overlay .bj-ov-cards{display:flex;gap:22px;align-items:center;' +
+            'max-width:90vw;overflow:hidden}' +
+            '#bj-board-overlay .bj-cards{flex-wrap:wrap;justify-content:center;max-width:44vw;overflow:hidden}' +
+            '#bj-board-overlay .bj-ov-stage{overflow:hidden}' +
+            '#bj-board-overlay .bj-side{text-align:center}' +
+            '#bj-board-overlay .bj-side-k{font-size:9px;text-transform:uppercase;letter-spacing:1px;' +
+            'opacity:.6;margin-bottom:5px}' +
+            '#bj-board-overlay .bj-cards{display:flex;gap:5px;justify-content:center}' +
+            '#bj-board-overlay .bj-card{width:38px;height:54px;border-radius:5px;background:#f8fafc;' +
+            'color:#0b0e17;font-weight:900;font-size:17px;display:flex;align-items:center;' +
+            'justify-content:center;box-shadow:0 3px 8px rgba(0,0,0,.5)}' +
+            '#bj-board-overlay .bj-side-tot{margin-top:6px;font-size:12px;font-weight:800;color:var(--bj-head,#fff)}' +
+            '#bj-board-overlay .bj-ov-act{font-size:34px;font-weight:900;letter-spacing:2px;padding:8px 26px;' +
+            'border-radius:10px;background:rgba(255,255,255,.08);color:var(--bj-head,#fff)}' +
+            '#bj-board-overlay .bj-ov-act[data-a="HIT"]{background:#1fff20;color:#08130c}' +
+            '#bj-board-overlay .bj-ov-act[data-a="STAND"]{background:#ef4444;color:#fff}' +
+            '#bj-board-overlay .bj-ov-act[data-a="DOUBLE"]{background:#f59e0b;color:#1b1200}' +
+            '#bj-board-overlay .bj-ov-act[data-a="SPLIT"]{background:#3b82f6;color:#fff}';
+
+        (function addStyleOnce() {
+            if (document.getElementById('bj-perfect-css')) return;
+            var viaGM = false;
+            // GM_addStyle is granted in the desktop bundle; the mobile bundle
+            // runs under @grant none, where the identifier does not exist.
+            try { if (typeof GM_addStyle === 'function') { GM_addStyle(CSS); viaGM = true; } } catch (e) {}
+            var marker = document.createElement(viaGM ? 'meta' : 'style');
+            marker.id = 'bj-perfect-css';
+            if (!viaGM) marker.textContent = CSS;
+            (document.head || document.documentElement).appendChild(marker);
+        })();
+
+        var hud = null, overlay = null;
+        var elAct, elWhy, elIns, elStat, elSrc, elWarn;
+        var elEq, elEqWin, elEqPush, elEqLose, elEqWt, elEqPt, elEqLt;
+        /* What we last read off the table. Not rendered — the board already
+           shows it — but exposed for debugging and for the test harness. */
+        var lastRead = null;
+
+        function setStatus(t) { if (elStat) elStat.textContent = t || ''; }
+
+        /** A switch we draw ourselves — see the CSS note about appearance:none. */
+        function sw(key, label) {
+            return '<label class="bj-chk"><span>' + label + '</span>' +
+                   '<span class="bj-sw"><input type="checkbox" data-bj-k="' + key + '">' +
+                   '<span class="bj-tr"><span class="bj-th"></span></span></span></label>';
+        }
+
+        function paintRunBtn(btn) {
+            btn = btn || (hud && hud.querySelector('[data-bj-run]'));
+            if (!btn) return;
+            btn.textContent = running ? 'Stop' : 'Start autoplay';
+            btn.classList.toggle('bj-run-on', running);
+        }
+
+        function buildHud() {
+            var h = document.createElement('div');
+            h.id = 'bj-perfect-hud';
+            if (cfg.collapsed) h.className = 'bj-collapsed';
+            h.innerHTML =
+                '<div class="bj-head">' +
+                  '<div class="bj-title">Perfect Blackjack <span style="opacity:.55;font-weight:600">v' + BJ_VERSION + '</span></div>' +
+                  '<button class="bj-min" type="button">' + (cfg.collapsed ? '+' : '–') + '</button>' +
+                '</div>' +
+                /* Only what the game does not already tell you. The board
+                   renders both hands and their totals itself, so repeating
+                   them here would just be noise. The statistics live on the
+                   felt; this panel is the advice plus the controls. */
+                '<div class="bj-body">' +
+                  '<div class="bj-act" data-a="">—</div>' +
+                  '<div class="bj-why"></div>' +
+                  '<div class="bj-ins">NEVER TAKE INSURANCE</div>' +
+                  '<div class="bj-eq" data-bj-eq style="display:none">' +
+                    '<div class="bj-eq-bar"><span class="bj-eq-win" data-bj-eq-win></span>' +
+                      '<span class="bj-eq-push" data-bj-eq-push></span>' +
+                      '<span class="bj-eq-lose" data-bj-eq-lose></span></div>' +
+                    '<div class="bj-eq-nums"><span data-bj-eq-wt>—</span>' +
+                      '<span data-bj-eq-pt></span><span data-bj-eq-lt></span></div>' +
+                  '</div>' +
+                  '<div class="bj-sec">' +
+                    '<div class="bj-sec-t">Automation</div>' +
+                    '<button type="button" class="bj-run" data-bj-run>Start autoplay</button>' +
+                    '<div class="bj-warn" data-bj-warn>Autoplay deals and plays basic strategy on its own — ' +
+                      'it wagers every hand until you press Stop.</div>' +
+                  '</div>' +
+                  '<div class="bj-status"></div>' +
+                  '<div class="bj-src"></div>' +
+                '</div>';
+
+            elAct   = h.querySelector('.bj-act');
+            elWhy   = h.querySelector('.bj-why');
+            elIns   = h.querySelector('.bj-ins');
+            elStat  = h.querySelector('.bj-status');
+            elSrc   = h.querySelector('.bj-src');
+            elWarn  = h.querySelector('[data-bj-warn]');
+            elEq    = h.querySelector('[data-bj-eq]');
+            elEqWin = h.querySelector('[data-bj-eq-win]');
+            elEqPush= h.querySelector('[data-bj-eq-push]');
+            elEqLose= h.querySelector('[data-bj-eq-lose]');
+            elEqWt  = h.querySelector('[data-bj-eq-wt]');
+            elEqPt  = h.querySelector('[data-bj-eq-pt]');
+            elEqLt  = h.querySelector('[data-bj-eq-lt]');
+
+            h.querySelectorAll('[data-bj-k]').forEach(function (inp) {
+                var k = inp.getAttribute('data-bj-k');
+                if (inp.type === 'checkbox') inp.checked = !!cfg[k];
+                else inp.value = cfg[k];
+                inp.addEventListener('input', function () {
+                    cfg[k] = inp.type === 'checkbox' ? inp.checked : Number(inp.value);
+                    saveCfg();
+                });
+            });
+
+            // One Start/Stop button drives the whole autoplay loop.
+            var runBtn = h.querySelector('[data-bj-run]');
+            if (runBtn) {
+                paintRunBtn(runBtn);
+                runBtn.addEventListener('click', function (e) {
+                    e.stopPropagation();
+                    running = !running;
+                    if (!running) lastActedHash = '';
+                    paintRunBtn(runBtn);
+                    setStatus(running ? 'autoplay running' : 'stopped');
+                });
+            }
+
+            h.querySelector('.bj-min').addEventListener('click', function (e) {
+                e.stopPropagation();
+                cfg.collapsed = !cfg.collapsed;
+                h.classList.toggle('bj-collapsed', cfg.collapsed);
+                e.currentTarget.textContent = cfg.collapsed ? '+' : '–';
+                saveCfg();
+            });
+
+            // The betting column stops clicks from bubbling in places; keep our
+            // own controls from reaching the game's handlers either way.
+            h.addEventListener('click', function (e) { e.stopPropagation(); });
+            return h;
+        }
+
+        /** Describe a container well enough to debug a bad dock from a report. */
+        function describe(el) {
+            if (!el) return '?';
+            var cls = (typeof el.className === 'string' ? el.className : '').trim().split(/\s+/)[0];
+            return (el.tagName || '').toLowerCase() + (cls ? '.' + cls : '') +
+                   (el.getAttribute && el.getAttribute('data-testid')
+                        ? '[' + el.getAttribute('data-testid') + ']' : '');
+        }
+
+        /** Re-dock if the site re-rendered our container out from under us. */
+        function ensureMounted() {
+            var dock = findDock();
+
+            if (!dock) {
+                // Give the game a few seconds to render before giving up: a
+                // panel nobody can see is worse than one in the wrong place.
+                if (!floatFallback) {
+                    if (++dockMissTicks < 30) return;
+                    floatFallback = true;
+                }
+                if (!hud) hud = buildHud();
+                hud.classList.add('bj-float');
+                if (hud.parentElement !== document.body) {
+                    document.body.appendChild(hud);
+                    setStatus('betting panel not found — floating');
+                }
+                return;
+            }
+
+            if (!hud) hud = buildHud();
+            dockMissTicks = 0;
+            if (hud.parentElement === dock) return;      // hot path: already docked
+
+            // Re-dock even if we had already fallen back to floating — the
+            // panel may simply have taken longer than 10s to render.
+            floatFallback = false;
+            hud.classList.remove('bj-float');
+            // Moles does the same before appending: the panel is a normal block
+            // child, but the column is often a positioning context for overlays.
+            if (getComputedStyle(dock).position === 'static') dock.style.position = 'relative';
+            applyTheme(hud, dock);          // inherit the site's surface + accent
+            dock.appendChild(hud);
+            setStatus('docked: ' + describe(dock));
+        }
+
+        function unmount() {
+            if (hud && hud.parentElement) hud.parentElement.removeChild(hud);
+            if (overlay && overlay.parentElement) overlay.parentElement.removeChild(overlay);
+            dockMissTicks = 0;
+        }
+
+        /* ---------------------------------------------------------------
+           BOARD OVERLAY
+           A stats surface over the felt, in the spirit of the Moles board
+           lock. Idle it is a click-through card in the corner, so it never
+           swallows a click meant for a card. While auto-play is driving it
+           takes the whole board and renders the hand large — you are not
+           reading the table at that point anyway.
+           --------------------------------------------------------------- */
+        var ovEls = null, spark = null, sparkCtx = null;
+
+        function stat(key, label) {
+            return '<div class="bj-st"><span class="bj-k">' + label + '</span>' +
+                   '<span class="bj-v" data-s="' + key + '">—</span></div>';
+        }
+
+        function buildOverlay() {
+            var o = document.createElement('div');
+            o.id = 'bj-board-overlay';
+            o.innerHTML =
+                /* Full takeover, only while auto-play is driving the hand. */
+                '<div class="bj-ov-stage">' +
+                  '<div class="bj-ov-badge">Auto-play</div>' +
+                  '<div class="bj-ov-cards">' +
+                    '<div class="bj-side"><div class="bj-side-k">Dealer</div>' +
+                      '<div class="bj-cards" data-ov-dealer></div>' +
+                      '<div class="bj-side-tot" data-ov-dealer-tot></div></div>' +
+                    '<div class="bj-side"><div class="bj-side-k">You</div>' +
+                      '<div class="bj-cards" data-ov-player></div>' +
+                      '<div class="bj-side-tot" data-ov-player-tot></div></div>' +
+                  '</div>' +
+                  '<div class="bj-ov-act" data-ov-act>—</div>' +
+                '</div>' +
+
+                /* Stats hug the edges of the felt; the middle stays clear so
+                   the real cards are never covered. */
+                '<div class="bj-ov-col bj-ov-l">' +
+                  '<div class="bj-ov-t">Session</div>' +
+                  stat('hands', 'Hands') +
+                  stat('wlp', 'W / L / P') +
+                  stat('wr', 'Win rate') +
+                  stat('streak', 'Streak') +
+                  stat('streakrec', 'Best / worst') +
+                  stat('bj', 'Your blackjacks') +
+                  stat('dbj', 'Dealer blackjacks') +
+                  stat('busts', 'Busts') +
+                  '<div class="bj-ov-t bj-ov-t2">Doubles &amp; splits</div>' +
+                  stat('dbl', 'Doubles W / L') +
+                  stat('spl', 'Split W/L/P') +
+                  '<div class="bj-ov-t bj-ov-t2">Strategy</div>' +
+                  stat('adh', 'Correct plays') +
+                '</div>' +
+
+                '<div class="bj-ov-col bj-ov-r">' +
+                  '<div class="bj-ov-t">Money</div>' +
+                  stat('wagered', 'Wagered') +
+                  stat('returned', 'Returned') +
+                  stat('pnl', 'Net') +
+                  stat('rtp', 'RTP') +
+                  stat('biggest', 'Biggest win') +
+                  '<canvas class="bj-spark" width="300" height="120"></canvas>' +
+                  '<div class="bj-hist" data-ov-hist></div>' +
+                  '<div class="bj-ov-btns">' +
+                    '<button class="bj-btn" data-ov="csv" type="button">CSV</button>' +
+                    '<button class="bj-btn" data-ov="reset" type="button">Reset</button>' +
+                  '</div>' +
+                '</div>';
+
+            ovEls = {
+                stage: o.querySelector('.bj-ov-stage'),
+                act: o.querySelector('[data-ov-act]'),
+                dealer: o.querySelector('[data-ov-dealer]'),
+                dealerTot: o.querySelector('[data-ov-dealer-tot]'),
+                player: o.querySelector('[data-ov-player]'),
+                playerTot: o.querySelector('[data-ov-player-tot]'),
+                hist: o.querySelector('[data-ov-hist]'),
+                // Kept by reference: relocateStatsCols() re-parents these on
+                // phones, after which o.querySelector can't find them.
+                colL: o.querySelector('.bj-ov-l'),
+                colR: o.querySelector('.bj-ov-r'),
+                s: {}
+            };
+            o.querySelectorAll('[data-s]').forEach(function (e) { ovEls.s[e.getAttribute('data-s')] = e; });
+            spark = o.querySelector('.bj-spark');
+            sparkCtx = spark && spark.getContext ? spark.getContext('2d') : null;
+
+            o.querySelector('[data-ov="csv"]').addEventListener('click', function (e) {
+                e.stopPropagation(); exportCsv();
+            });
+            o.querySelector('[data-ov="reset"]').addEventListener('click', function (e) {
+                e.stopPropagation();
+                var b = e.currentTarget;
+                if (b.dataset.armed) {
+                    resetStats(); lastStatsHash = ''; lastLogLen = -1;
+                    delete b.dataset.armed; b.textContent = 'Reset';
+                    return;
+                }
+                b.dataset.armed = '1';                 // two-step: stats are not recoverable
+                b.textContent = 'Sure?';
+                setTimeout(function () {
+                    if (!o.isConnected) return;
+                    var again = o.querySelector('[data-ov="reset"]');
+                    if (again && again.dataset.armed) { delete again.dataset.armed; again.textContent = 'Reset'; }
+                }, 3000);
+            });
+            return o;
+        }
+
+        /* Phones cannot spare the felt: the two stat columns cover the cards
+           and clip against the board's edge (the mobile board is barely
+           taller than they are — seen on stake.us iOS). Below 700px they move
+           out of the overlay and dock at the bottom of the panel instead.
+           Same elements, so paintOverlay keeps writing to them; the auto-play
+           stage stays with the overlay on the board. Checked every tick so a
+           rotation or split-screen resize swaps the layout both ways. */
+        function relocateStatsCols() {
+            if (!ovEls || !ovEls.colL || !ovEls.colR) return;
+            var narrow = (window.innerWidth || 0) <= 700;
+            var body = hud && hud.isConnected ? hud.querySelector('.bj-body') : null;
+            if (narrow && body) {
+                var dk = body.querySelector('.bj-stats-dock');
+                if (!dk) {
+                    dk = document.createElement('div');
+                    dk.className = 'bj-sec bj-stats-dock';
+                    dk.innerHTML = '<div class="bj-sec-t">Session stats</div>';
+                    body.appendChild(dk);
+                }
+                dk.style.display = '';
+                if (ovEls.colL.parentElement !== dk) {
+                    dk.appendChild(ovEls.colL);
+                    dk.appendChild(ovEls.colR);
+                }
+            } else if (overlay && ovEls.colL.parentElement !== overlay) {
+                overlay.appendChild(ovEls.colL);
+                overlay.appendChild(ovEls.colR);
+                var old = hud && hud.querySelector('.bj-stats-dock');
+                if (old && old.parentElement) old.parentElement.removeChild(old);
+            }
+        }
+
+        function ensureOverlay() {
+            if (!cfg.overlay) {
+                if (overlay && overlay.parentElement) overlay.parentElement.removeChild(overlay);
+                var dk = hud && hud.querySelector('.bj-stats-dock');
+                if (dk) dk.style.display = 'none';
+                return;
+            }
+            // Build even before the board is found: on phones the stat columns
+            // dock into the panel, which can be ready before board detection.
+            if (!overlay) overlay = buildOverlay();
+            var board = findBoard();
+            if (board && overlay.parentElement !== board) {
+                if (getComputedStyle(board).position === 'static') board.style.position = 'relative';
+                applyTheme(overlay, board);
+                board.appendChild(overlay);
+            }
+            relocateStatsCols();
+        }
+
+        /* Nuts lays the felt and this betting column out as equal-height flex
+           siblings, so docking a panel taller than the felt stretches the board
+           to match and shoves the player's cards off the bottom of the screen.
+           Opt the board out of that stretch so it keeps its natural height.
+           Re-applied every tick because a fresh deal can re-render the board and
+           drop the inline style. Stake/Shuffle don't lay out this way, so this is
+           scoped to Nuts to avoid touching a layout that already works. */
+        function pinNutsBoard() {
+            if (!isNut) return;
+            try {
+                var bd = findBoard();
+                if (bd && bd.style.alignSelf !== 'flex-start') bd.style.alignSelf = 'flex-start';
+            } catch (e) {}
+        }
+
+        function fmtMoney(n) {
+            if (!isFinite(n)) return '—';
+            var a = Math.abs(n);
+            if (a >= 1000) return n.toFixed(0);
+            if (a >= 1) return n.toFixed(2);
+            return n.toFixed(4);
+        }
+        function signed(n) { return (n >= 0 ? '+' : '') + fmtMoney(n); }
+        function signOf(n) { return n > 0 ? 'pos' : n < 0 ? 'neg' : ''; }
+
+        function paintSpark() {
+            if (!sparkCtx || !spark) return;
+            var w = spark.width, h = spark.height, pad = 3;
+            sparkCtx.clearRect(0, 0, w, h);
+            var data = stats.log.slice(-160);
+            if (data.length < 2) return;
+            var lo = 0, hi = 0;
+            data.forEach(function (r) { if (r.pnl < lo) lo = r.pnl; if (r.pnl > hi) hi = r.pnl; });
+            if (hi === lo) hi = lo + 1e-9;
+            var xs = function (i) { return pad + i * (w - 2 * pad) / (data.length - 1); };
+            var ys = function (v) { return h - pad - ((v - lo) / (hi - lo)) * (h - 2 * pad); };
+
+            if (lo < 0 && hi > 0) {                       // zero line
+                sparkCtx.strokeStyle = 'rgba(255,255,255,.14)';
+                sparkCtx.setLineDash([3, 3]);
+                sparkCtx.beginPath(); sparkCtx.moveTo(0, ys(0)); sparkCtx.lineTo(w, ys(0)); sparkCtx.stroke();
+                sparkCtx.setLineDash([]);
+            }
+            var end = data[data.length - 1].pnl;
+            var col = end >= 0 ? '#1fff20' : '#ef4444';
+            sparkCtx.beginPath();
+            sparkCtx.moveTo(xs(0), ys(data[0].pnl));
+            for (var i = 1; i < data.length; i++) sparkCtx.lineTo(xs(i), ys(data[i].pnl));
+            sparkCtx.strokeStyle = col; sparkCtx.lineWidth = 1.5; sparkCtx.stroke();
+            sparkCtx.lineTo(xs(data.length - 1), h - pad); sparkCtx.lineTo(xs(0), h - pad);
+            sparkCtx.closePath();
+            sparkCtx.fillStyle = end >= 0 ? 'rgba(31,255,32,.12)' : 'rgba(239,68,68,.12)';
+            sparkCtx.fill();
+        }
+
+        var lastLogLen = -1, lastStatsHash = '';
+        function paintOverlay(a) {
+            if (!overlay || !ovEls) return;
+
+            // The full-board takeover (a dimming backdrop with the cards and the
+            // action redrawn large) is deliberately disabled during autoplay:
+            // you are watching the real table, so darkening it and repeating the
+            // cards you can already see just gets in the way. Only the corner
+            // stat columns stay up.
+            overlay.classList.remove('bj-ov-live');
+
+            var hash = stats.hands + '|' + stats.decisions + '|' + stats.log.length + '|' + pnl().toFixed(6);
+            if (hash === lastStatsHash) return;           // stats only change on resolution
+            lastStatsHash = hash;
+
+            var s = ovEls.s, p = pnl(), r = rtp(), wr = winRate(), ad = adherence();
+            s.hands.textContent = stats.hands;
+            s.wlp.textContent = stats.wins + ' / ' + stats.losses + ' / ' + stats.pushes;
+            s.wr.textContent = wr == null ? '—' : wr.toFixed(1) + '%';
+            s.streak.textContent = (stats.streak > 0 ? 'W' + stats.streak
+                                  : stats.streak < 0 ? 'L' + (-stats.streak) : '—');
+            s.streak.setAttribute('data-sign', signOf(stats.streak));
+            s.streakrec.textContent = 'W' + (stats.bestStreak || 0) + ' / L' + (-(stats.worstStreak || 0));
+            s.bj.textContent = stats.blackjacks;
+            s.dbj.textContent = stats.dealerBlackjacks;
+            s.busts.textContent = stats.busts;
+            s.dbl.textContent = stats.doublesWon + ' / ' + stats.doublesLost +
+                                (stats.doubles ? '  (' + stats.doubles + ')' : '');
+            s.spl.textContent = stats.splitsWon + ' / ' + stats.splitsLost + ' / ' + stats.splitsPushed;
+
+            s.wagered.textContent = stats.hands ? fmtMoney(stats.wagered) : '—';
+            s.returned.textContent = stats.hands ? fmtMoney(stats.returned) : '—';
+            s.pnl.textContent = stats.hands ? signed(p) : '—';
+            s.pnl.setAttribute('data-sign', signOf(p));
+            s.rtp.textContent = r == null ? '—' : r.toFixed(1) + '%';
+            s.biggest.textContent = stats.hands ? fmtMoney(stats.biggest) : '—';
+
+            s.adh.textContent = ad == null ? '—'
+                : ad.toFixed(0) + '%  (' + stats.correct + '/' + stats.decisions + ')';
+            s.adh.setAttribute('data-sign', ad == null ? '' : ad >= 99 ? 'pos' : ad < 90 ? 'neg' : '');
+
+            if (stats.log.length !== lastLogLen) {
+                lastLogLen = stats.log.length;
+                ovEls.hist.innerHTML = stats.log.slice(-22).map(function (r2) {
+                    var cls = r2.outcome === 'win' ? 'win' : r2.outcome === 'push' ? 'push' : 'loss';
+                    var lbl = r2.outcome === 'win' ? (r2.mult ? r2.mult + '×' : 'W')
+                            : r2.outcome === 'push' ? 'P' : 'L';
+                    return '<span class="bj-chip ' + cls + '">' + lbl + '</span>';
+                }).join('');
+                paintSpark();
+            }
+        }
+
+        function paint() {
+            var insBtn = findBtn('insurance') ||
+                         Array.prototype.find.call(
+                             document.querySelectorAll('button, [role="button"]'),
+                             function (b) { return !hud.contains(b) && /insurance/i.test(b.textContent || ''); });
+            elIns.style.display = clickable(insBtn) ? 'block' : 'none';
+
+            var a = advise();
+            lastAdvice = a.st ? a : null;       // the adherence listener reads this
+            // Guard the bookkeeping/overlay calls: a throw in either (e.g. while a split
+            // is mid-transition) must NOT abort paint before it refreshes the advice +
+            // lastRead below, or the panel freezes on its last text ("no hand detected").
+            try { if (a.st) trackState(a.st); } catch (e) {}
+            try { paintOverlay(a); } catch (e) {}
+
+            if (!a.st) {
+                lastRead = null;
+                elAct.textContent = '—'; elAct.setAttribute('data-a', '');
+                elWhy.textContent = '';
+                elEq.style.display = 'none';
+                elSrc.textContent = 'no hand detected';
+                return;
+            }
+
+            // Live win chance for the acting hand, updated each card.
+            if (a.eq) {
+                var wp = Math.round(a.eq.win * 100), pp = Math.round(a.eq.push * 100),
+                    lp = Math.max(0, 100 - wp - pp);
+                elEqWin.style.width = wp + '%';
+                elEqPush.style.width = pp + '%';
+                elEqLose.style.width = lp + '%';
+                elEqWt.textContent = 'Win ' + wp + '%';
+                elEqPt.textContent = pp > 0 ? 'Push ' + pp + '%' : '';
+                elEqLt.textContent = 'Lose ' + lp + '%';
+                elEq.style.display = '';
+            } else {
+                elEq.style.display = 'none';
+            }
+
+            var turn = clickable(findBtn('hit'));
+            elAct.textContent = turn ? a.dec.action : '—';
+            elAct.setAttribute('data-a', turn ? a.dec.action : '');
+            // On a split the board does not say which box we are advising on,
+            // so that — and only that — is worth spelling out.
+            elWhy.textContent = !turn ? 'not your turn'
+                : a.st.hands.length > 1
+                    ? a.dec.why + '  ·  hand ' + (a.st.hands.indexOf(a.hand) + 1) + '/' + a.st.hands.length
+                    : a.dec.why;
+            elSrc.textContent = a.st.source === 'net'
+                ? (a.st.bet ? 'reading game data' : 'reading game data (no wager info)')
+                : 'reading board (fallback)';
+
+            lastRead = {
+                hand: a.hand.cards.join(' '), total: a.info.total, soft: a.info.soft,
+                up: a.up, source: a.st.source, action: turn ? a.dec.action : '—',
+                why: a.dec.why, hands: a.st.hands.length,
+                handIndex: a.st.hands.indexOf(a.hand) + 1
+            };
+        }
+
+        /* Reconcile every tick rather than self-destructing on detach: our
+           container belongs to the site and can be re-rendered at any time. */
+        setInterval(function () {
+            try {
+                if (!isOnBjPage() || !bjEnabled()) { unmount(); return; }
+                ensureMounted();
+                if (!hud || !hud.isConnected) return;
+                pinNutsBoard();
+                ensureOverlay();
+                paint();
+                autoTick();
+            } catch (e) { /* never let one bad tick kill the loop */ }
+        }, 350);
+
+        // Exposed so the strategy tables can be checked against the published
+        // charts without re-implementing decide() in the test, and so the hand
+        // we are reading can be inspected even though the panel no longer
+        // repeats what the board already shows.
+        try {
+            PAGE_WIN.__bjInternals = {
+                decide: decide, handInfo: handInfo, cfg: cfg, stats: function () { return stats; },
+                read: function () { return lastRead; },
+                handEquity: handEquity, dealerDist: dealerDist,
+                isRunning: function () { return running; },
+                setRunning: function (v) { running = !!v; if (!running) lastActedHash = ''; paintRunBtn(); }
+            };
+        } catch (e) {}
+    }
+
+    /* === source: moles.user.js — "Holy Moley" by Zerocu, v0.9.5 === */
+    function tool_stake_moles() {
+    'use strict';
+
+    /* =========================================================
+    STYLES — mirrors the TypicalPrag HUD visual language:
+    dark teal gradient panels, neon-green accents, uppercase
+    micro-labels, blurred backdrops, 12px radii.
+    ========================================================= */
+    GM_addStyle(`
+        #moles-master-container,
+        #moles-master-container *,
+        #moles-board-lock,
+        #moles-board-lock * { box-sizing: border-box; }
+
+        #moles-master-container {
+            /* Cyber-blue palette per user spec.
+               Primary  : #1A7CFF  (electric blue, main highlight)
+               Midnight : #0A1A2F  (deep background)
+               Steel    : #144A7A  (gradient transition / dark accent)
+               Cyan     : #4CCBFF  (soft edge highlights)
+               Gray     : #A8A8A8  (neutral text) */
+            --hud-bg: rgba(10, 26, 47, 0.97);
+            --hud-panel: linear-gradient(180deg, rgba(20, 74, 122, 0.32), rgba(10, 26, 47, 0.92));
+            --hud-border: rgba(76, 203, 255, 0.30);
+            --hud-border-soft: rgba(76, 203, 255, 0.10);
+            --hud-green: #1A7CFF;        /* keep name for code compat; semantics = brand primary */
+            --hud-green-dark: #144A7A;
+            --hud-red: #e11d48;
+            --hud-muted: #A8A8A8;
+            --hud-text: #ffffff;
+            --hud-input: #06101F;
+            --hud-input-border: #144A7A;
+            --hud-cyan: #4CCBFF;
+            --hud-steel: #144A7A;
+            --hud-midnight: #0A1A2F;
+
+            position: absolute !important;
+            top: 0 !important;
+            left: 0 !important;
+            width: 300px !important;
+            height: 700px !important;
+            z-index: 2147483647;
+            overflow-y: auto;
+            background: var(--hud-bg);
+            border: 1px solid var(--hud-border);
+            border-radius: 20px;
+            padding: 8px;
+            box-shadow: 0 18px 50px rgba(0, 0, 0, 0.82);
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+            font-family: "Proxima Nova", "Segoe UI", sans-serif;
+            font-size: 12px;
+            color: var(--hud-text);
+            backdrop-filter: blur(10px);
+            line-height: 1.15;
+            user-select: none;
+        }
+        #moles-master-container.collapsed { width: auto; padding: 8px 10px; }
+        #moles-master-container.collapsed .hud-body { display: none; }
+
+        #moles-master-container .hud-header {
+            display: flex; justify-content: space-between; align-items: center;
+            gap: 8px; padding: 0 2px; cursor: default;
+        }
+        #moles-master-container .hud-header h2 {
+            margin: 0; font-size: 13px; font-weight: 900;
+            letter-spacing: 0.8px; text-transform: uppercase;
+        }
+        #moles-master-container .hud-header .hud-target-text {
+            color: #b1bad3; font-size: 11px; font-weight: 800;
+            font-style: italic; letter-spacing: 0.2px;
+        }
+        #moles-master-container .hud-collapse {
+            background: transparent; border: 1px solid var(--hud-border-soft);
+            color: var(--hud-muted); width: 22px; height: 22px;
+            border-radius: 6px; cursor: pointer; font-size: 11px; font-weight: 900;
+            padding: 0; line-height: 1;
+        }
+        #moles-master-container .hud-collapse:hover { color: var(--hud-text); border-color: var(--hud-muted); }
+
+        #moles-master-container .hud-body { display: flex; flex-direction: column; gap: 5px; }
+
+        #moles-master-container .mode-wrap {
+            display: flex; flex: 0 0 auto; flex-wrap: nowrap; gap: 4px;
+            background: rgba(10, 26, 47, 0.8); padding: 4px; border-radius: 10px;
+        }
+        #moles-master-container .mode-btn {
+            flex: 1 1 0; min-width: 0; padding: 5px 10px;
+            border: none; border-radius: 999px; font-size: 11px; font-weight: 900;
+            cursor: pointer; transition: transform .18s, filter .18s, background .18s, color .18s;
+            text-transform: uppercase; letter-spacing: 0.4px;
+            background: rgba(20, 74, 122, 0.6); color: var(--hud-muted);
+        }
+        #moles-master-container .mode-btn.active { background: var(--hud-green); color: #0A1A2F; box-shadow: 0 0 12px var(--hud-green); }
+        #moles-master-container .mode-btn:hover { filter: brightness(1.08); transform: translateY(-1px); }
+
+        #moles-master-container .hud-panel {
+            background: var(--hud-panel);
+            border: 1px solid var(--hud-border-soft);
+            border-radius: 14px;
+            padding: 7px 8px;
+            display: flex; flex-direction: column; gap: 5px;
+            box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+        }
+        #moles-master-container .hud-panel.hud-panel-primary {
+            border-color: rgba(76, 203, 255, 0.45);
+            background: linear-gradient(180deg,
+                rgba(26, 124, 255, 0.18),
+                rgba(20, 74, 122, 0.32) 50%,
+                rgba(10, 26, 47, 0.92)) !important;
+            box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06),
+                        0 0 0 1px rgba(76, 203, 255, 0.15),
+                        0 4px 12px rgba(0, 0, 0, 0.4);
+        }
+        #moles-master-container .hud-input-prominent {
+            font-size: 14px !important;
+            font-weight: 900 !important;
+            padding: 6px 6px !important;
+            text-align: center;
+            background: rgba(6, 16, 31, 0.85) !important;
+            border: 1px solid rgba(76, 203, 255, 0.4) !important;
+            color: var(--hud-cyan, #4CCBFF) !important;
+            text-shadow: 0 0 6px rgba(76, 203, 255, 0.4);
+        }
+        #moles-master-container .hud-input-prominent:focus {
+            border-color: var(--hud-cyan, #4CCBFF) !important;
+            box-shadow: 0 0 0 2px rgba(76, 203, 255, 0.25),
+                        inset 0 0 12px rgba(76, 203, 255, 0.12);
+        }
+        #moles-master-container .hud-currency-hint {
+            color: var(--hud-cyan, #4CCBFF);
+            font-weight: 900;
+            opacity: 0.8;
+            text-transform: uppercase;
+            font-size: 9px;
+            letter-spacing: 1px;
+        }
+        #moles-master-container .hud-bet-quick {
+            display: grid;
+            grid-template-columns: 1fr 1fr 1fr;
+            gap: 3px;
+            margin-top: 1px;
+        }
+        #moles-master-container .bet-quick-btn {
+            background: rgba(10, 26, 47, 0.7);
+            color: var(--hud-cyan, #4CCBFF);
+            border: 1px solid rgba(76, 203, 255, 0.30);
+            border-radius: 5px;
+            padding: 4px 0;
+            font-family: "Courier New", monospace;
+            font-size: 11px;
+            font-weight: 900;
+            letter-spacing: 1px;
+            cursor: pointer;
+            transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
+        }
+        #moles-master-container .bet-quick-btn:hover {
+            background: rgba(26, 124, 255, 0.18);
+            border-color: var(--hud-cyan, #4CCBFF);
+            color: #fff;
+        }
+        #moles-master-container .bet-quick-btn:active { transform: scale(0.97); }
+
+        #moles-master-container .hud-control-group {
+            display: flex; flex-direction: column; gap: 2px; min-width: 0;
+        }
+        #moles-master-container .hud-control-group label {
+            color: var(--hud-muted); font-size: 9px; font-weight: 800;
+            text-transform: uppercase; letter-spacing: 0.02em;
+            white-space: nowrap; display: flex; justify-content: space-between; gap: 4px;
+        }
+        #moles-master-container .hud-grid-2 {
+            display: grid; grid-template-columns: 1fr 1fr; gap: 5px;
+        }
+        #moles-master-container input[type="number"],
+        #moles-master-container select {
+            background: var(--hud-input); border: 1px solid var(--hud-input-border);
+            color: var(--hud-text); padding: 3px 5px; border-radius: 6px;
+            font-size: 11px; font-weight: 700; text-align: center; outline: none;
+            width: 100%;
+        }
+        #moles-master-container input[type="number"]:focus,
+        #moles-master-container select:focus {
+            border-color: var(--hud-green);
+            box-shadow: 0 0 0 2px rgba(26, 124, 255, 0.12);
+        }
+        #moles-master-container select { text-align: left; appearance: auto; }
+        #moles-master-container .hud-check-row {
+            display: flex; align-items: center; justify-content: space-between; gap: 6px;
+            padding: 2px 2px;
+        }
+        #moles-master-container .hud-check-row label {
+            color: var(--hud-muted); font-size: 9px; font-weight: 800;
+            text-transform: uppercase; letter-spacing: 0.3px;
+        }
+        #moles-master-container input[type="checkbox"] {
+            accent-color: var(--hud-green); cursor: pointer; margin: 0;
+            width: 14px; height: 14px;
+        }
+        #moles-master-container .hud-toggle {
+            position: relative; display: inline-flex; align-items: center;
+            cursor: pointer; flex-shrink: 0;
+        }
+        #moles-master-container .hud-toggle input[type="checkbox"] {
+            position: absolute; opacity: 0; width: 0; height: 0; pointer-events: none;
+        }
+        #moles-master-container .hud-toggle-track {
+            width: 30px; height: 16px; border-radius: 999px;
+            background: rgba(255,255,255,0.12);
+            border: 1px solid var(--hud-border-soft);
+            transition: background 150ms, border-color 150ms;
+            display: flex; align-items: center; padding: 0 2px;
+        }
+        #moles-master-container .hud-toggle-thumb {
+            width: 10px; height: 10px; border-radius: 50%;
+            background: var(--hud-muted);
+            transition: transform 150ms, background 150ms;
+        }
+        #moles-master-container .hud-toggle input:checked + .hud-toggle-track {
+            background: rgba(26,124,255,0.35);
+            border-color: var(--hud-green);
+        }
+        #moles-master-container .hud-toggle input:checked + .hud-toggle-track .hud-toggle-thumb {
+            transform: translateX(14px);
+            background: var(--hud-green);
+        }
+        #moles-master-container [data-tip] {
+            position: relative;
+        }
+        #moles-master-container [data-tip]::after {
+            content: attr(data-tip);
+            position: absolute;
+            top: calc(100% + 6px);
+            left: 0;
+            right: 0;
+            margin: 0 auto;
+            background: #0d1b2e;
+            color: #c8d8f0;
+            border: 1px solid rgba(76, 203, 255, 0.35);
+            border-radius: 7px;
+            padding: 6px 9px;
+            font-size: 10px;
+            font-weight: 600;
+            line-height: 1.4;
+            white-space: pre-wrap;
+            width: 200px;
+            text-align: left;
+            text-transform: none;
+            letter-spacing: 0;
+            pointer-events: none;
+            z-index: 9999;
+            box-shadow: 0 4px 16px rgba(0,0,0,0.6);
+            opacity: 0;
+            transition: opacity 120ms ease;
+        }
+        #moles-master-container [data-tip]:hover::after {
+            opacity: 1;
+        }
+        #moles-master-container .hud-api-status {
+            font-family: "Courier New", monospace;
+            font-size: 9px; font-weight: 700;
+            padding: 3px 5px; border-radius: 5px;
+            border: 1px solid var(--hud-border-soft);
+            background: rgba(11, 14, 23, 0.55);
+            color: var(--hud-muted);
+            white-space: normal; line-height: 1.3;
+            margin-top: 2px;
+        }
+        #moles-master-container .hud-api-status[data-state="ok"]   { color: var(--hud-green); border-color: rgba(26, 124, 255, 0.45); }
+        #moles-master-container .hud-api-status[data-state="wait"] { color: #ffd84a;          border-color: rgba(255,216,74,0.45); }
+
+        #moles-master-container .status-bar {
+            background: var(--hud-panel); padding: 5px 8px; border-radius: 8px;
+            text-align: center; font-size: 11px; font-weight: 900;
+            letter-spacing: 0.2px; border: 1px solid var(--hud-border-soft);
+            min-height: 28px; display: flex; align-items: center; justify-content: center;
+            color: var(--hud-cyan);
+        }
+        #moles-master-container.is-running .status-bar { color: var(--hud-green); }
+
+        #moles-master-container .btn-group {
+            display: flex; gap: 6px; flex-wrap: nowrap; align-items: stretch;
+        }
+        #moles-master-container .hud-rapid-btn {
+            border: none; color: #fff; font-size: 12px; font-weight: 900;
+            padding: 7px 12px; border-radius: 8px; cursor: pointer;
+            min-height: 32px; letter-spacing: 0.5px; text-transform: uppercase; flex: 1 1 0;
+        }
+        #moles-master-container .hud-rapid-btn.start { background: var(--hud-green); color: #0A1A2F; }
+        #moles-master-container .hud-rapid-btn.start:hover { background: var(--hud-green-dark); }
+        #moles-master-container .hud-rapid-btn.stop { background: var(--hud-red); color: #fff; }
+        #moles-master-container .hud-rapid-btn.stop:hover { background: #be123c; }
+        #moles-master-container .hud-reset-btn {
+            background: transparent; border: 1px solid var(--hud-red); color: var(--hud-red);
+            font-size: 11px; font-weight: 900; padding: 6px 10px; border-radius: 8px;
+            cursor: pointer; flex: 0 0 auto; min-height: 32px;
+            text-transform: uppercase; letter-spacing: 0.4px;
+        }
+        #moles-master-container .hud-reset-btn:hover { background: var(--hud-red); color: #fff; }
+
+        /* Scoped to the moles page: this bundle is a document-start script that
+           survives SPA navigation, so unscoped .game-sidebar/.game-content rules
+           would keep squashing every other game's layout after you leave moles. */
+        html[data-moles-active] [data-testid="game-moles"] {
+            min-height: 380px !important;
+            max-height: 650px !important;
+            height: 650px !important;
+        }
+        html[data-moles-active] .game-content.svelte-xd3lbs {
+            min-height: 380px !important;
+            max-height: 650px !important;
+            height: 650px !important;
+        }
+        html[data-moles-active] .game-sidebar {
+            min-height: 380px !important;
+            max-height: 650px !important;
+            height: 650px !important;
+        }
+        #moles-board-lock {
+            position: absolute !important;
+            inset: 0 !important;
+            z-index: 2147483645 !important;
+            pointer-events: auto;
+            border-radius: 20px;
+            overflow: hidden;
+            cursor: default;
+            font-family: "Proxima Nova", "Segoe UI", sans-serif;
+            display: grid !important;
+            grid-template-rows: 44px 1fr;
+            grid-template-columns: 1fr 280px;
+            grid-template-areas:
+                "topbar topbar"
+                "stage  side";
+            padding: 0 0 16px !important;
+            background:
+                repeating-linear-gradient(0deg,
+                    rgba(0,0,0,0.06) 0px, rgba(0,0,0,0.06) 1px,
+                    transparent 1px, transparent 4px),
+                radial-gradient(circle 70px at 78% 52%,
+                    #ffff00 0%, #ffe000 30%, #ffcc00 55%, transparent 72%),
+                linear-gradient(180deg,
+                    transparent 0%, transparent 62%,
+                    #1a8c00 62%, #1a8c00 68%,
+                    #22a800 68%, #22a800 74%,
+                    #18a000 74%, #18a000 80%,
+                    #20b800 80%, #20b800 86%,
+                    #16a800 86%, #16a800 92%,
+                    #1ec800 92%, #1ec800 100%),
+                linear-gradient(180deg,
+                    #6644cc 0%,
+                    #7744cc 8%,
+                    #cc44cc 22%,
+                    #ff44cc 32%,
+                    #ff66aa 40%,
+                    #ff88aa 48%,
+                    #ffaa66 54%,
+                    #ffcc44 60%,
+                    #44cc00 60%) !important;
+            background-size: auto, auto, auto, auto;
+            image-rendering: pixelated;
+            box-shadow: inset 0 0 0 2px rgba(255, 200, 0, 0.4),
+                        inset 0 0 60px rgba(255, 150, 0, 0.10);
+            animation: none;
+            transition: box-shadow 200ms ease;
+        }
+        #moles-board-lock.idle { animation: none; box-shadow: inset 0 0 0 1px rgba(168, 168, 168, 0.25); }
+
+        #moles-board-lock .lock-topbar {
+            grid-area: topbar;
+            display: flex; align-items: center; justify-content: space-between;
+            padding: 0 14px;
+            background: rgba(6, 16, 31, 0.75);
+            border-bottom: 1px solid rgba(76, 203, 255, 0.30);
+            font-family: "Courier New", monospace;
+            z-index: 5;
+        }
+        #moles-board-lock .lock-topbar .lock-badge {
+            margin: 0; padding: 4px 10px; font-size: 10px;
+            color: var(--hud-green, #1A7CFF);
+            background: rgba(26, 124, 255, 0.10);
+            border: 1px solid rgba(26, 124, 255, 0.30);
+            border-radius: 4px;
+            letter-spacing: 1px;
+        }
+        #moles-board-lock .lock-topstats {
+            display: flex; gap: 16px; align-items: center;
+            font-size: 11px;
+        }
+        #moles-board-lock .ts-cell { display: inline-flex; gap: 6px; align-items: baseline; }
+        #moles-board-lock .ts-k {
+            color: var(--hud-muted, #A8A8A8);
+            font-size: 9px; text-transform: uppercase; letter-spacing: 1px;
+        }
+        #moles-board-lock .ts-v {
+            color: #fff; font-weight: 900;
+            text-shadow: 1px 1px 0 #000;
+        }
+        #moles-board-lock .ts-v[data-sign="pos"] { color: var(--hud-green, #1A7CFF); }
+        #moles-board-lock .ts-v[data-sign="neg"] { color: var(--hud-red, #e11d48); }
+
+        #moles-board-lock .lock-stage {
+            grid-area: stage;
+            position: relative;
+            display: flex; flex-direction: column;
+            align-items: center; justify-content: center;
+            gap: 12px;
+            padding: 22px 16px;
+            margin: 12px 0 0 12px;
+            min-width: 0; min-height: 0;
+            border-radius: 16px;
+            background: rgba(0,0,0,0.18);
+        }
+        #moles-board-lock .lock-next-mult {
+            font-family: "Press Start 2P", "Courier New", monospace;
+            font-size: 18px; font-weight: 900;
+            color: var(--hud-cyan, #4CCBFF);
+            text-shadow: 2px 2px 0 #000,
+                         0 0 12px rgba(76, 203, 255, 0.6);
+            letter-spacing: 2px;
+            padding: 6px 14px;
+            background: rgba(10, 26, 47, 0.8);
+            border: 2px solid rgba(76, 203, 255, 0.45);
+            border-radius: 6px;
+            image-rendering: pixelated;
+        }
+        #moles-board-lock .lock-next-mult.win  { color: var(--hud-green, #1A7CFF); border-color: var(--hud-green); }
+        #moles-board-lock .lock-next-mult.bust { color: var(--hud-red, #e11d48);  border-color: var(--hud-red); }
+        #moles-board-lock.idle {
+            pointer-events: none;
+            cursor: default;
+            animation: none;
+            box-shadow: inset 0 0 0 1px rgba(168, 168, 168, 0.25);
+        }
+        #moles-board-lock.idle .lock-side { pointer-events: auto; }
+
+        #moles-board-lock .lock-holes {
+            position: relative;
+            width: min(60%, 420px);
+            aspect-ratio: 1 / 0.85;
+            max-height: 80%;
+            pointer-events: none;
+        }
+        #moles-board-lock.idle .lock-card {
+            pointer-events: auto;
+            opacity: 0.92;
+            border-color: rgba(255, 255, 255, 0.18);
+        }
+        #moles-board-lock.idle .lock-badge::before {
+            animation: none;
+            background: #ffd84a;
+            box-shadow: 0 0 6px #ffd84a;
+        }
+        #moles-board-lock.idle .lock-badge { color: #ffd84a; }
+        #moles-board-lock.idle .lock-title::after {
+            content: ' · IDLE';
+            color: #ffd84a;
+            opacity: 0.8;
+        }
+        @keyframes moles-lock-pulse {
+            0%, 100% { box-shadow: inset 0 0 0 1px rgba(26, 124, 255, 0.20), inset 0 0 60px rgba(26, 124, 255, 0.08); }
+            50%      { box-shadow: inset 0 0 0 2px rgba(26, 124, 255, 0.55), inset 0 0 110px rgba(26, 124, 255, 0.22); }
+        }
+        #moles-board-lock .lock-side {
+            grid-area: side;
+            position: relative !important;
+            width: auto !important;
+            max-height: none !important;
+            overflow-y: auto;
+            overflow-x: hidden;
+            background: rgba(10, 26, 47, 0.85) !important;
+            border: 1px solid rgba(76, 203, 255, 0.20) !important;
+            border-radius: 16px !important;
+            margin: 12px 12px 0 8px !important;
+            padding: 14px 10px !important;
+            text-align: left;
+            box-shadow: -8px 0 18px rgba(0, 0, 0, 0.4) !important;
+            backdrop-filter: blur(8px);
+            font-family: "Proxima Nova", "Segoe UI", sans-serif;
+            pointer-events: auto !important;
+            display: flex; flex-direction: column; gap: 5px;
+            font-size: 11px;
+        }
+        #moles-board-lock .lock-side .lock-stats {
+            display: grid !important;
+            grid-template-columns: 1fr 1fr !important;
+            gap: 2px 6px !important;
+            padding: 4px 6px !important;
+            font-size: 10px !important;
+        }
+        #moles-board-lock .lock-side .stat-row {
+            padding: 1px 0 !important;
+            display: flex; justify-content: space-between; align-items: baseline;
+        }
+        #moles-board-lock .lock-side .stat-k { font-size: 8px !important; }
+        #moles-board-lock .lock-side .stat-v { font-size: 9px !important; }
+        #moles-board-lock .lock-side .lock-actions {
+            display: flex; gap: 4px; flex-wrap: wrap;
+        }
+        #moles-board-lock .lock-side .lock-actions button {
+            flex: 1 1 auto; padding: 6px 8px; font-size: 10px;
+        }
+        #moles-board-lock .lock-side .lock-history {
+            overflow: visible;
+        }
+        #moles-board-lock.idle .lock-side {
+            opacity: 0.95;
+            border-color: rgba(76, 203, 255, 0.30);
+            box-shadow: 0 30px 80px rgba(0, 0, 0, 0.7),
+                        inset 0 1px 0 rgba(255, 255, 255, 0.06),
+                        0 0 0 1px rgba(76, 203, 255, 0.15);
+        }
+        #moles-board-lock .lock-title {
+            font-family: "Press Start 2P", "Courier New", monospace;
+            letter-spacing: 1.5px;
+            text-shadow: 2px 2px 0 #000;
+        }
+        #moles-board-lock .lock-badge {
+            display: inline-flex; align-items: center; gap: 8px;
+            font-size: 11px; font-weight: 900; letter-spacing: 1.5px;
+            text-transform: uppercase; color: var(--hud-green, #1A7CFF);
+            margin-bottom: 12px;
+            padding: 6px 14px;
+            background: rgba(26, 124, 255, 0.12);
+            border: 1px solid rgba(26, 124, 255, 0.30);
+            border-radius: 999px;
+        }
+        #moles-board-lock .lock-badge::before {
+            content: ''; width: 8px; height: 8px; border-radius: 50%;
+            background: #1A7CFF; box-shadow: 0 0 8px #1A7CFF;
+            animation: moles-dot-blink 1s ease-in-out infinite;
+        }
+        @keyframes moles-dot-blink { 0%,100% { opacity: 1; } 50% { opacity: 0.25; } }
+        #moles-board-lock .lock-title {
+            color: #fff; font-size: 20px; font-weight: 900;
+            letter-spacing: 0.8px; text-transform: uppercase;
+            margin-bottom: 6px;
+            text-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+        }
+        #moles-board-lock .lock-sub {
+            color: var(--hud-cyan); font-size: 13px; font-weight: 700;
+            font-family: "Roboto Mono", monospace;
+            margin-bottom: 14px;
+            letter-spacing: 0.3px;
+        }
+        #moles-board-lock .lock-hole {
+            position: absolute !important;
+            width: 21.8% !important;
+            aspect-ratio: 1 / 1 !important;
+            display: flex; align-items: center; justify-content: center;
+            background: #0b0e17 !important;
+            border: 3px solid #3a2818 !important;
+            border-radius: 50% !important;
+            box-shadow: inset 0 10px 20px rgba(0,0,0,0.7) !important;
+            image-rendering: pixelated;
+            transition: all 120ms ease !important;
+            z-index: 2;
+            opacity: 1 !important;
+            visibility: visible !important;
+        }
+        #moles-board-lock .lock-hole .px-sprite {
+            position: absolute; inset: 0;
+            width: 100%; height: 100%;
+            display: block;
+        }
+        #moles-board-lock .lock-hole .px-sprite svg {
+            width: 100%; height: 100%; display: block;
+            image-rendering: pixelated;
+            image-rendering: -moz-crisp-edges;
+            image-rendering: crisp-edges;
+        }
+        #moles-board-lock .lock-hole .px-mole { opacity: 0; transition: opacity 80ms; }
+        #moles-board-lock .lock-hole .px-dirt { opacity: 1; transition: opacity 80ms; }
+        #moles-board-lock .lock-hole.revealed-mole .px-mole { opacity: 1; }
+        #moles-board-lock .lock-hole.revealed-mole .px-dirt { opacity: 0; }
+        #moles-board-lock .lock-hole.picked,
+        #moles-board-lock .lock-hole.revealed-mole {
+            border-color: #1A7CFF !important;
+            box-shadow: 0 0 0 4px rgba(26, 124, 255, 0.6),
+                        inset 0 10px 20px rgba(0,0,0,0.7) !important;
+            z-index: 3;
+        }
+        #moles-board-lock .lock-hole.picked {
+            transform: scale(1.06);
+        }
+        #moles-board-lock .lock-hole.pick-hit {
+            border-color: #1A7CFF;
+            box-shadow: 0 0 0 2px #1A7CFF, 0 0 16px rgba(26,124,255,0.55);
+        }
+        #moles-board-lock .lock-hole.pick-bust {
+            border-color: #e11d48;
+            box-shadow: 0 0 0 2px #e11d48, 0 0 16px rgba(225,29,72,0.55);
+        }
+
+        #moles-board-lock .lock-pip {
+            position: absolute;
+            transform: translate(-50%, 0);
+            display: inline-flex; align-items: center; gap: 4px;
+            padding: 3px 6px;
+            background: #0b0e17;
+            border: 2px solid #3a2818;
+            border-radius: 999px;
+            font-family: "Courier New", monospace;
+            font-size: 10px; font-weight: 900;
+            line-height: 1;
+            letter-spacing: 0.5px;
+            color: #fff;
+            opacity: 0;
+            pointer-events: none;
+            image-rendering: pixelated;
+            box-shadow: 0 2px 0 rgba(0,0,0,0.6);
+            transition: opacity 120ms ease, transform 180ms ease;
+            white-space: nowrap;
+        }
+        #moles-board-lock .lock-pip.show { opacity: 1; }
+        #moles-board-lock .lock-pip .pip-icon {
+            display: inline-block;
+            width: 12px; height: 12px;
+            text-align: center;
+            font-size: 11px;
+            line-height: 12px;
+            font-weight: 900;
+            font-family: "Courier New", monospace;
+            border-radius: 2px;       /* boxy 8-bit icon */
+            text-shadow: 1px 1px 0 #000;
+        }
+        #moles-board-lock .lock-pip.win {
+            border-color: #1A7CFF;
+            box-shadow: 0 0 0 1px #1A7CFF, 0 2px 0 rgba(0,0,0,0.6),
+                        0 0 10px rgba(26,124,255,0.45);
+        }
+        #moles-board-lock .lock-pip.win .pip-icon { color: #1A7CFF; background: rgba(26,124,255,0.18); }
+        #moles-board-lock .lock-pip.win .pip-text { color: #1A7CFF; }
+        #moles-board-lock .lock-pip.bust {
+            border-color: #e11d48;
+            box-shadow: 0 0 0 1px #e11d48, 0 2px 0 rgba(0,0,0,0.6),
+                        0 0 10px rgba(225,29,72,0.45);
+        }
+        #moles-board-lock .lock-pip.bust .pip-icon { color: #e11d48; background: rgba(225,29,72,0.18); }
+        #moles-board-lock .lock-pip.bust .pip-text { color: #e11d48; }
+        @keyframes pip-flash {
+            0%   { transform: translate(-50%, -4px) scale(0.6); opacity: 0; }
+            40%  { transform: translate(-50%, 0)     scale(1.15); opacity: 1; }
+            100% { transform: translate(-50%, 0)     scale(1);    opacity: 1; }
+        }
+        #moles-board-lock .lock-pip.flash { animation: pip-flash 240ms ease-out 1; }
+
+        #moles-board-lock .lock-mult {
+            font-family: "Press Start 2P", "Courier New", monospace;
+            font-size: 32px; font-weight: 900;
+            letter-spacing: 1.2px;
+            color: #fff;
+            text-shadow: 2px 2px 0 #000, 0 0 20px rgba(26, 124, 255, 0.5);
+            margin: 12px 0 16px;
+        }
+        #moles-board-lock .lock-mult.win  { color: #1A7CFF; text-shadow: 2px 2px 0 #0A1A2F; }
+        #moles-board-lock .lock-mult.bust { color: #e11d48; text-shadow: 2px 2px 0 #3e0a18; }
+        #moles-board-lock .lock-mult.live { color: #ffd84a; text-shadow: 2px 2px 0 #3e3008; }
+
+        #moles-board-lock .lock-history {
+            display: flex; gap: 4px; flex-wrap: wrap; justify-content: center;
+            margin: 8px 0 12px; min-height: 20px;
+        }
+        #moles-board-lock .hist-chip {
+            font-family: "Courier New", monospace;
+            font-size: 10px; font-weight: 900;
+            padding: 3px 6px;
+            border: 1px solid;
+            min-width: 28px; text-align: center;
+            image-rendering: pixelated;
+            letter-spacing: 0.5px;
+            border-radius: 4px;
+        }
+        #moles-board-lock .hist-chip.win  { color: #1A7CFF; border-color: #1A7CFF; background: rgba(26,124,255,0.10); }
+        #moles-board-lock .hist-chip.bust { color: #e11d48; border-color: #e11d48; background: rgba(225,29,72,0.10); }
+
+        #moles-board-lock .lock-stats {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 6px 16px;
+            margin: 12px 0;
+            padding: 14px 16px;
+            background: rgba(6, 16, 31, 0.65);
+            border: 1px solid rgba(76, 203, 255, 0.15);
+            border-radius: 12px;
+            font-family: "Courier New", monospace;
+            text-align: left;
+            box-shadow: inset 0 2px 8px rgba(0, 0, 0, 0.3);
+        }
+        #moles-board-lock .lock-stats .stat-row {
+            display: flex; justify-content: space-between; align-items: baseline;
+            gap: 8px; min-width: 0;
+        }
+        #moles-board-lock .lock-stats .stat-k {
+            color: var(--hud-muted); font-size: 10px; font-weight: 800;
+            text-transform: uppercase; letter-spacing: 0.5px;
+            white-space: nowrap;
+        }
+        #moles-board-lock .lock-stats .stat-v {
+            color: #fff; font-size: 13px; font-weight: 900;
+            text-shadow: 1px 1px 0 #000;
+            white-space: nowrap;
+        }
+        #moles-board-lock .lock-stats .stat-v[data-sign="pos"]  { color: #1A7CFF; }
+        #moles-board-lock .lock-stats .stat-v[data-sign="neg"]  { color: #e11d48; }
+        #moles-board-lock .lock-stats .stat-v[data-sign="zero"] { color: #b1bad3; }
+
+        #moles-board-lock .lock-tally {
+            color: var(--hud-muted); font-size: 12px; font-weight: 800;
+            letter-spacing: 0.5px; text-transform: uppercase;
+            font-family: "Courier New", monospace;
+            margin: 12px 0 8px;
+            padding: 10px 14px;
+            background: rgba(6, 16, 31, 0.45);
+            border-radius: 10px;
+            border: 1px solid rgba(76, 203, 255, 0.10);
+        }
+        #moles-board-lock .lock-tally [data-tally-w]    { color: var(--hud-green, #1A7CFF); }
+        #moles-board-lock .lock-tally [data-tally-l]    { color: var(--hud-red, #e11d48); }
+        #moles-board-lock .lock-tally [data-tally-best] { color: #ffd84a; }
+
+        #moles-board-lock .lock-spark {
+            display: block; width: 100%; height: 240px;
+            background: rgba(6, 16, 31, 0.65);
+            border: 1px solid rgba(76, 203, 255, 0.15);
+            border-radius: 12px;
+            margin: 8px 0 12px;
+            image-rendering: pixelated;
+            box-shadow: inset 0 2px 8px rgba(0, 0, 0, 0.4);
+        }
+        #moles-board-lock .lock-actions {
+            display: flex; gap: 10px; justify-content: center; margin: 16px 0 0;
+        }
+        #moles-board-lock .lock-btn {
+            background: rgba(20, 74, 122, 0.6);
+            color: var(--hud-cyan);
+            border: 1px solid rgba(76, 203, 255, 0.30);
+            padding: 8px 16px;
+            border-radius: 8px;
+            font-family: "Courier New", monospace;
+            font-size: 11px; font-weight: 800;
+            letter-spacing: 0.5px;
+            text-transform: uppercase;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+        #moles-board-lock .lock-btn:hover {
+            background: rgba(26, 124, 255, 0.25);
+            color: #fff;
+            border-color: rgba(76, 203, 255, 0.50);
+            box-shadow: 0 0 12px rgba(26, 124, 255, 0.3);
+        }
+        #moles-board-lock .lock-btn[data-on="0"] { opacity: 0.45; }
+
+        #moles-board-lock .lock-settings {
+            margin-top: 16px;
+            padding: 16px;
+            background: rgba(6, 16, 31, 0.75);
+            border: 1px solid rgba(76, 203, 255, 0.20);
+            border-radius: 12px;
+            box-shadow: inset 0 2px 8px rgba(0, 0, 0, 0.4);
+        }
+        #moles-board-lock .lock-settings-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 12px;
+            padding-bottom: 8px;
+            border-bottom: 1px solid rgba(76, 203, 255, 0.15);
+        }
+        #moles-board-lock .lock-settings-title {
+            color: var(--hud-cyan);
+            font-size: 12px;
+            font-weight: 900;
+            letter-spacing: 0.8px;
+            text-transform: uppercase;
+        }
+        #moles-board-lock .lock-settings-close {
+            background: transparent;
+            border: none;
+            color: var(--hud-muted);
+            font-size: 18px;
+            font-weight: 900;
+            cursor: pointer;
+            padding: 0;
+            width: 24px;
+            height: 24px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 4px;
+            transition: all 0.2s ease;
+        }
+        #moles-board-lock .lock-settings-close:hover {
+            color: #fff;
+            background: rgba(225, 29, 72, 0.25);
+        }
+        #moles-board-lock .lock-settings-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px 12px;
+        }
+        #moles-board-lock .lock-setting-row {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+        #moles-board-lock .lock-setting-row label {
+            color: var(--hud-muted);
+            font-size: 10px;
+            font-weight: 800;
+            text-transform: uppercase;
+            letter-spacing: 0.4px;
+        }
+        #moles-board-lock .lock-setting-row input {
+            background: rgba(10, 26, 47, 0.8);
+            border: 1px solid rgba(76, 203, 255, 0.25);
+            color: #fff;
+            padding: 6px 8px;
+            border-radius: 6px;
+            font-size: 12px;
+            font-weight: 700;
+            text-align: center;
+            outline: none;
+            width: 100%;
+            transition: border-color 0.2s ease, box-shadow 0.2s ease;
+        }
+        html[data-moles-active] .game-sidebar {
+            position: relative !important;
+            z-index: 300 !important;
+            min-width: 300px !important;
+            width: 300px !important;
+            flex-shrink: 0 !important;
+            min-height: 380px !important;
+            max-height: 520px !important;
+            height: 520px !important;
+            overflow: hidden !important;
+        }
+        #moles-board-lock .lock-setting-row input:focus {
+            border-color: var(--hud-green);
+            box-shadow: 0 0 0 2px rgba(26, 124, 255, 0.15);
+        }
+        #moles-board-lock .hud-volume-group {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            padding: 8px 12px;
+            background: rgba(6, 16, 31, 0.65);
+            border-radius: 10px;
+            border: 1px solid rgba(76, 203, 255, 0.15);
+        }
+        #moles-board-lock .hud-volume-group label {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            color: var(--hud-muted);
+            font-size: 10px;
+            font-weight: 800;
+            text-transform: uppercase;
+            letter-spacing: 0.4px;
+        }
+        #moles-board-lock .hud-volume-group label span:last-child {
+            color: #1A7CFF;
+            font-family: "Roboto Mono", monospace;
+            font-weight: 700;
+        }
+        #moles-board-lock .hud-volume-group input[type="range"] {
+            accent-color: #1A7CFF;
+            cursor: pointer;
+            width: 100%;
+        }
+    `);
+
+    console.log('%c[Moles]', 'color:#1A7CFF;font-weight:700', 'userscript loaded v0.5 on', location.href);
+
+    /* =========================================================
+    Config (persisted)
+    ========================================================= */
+    const LS_KEY = 'moles_autoplay_cfg_v4';
+    const defaults = {
+        mode: 'dom',
+        rounds: 0,
+        picksPerRound: 1,
+        minDelayMs: 600,
+        maxDelayMs: 1200,
+        currency: 'sweeps',
+        amount: 0.02,
+        molesCount: 3,
+        apiDelayMs: 0,
+        concurrency: 1,
+        stopWin: 0,
+        stopLoss: 0,
+        onWinPct: 0,
+        onLossPct: 0,
+        resetOnWin: false,
+        resetOnLoss: false,
+        audio: true,
+        turbo: false,
+    };
+    const cfg = Object.assign({}, defaults, JSON.parse(localStorage.getItem(LS_KEY) || '{}'));
+    const saveCfg = () => localStorage.setItem(LS_KEY, JSON.stringify(cfg));
+
+    let molesVolume = parseInt(localStorage.getItem('moles_volume') || '80', 10);
+    if (isNaN(molesVolume) || molesVolume < 0) molesVolume = 80;
+
+    /* =========================================================
+    Helpers
+    ========================================================= */
+    const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+    const jitter = () => cfg.minDelayMs + Math.random() * (cfg.maxDelayMs - cfg.minDelayMs);
+    const $ = (sel, root = document) => root.querySelector(sel);
+    const log = (...a) => console.log('%c[Moles]', 'color:#1A7CFF;font-weight:700', ...a);
+
+    async function waitFor(sel, predicate = () => true, timeoutMs = 30000) {
+        const start = Date.now();
+        while (Date.now() - start < timeoutMs) {
+            const el = $(sel);
+            if (el && predicate(el)) return el;
+            if (!state.running) throw new Error('stopped');
+            await sleep(120);
+        }
+        throw new Error('waitFor timeout: ' + sel);
+    }
+
+    function realClick(el) {
+        // Tampermonkey wraps `window` in a Proxy in some browsers, which
+        // PointerEvent/MouseEvent reject when passed as `view`. Use
+        // unsafeWindow if available, otherwise omit `view` entirely —
+        // it's optional and the dispatched events still trigger handlers.
+        const win = (typeof unsafeWindow !== 'undefined') ? unsafeWindow : null;
+        const base = { bubbles: true, cancelable: true, composed: true, button: 0 };
+        const opts = win ? Object.assign({}, base, { view: win }) : base;
+        // pointer/mouse events: wrap in try so one bad event type doesn't
+        // kill the whole click sequence.
+        const fire = (Ctor, type) => {
+            try { el.dispatchEvent(new Ctor(type, opts)); }
+            catch (e) { try { el.dispatchEvent(new Ctor(type, base)); } catch (e2) {} }
+        };
+        fire(PointerEvent, 'pointerdown');
+        fire(MouseEvent,   'mousedown');
+        fire(PointerEvent, 'pointerup');
+        fire(MouseEvent,   'mouseup');
+        fire(MouseEvent,   'click');
+    }
+
+    const isEnabled = (el) => el && !el.disabled && el.getAttribute('aria-disabled') !== 'true';
+    const isOnMolesPage = () => /\/casino\/games\/moles(?:\/|$|\?|#)/i.test(location.pathname);
+
+    /* =========================================================
+    Board lock overlay
+    ========================================================= */
+    function lockGameSidebar() {
+        const sidebar = document.querySelector('.game-sidebar');
+        if (!sidebar) return;
+        sidebar.style.position = 'relative';
+        sidebar.style.zIndex = '300';
+        sidebar.style.minWidth = '300px';
+        sidebar.style.width = '300px';
+        sidebar.style.flexShrink = '0';
+        sidebar.style.minHeight = 'calc(100vh - 60px)';
+        sidebar.style.overflow = 'hidden';
+    }
+
+    const HOLE_POSITIONS = [
+        { left: 19.8, top: 8.5 },
+        { left: 58.2, top: 8.5 },
+        { left: 3.5,  top: 37.5 },
+        { left: 39.0, top: 37.5 },
+        { left: 74.5, top: 37.5 },
+        { left: 19.8, top: 67.0 },
+        { left: 58.2, top: 67.0 },
+    ];
+
+    function setupResizeObserver() {
+        if (resizeObserver) return;
+        const gameContainer = document.querySelector('[data-testid="game-moles"]');
+        if (!gameContainer) return;
+        resizeObserver = new ResizeObserver(() => {
+            if (resizeDebounceTimer) clearTimeout(resizeDebounceTimer);
+            resizeDebounceTimer = setTimeout(() => {
+                const lock = document.getElementById('moles-board-lock');
+                if (!lock) return;
+                lock.querySelectorAll('.lock-hole').forEach((hole, i) => {
+                    if (HOLE_POSITIONS[i]) {
+                        hole.style.left = HOLE_POSITIONS[i].left + '%';
+                        hole.style.top  = HOLE_POSITIONS[i].top  + '%';
+                    }
+                });
+                if (state.running && typeof updateLockVisuals === 'function') {
+                    updateLockVisuals();
+                }
+            }, 100);
+        });
+        resizeObserver.observe(gameContainer);
+    }
+
+    function updateLockVisuals() {
+        const lock = document.getElementById('moles-board-lock');
+        if (!lock) return;
+    }
+
+    function lockBoard(active = true) {
+        let lock = document.getElementById('moles-board-lock');
+        const gameContainer = document.querySelector('[data-testid="game-moles"]');
+
+        if (!gameContainer) {
+            console.warn('[Moles] Could not find game-moles container for overlay');
+            return;
+        }
+        if (getComputedStyle(gameContainer).position === 'static') {
+            gameContainer.style.position = 'relative';
+        }
+
+        if (!lock) {
+            lock = document.createElement('div');
+            lock.id = 'moles-board-lock';
+            gameContainer.appendChild(lock);
+        }
+
+        lock.classList.remove('idle');
+        lock.style.background = '';
+        lock.style.backdropFilter = '';
+        lock.style.opacity = '1';
+        lock.style.pointerEvents = 'none';
+
+        if (!lock.querySelector('.lock-holes')) {
+            let rowHtml = '';
+            for (let i = 0; i < HOLE_POSITIONS.length; i++) {
+                const p = HOLE_POSITIONS[i];
+                rowHtml += `<div class="lock-hole" data-hole="${i}" style="left:${p.left}%;top:${p.top}%;">${moleSprite()}${dirtSprite()}</div>`;
+            }
+            rowHtml += `<div class="lock-pip" data-lock-pip><span class="pip-icon"></span><span class="pip-text"></span></div>`;
+
+            const statsHtml = `
+                <div class="lock-stats" data-lock-stats>
+                    <div class="stat-row"><span class="stat-k">Wagered</span><span class="stat-v" data-st-wager>0.00</span></div>
+                    <div class="stat-row"><span class="stat-k">P/L</span><span class="stat-v" data-st-pnl>0.00</span></div>
+                    <div class="stat-row"><span class="stat-k">Win rate</span><span class="stat-v" data-st-wr>—</span></div>
+                    <div class="stat-row"><span class="stat-k">Avg mult</span><span class="stat-v" data-st-avg>—</span></div>
+                    <div class="stat-row"><span class="stat-k">Biggest hit</span><span class="stat-v" data-st-big>0.00</span></div>
+                    <div class="stat-row" style="grid-column:1/-1"><span class="stat-k">Balance Δ</span><span class="stat-v" data-st-bal>—</span></div>
+                </div>
+            `;
+            lock.innerHTML = `
+                <div class="lock-topbar">
+                    <div class="lock-badge">Autoplay <span data-lock-sub>idle</span></div>
+                    <div class="lock-topstats">
+                        <span class="ts-cell"><span class="ts-k">W</span><span class="ts-v" data-tally-w>0</span></span>
+                        <span class="ts-cell"><span class="ts-k">L</span><span class="ts-v" data-tally-l>0</span></span>
+                        <span class="ts-cell"><span class="ts-k">Best</span><span class="ts-v" data-tally-best>0.00×</span></span>
+                        <span class="ts-cell"><span class="ts-k">P/L</span><span class="ts-v" data-st-pnl-top>0.00</span></span>
+                        <span class="ts-cell"><span class="ts-k">RTP</span><span class="ts-v" data-st-rtp-top>—</span></span>
+                    </div>
+                </div>
+                <div class="lock-stage">
+                    <div class="lock-holes" data-lock-row>${rowHtml}</div>
+                    <div class="lock-next-mult" data-lock-mult>0.00×</div>
+                </div>
+                <div class="lock-side">
+                    ${statsHtml}
+                    <canvas class="lock-spark" data-lock-spark width="280" height="240"></canvas>
+                    <div class="lock-history" data-lock-history></div>
+                    <div class="lock-actions">
+                        <button class="lock-btn" data-act="export-csv" type="button">Export CSV</button>
+                        <button class="lock-btn" data-act="toggle-audio" type="button" data-on="1">🔊 Audio</button>
+                    </div>
+                </div>
+            `;
+            ['click', 'pointerdown', 'mousedown', 'mouseup'].forEach(ev =>
+                lock.addEventListener(ev, e => {
+                    if (e.target.closest('.lock-side')) return;
+                    e.stopPropagation();
+                    e.preventDefault();
+                })
+            );
+        }
+
+        setupResizeObserver();
+        addVolumeControlToPanel();
+        if (active && !gridRafId) startGridRenderer();
+    }
+
+    function pixelSvg(grid, palette) {
+        let rects = '';
+        for (let y = 0; y < 8; y++) {
+            for (let x = 0; x < 8; x++) {
+                const c = grid[y * 8 + x];
+                if (c === ' ' || c === '.') continue;
+                const fill = palette[c];
+                if (!fill) continue;
+                rects += `<rect x="${x}" y="${y}" width="1" height="1" fill="${fill}"/>`;
+            }
+        }
+        return `<svg viewBox="0 0 8 8" xmlns="http://www.w3.org/2000/svg" shape-rendering="crispEdges">${rects}</svg>`;
+    }
+    function moleSprite() {
+        const grid =
+            '..BBBB..' +
+            '.BBBBBB.' +
+            'BWBBBBWB' +
+            'BBKBBKBB' +
+            'BBBPPBBB' +
+            'BBBPPBBB' +
+            '.BBBBBB.' +
+            '..BBBB..';
+        const palette = { B: '#c08850', W: '#ffffff', K: '#0b0e17', P: '#ff8aa8' };
+        return `<span class="px-sprite px-mole">${pixelSvg(grid, palette)}</span>`;
+    }
+    function dirtSprite() {
+        // 8x8 dirt hole: dark ellipse with rim.
+        const grid =
+            '..DDDD..' +
+            '.DKKKKD.' +
+            'DKKKKKKD' +
+            'DKKKKKKD' +
+            'DKKKKKKD' +
+            'DKKKKKKD' +
+            '.DKKKKD.' +
+            '..DDDD..';
+        const palette = { D: '#4a3018', K: '#0b0e17' };
+        return `<span class="px-sprite px-dirt">${pixelSvg(grid, palette)}</span>`;
+    }
+    function unlockBoard() {
+        const lock = document.getElementById('moles-board-lock');
+        if (lock) lock.classList.add('idle');
+    }
+    function updateLockSub(text) {
+        const sub = document.querySelector('#moles-board-lock [data-lock-sub]');
+        if (sub) sub.textContent = text;
+    }
+
+    /* =========================================================
+    Grid renderer — rAF-driven, repaints only on round change.
+    This decouples paint cost from API throughput: at 25 rounds/s
+    we still only repaint at most ~60Hz, and most of those ticks
+    are a no-op cmp.
+    ========================================================= */
+    let gridRafId = 0;
+    let resizeObserver = null;
+    let resizeDebounceTimer = null;
+    let renderedGameId = -1;
+    let holeEls = null;
+    let historyEl = null;
+    let multEl = null;
+    let subEl = null;
+    let wEl = null, lEl = null, bestEl = null;
+    let statsEls = null;
+    let balanceStartedAt = null;
+
+    function readPageBalance() {
+        const candidates = [
+            '[data-testid="header-balance-button"] [data-testid="header-balance"]',
+            '[data-testid="header-balance"]',
+            '[data-testid="wallet-amount"]',
+            'header [data-test="balance"]',
+        ];
+        for (const sel of candidates) {
+            const el = document.querySelector(sel);
+            if (el) {
+                const num = parseFloat((el.textContent || '').replace(/[^0-9.\-]/g, ''));
+                if (!Number.isNaN(num)) return num;
+            }
+        }
+        const header = document.querySelector('header') || document.body;
+        const re = /(?:^|\s)(\d+(?:\.\d+)?)(?:\s|$)/g;
+        let best = null;
+        for (const m of (header.textContent || '').matchAll(re)) {
+            const n = parseFloat(m[1]);
+            if (best == null || n > best) best = n;
+        }
+        return best;
+    }
+
+    let sparkCanvas = null, sparkCtx = null;
+    function startGridRenderer() {
+        renderedGameId = -1;
+        const root = document.getElementById('moles-board-lock');
+        sparkCanvas = root.querySelector('[data-lock-spark]');
+        sparkCtx = sparkCanvas ? sparkCanvas.getContext('2d') : null;
+        const exportBtn = root.querySelector('[data-act="export-csv"]');
+        if (exportBtn) exportBtn.addEventListener('click', exportCsv);
+        const audioBtn = root.querySelector('[data-act="toggle-audio"]');
+        if (audioBtn) {
+            audioBtn.dataset.on = cfg.audio === false ? '0' : '1';
+            audioBtn.textContent = cfg.audio === false ? '🔇 Audio' : '🔊 Audio';
+            audioBtn.addEventListener('click', () => {
+                cfg.audio = cfg.audio === false;
+                saveCfg();
+                audioBtn.dataset.on = cfg.audio === false ? '0' : '1';
+                audioBtn.textContent = cfg.audio === false ? '🔇 Audio' : '🔊 Audio';
+            });
+        }
+        holeEls = Array.from(root.querySelectorAll('.lock-hole'));
+        historyEl = root.querySelector('[data-lock-history]');
+        multEl = root.querySelector('[data-lock-mult]');
+        subEl = root.querySelector('[data-lock-sub]');
+        wEl = root.querySelector('[data-tally-w]');
+        lEl = root.querySelector('[data-tally-l]');
+        bestEl = root.querySelector('[data-tally-best]');
+        statsEls = {
+            wager: root.querySelector('[data-st-wager]'),
+            ret: root.querySelector('[data-st-return]'),
+            pnl: root.querySelector('[data-st-pnl]'),
+            rtp: root.querySelector('[data-st-rtp]'),
+            wr: root.querySelector('[data-st-wr]'),
+            avg: root.querySelector('[data-st-avg]'),
+            big: root.querySelector('[data-st-big]'),
+            bal: root.querySelector('[data-st-bal]'),
+            next: root.querySelector('[data-st-next]'),
+            pnlTop: root.querySelector('[data-st-pnl-top]'),
+            rtpTop: root.querySelector('[data-st-rtp-top]'),
+        };
+        const tick = () => {
+            if (reveal.gameId !== renderedGameId) {
+                renderedGameId = reveal.gameId;
+                paintRow(reveal.rounds, reveal.outcome);
+                paintHistory();
+                paintStats();
+                paintSparkline();
+                if (multEl) multEl.textContent = (reveal.mult || 0).toFixed(2) + '×';
+                if (multEl) multEl.className = 'lock-mult ' + (reveal.outcome === 'bust' ? 'bust' : reveal.outcome === 'win' ? 'win' : 'live');
+                if (subEl) subEl.textContent = subText();
+                if (wEl) wEl.textContent = reveal.wins;
+                if (lEl) lEl.textContent = reveal.losses;
+                if (bestEl) bestEl.textContent = reveal.bestMult.toFixed(2) + '×';
+            }
+            gridRafId = requestAnimationFrame(tick);
+        };
+        gridRafId = requestAnimationFrame(tick);
+    }
+
+    function fmtMoney(n) {
+        if (!Number.isFinite(n)) return '—';
+        const abs = Math.abs(n);
+        if (abs >= 1000) return n.toFixed(0);
+        if (abs >= 1) return n.toFixed(2);
+        return n.toFixed(4);
+    }
+    function paintStats() {
+        if (!statsEls) return;
+        const r = reveal;
+        const pnl = r.returned - r.wagered;
+        const games = r.wins + r.losses;
+        const rtp = r.wagered > 0 ? (r.returned / r.wagered) * 100 : null;
+        const wr = games > 0 ? (r.wins / games) * 100 : null;
+        const avg = r.wins > 0 ? (r.multSum / r.wins) : null;
+
+        if (statsEls.wager) statsEls.wager.textContent = fmtMoney(r.wagered);
+        if (statsEls.ret) statsEls.ret.textContent = fmtMoney(r.returned);
+        if (statsEls.pnl) {
+            statsEls.pnl.textContent = (pnl >= 0 ? '+' : '') + fmtMoney(pnl);
+            statsEls.pnl.dataset.sign = pnl > 0 ? 'pos' : pnl < 0 ? 'neg' : 'zero';
+        }
+        if (statsEls.pnlTop) {
+            statsEls.pnlTop.textContent = (pnl >= 0 ? '+' : '') + fmtMoney(pnl);
+            statsEls.pnlTop.dataset.sign = pnl > 0 ? 'pos' : pnl < 0 ? 'neg' : 'zero';
+        }
+        if (statsEls.rtpTop) statsEls.rtpTop.textContent = rtp == null ? '—' : rtp.toFixed(1) + '%';
+        if (statsEls.rtp) statsEls.rtp.textContent = rtp == null ? '—' : rtp.toFixed(1) + '%';
+        if (statsEls.wr) statsEls.wr.textContent = wr == null ? '—' : wr.toFixed(1) + '%';
+        if (statsEls.avg) statsEls.avg.textContent = avg == null ? '—' : avg.toFixed(2) + '×';
+        if (statsEls.big) statsEls.big.textContent = fmtMoney(r.biggestPayout);
+        if (statsEls.next) {
+            const nb = state.currentBet || state.baseBet || cfg.amount;
+            statsEls.next.textContent = fmtMoney(nb);
+            statsEls.next.dataset.sign = nb > state.baseBet ? 'neg' : nb < state.baseBet ? 'pos' : 'zero';
+        }
+
+        if (statsEls.bal) {
+            const now = readPageBalance();
+            if (balanceStartedAt != null && now != null) {
+                const d = now - balanceStartedAt;
+                statsEls.bal.textContent = (d >= 0 ? '+' : '') + fmtMoney(d);
+                statsEls.bal.dataset.sign = d > 0 ? 'pos' : d < 0 ? 'neg' : 'zero';
+            } else {
+                statsEls.bal.textContent = '—';
+            }
+        }
+    }
+    function stopGridRenderer() {
+        if (gridRafId) cancelAnimationFrame(gridRafId);
+        gridRafId = 0; holeEls = null;
+        sparkCanvas = null; sparkCtx = null;
+    }
+
+    function paintSparkline() {
+        if (!sparkCtx || !sparkCanvas) return;
+        const w = sparkCanvas.width, h = sparkCanvas.height;
+        sparkCtx.clearRect(0, 0, w, h);
+        const data = runLog;
+        if (!data.length) return;
+        const pad = 2;
+        const n = Math.min(data.length, 200);
+        const slice = data.slice(-n);
+        let lo = 0, hi = 0;
+        for (const r of slice) { if (r.pnl < lo) lo = r.pnl; if (r.pnl > hi) hi = r.pnl; }
+        if (hi === lo) { hi = lo + 1e-9; }
+        const xs = (i) => pad + (i * (w - 2*pad) / Math.max(1, n - 1));
+        const ys = (v) => h - pad - ((v - lo) / (hi - lo)) * (h - 2*pad);
+        if (lo < 0 && hi > 0) {
+            const zy = ys(0);
+            sparkCtx.strokeStyle = 'rgba(255,255,255,0.12)';
+            sparkCtx.setLineDash([3, 3]);
+            sparkCtx.beginPath(); sparkCtx.moveTo(0, zy); sparkCtx.lineTo(w, zy); sparkCtx.stroke();
+            sparkCtx.setLineDash([]);
+        }
+        sparkCtx.beginPath();
+        sparkCtx.moveTo(xs(0), ys(slice[0].pnl));
+        for (let i = 1; i < slice.length; i++) sparkCtx.lineTo(xs(i), ys(slice[i].pnl));
+        const endPnl = slice[slice.length - 1].pnl;
+        const color = endPnl >= 0 ? '#1A7CFF' : '#e11d48';
+        sparkCtx.strokeStyle = color;
+        sparkCtx.lineWidth = 1.5;
+        sparkCtx.stroke();
+        sparkCtx.lineTo(xs(slice.length - 1), h - pad);
+        sparkCtx.lineTo(xs(0), h - pad);
+        sparkCtx.closePath();
+        sparkCtx.fillStyle = endPnl >= 0 ? 'rgba(26,124,255,0.12)' : 'rgba(225,29,72,0.12)';
+        sparkCtx.fill();
+    }
+    function subText() {
+        const r = reveal.rounds.length;
+        const tag = reveal.outcome === 'win' ? 'CASHED' :
+                    reveal.outcome === 'bust' ? 'BUSTED' :
+                    reveal.outcome === 'live' ? 'LIVE' : reveal.outcome.toUpperCase();
+        return `row ${r} · ${tag}`;
+    }
+
+    const HOLE_POSITIONS_REF = [
+        { left: 19.45, top: 0 },
+        { left: 58.36, top: 0 },
+        { left: 0, top: 31.32 },
+        { left: 38.91, top: 31.32 },
+        { left: 77.81, top: 31.32 },
+        { left: 19.45, top: 62.63 },
+        { left: 58.36, top: 62.63 },
+    ];
+    const HOLE_W = 22.19;
+    function paintRow(rounds, outcome) {
+        if (!holeEls) return;
+        for (const h of holeEls) {
+            h.className = 'lock-hole';
+            const idx = parseInt(h.dataset.hole, 10);
+            const p = HOLE_POSITIONS_REF[idx];
+            if (p) { h.style.left = p.left + '%'; h.style.top = p.top + '%'; }
+        }
+        const pip = document.querySelector('#moles-board-lock [data-lock-pip]');
+        if (!pip) return;
+        if (!rounds.length) {
+            pip.classList.remove('show', 'win', 'bust');
+            return;
+        }
+        const last = rounds[rounds.length - 1];
+        const moles = new Set(last.molePositions || []);
+        for (let i = 0; i < holeEls.length; i++) {
+            const el = holeEls[i];
+            if (moles.has(i)) el.classList.add('revealed-mole');
+            if (i === last.pick) {
+                el.classList.add('picked');
+                el.classList.add(last.hit ? 'pick-hit' : 'pick-bust');
+            }
+        }
+        const p = HOLE_POSITIONS_REF[last.pick];
+        if (p) {
+            const centerX = p.left + HOLE_W / 2;
+            pip.style.left = centerX + '%';
+            pip.style.top = `calc(${p.top + HOLE_W}% + 20px)`;
+            pip.classList.remove('win', 'bust');
+            pip.classList.add(last.hit ? 'win' : 'bust');
+            const icon = pip.querySelector('.pip-icon');
+            const text = pip.querySelector('.pip-text');
+            if (last.hit) {
+                icon.textContent = '✓'; // ✓
+                text.textContent = (last.multiplier || 0).toFixed(2) + '×';
+            } else {
+                icon.textContent = '✕'; // ✕
+                text.textContent = 'BUST';
+            }
+            pip.classList.add('show');
+            pip.classList.remove('flash');
+            void pip.offsetWidth;
+            pip.classList.add('flash');
+        }
+    }
+
+    const HISTORY_MAX = 14;
+    const history = [];
+    let lastHistoryGameId = -1;
+    function paintHistory() {
+        if (!historyEl) return;
+        if (renderedGameId !== lastHistoryGameId &&
+            (reveal.outcome === 'win' || reveal.outcome === 'bust' || reveal.outcome === 'error')) {
+            history.push({ outcome: reveal.outcome, mult: reveal.mult, rows: reveal.rounds.length });
+            if (history.length > HISTORY_MAX) history.shift();
+            lastHistoryGameId = renderedGameId;
+        }
+        historyEl.innerHTML = history.map(h => {
+            const cls = h.outcome === 'win' ? 'win' : 'bust';
+            const label = h.outcome === 'win' ? h.mult.toFixed(2) + '×' : 'X';
+            return `<span class="hist-chip ${cls}">${label}</span>`;
+        }).join('');
+    }
+
+    /* =========================================================
+    DOM strategy
+    ========================================================= */
+    const SEL = {
+        bet: '[data-testid="bet-button"]',
+        cashout: '[data-testid="cashout-button"]',
+        random: '[data-testid="game-random-pick"]',
+    };
+
+    function findBetButton() {
+        return document.querySelector(SEL.bet)
+            || document.querySelector(SEL.cashout)
+            || null;
+    }
+
+    async function waitForBet(predicate, timeoutMs = 15000) {
+        const start = Date.now();
+        while (Date.now() - start < timeoutMs) {
+            const el = findBetButton();
+            if (el && predicate(el)) return el;
+            if (!state.running) throw new Error('stopped');
+            await sleep(120);
+        }
+        throw new Error('waitFor timeout: bet-button');
+    }
+
+    /* ---- DOM-mode helpers so the martingale + stop conditions work the same
+       as they do in API mode: the game's bet field is driven from
+       state.currentBet, and each round's outcome is fed back through
+       publishReveal / applyOutcomeToBet / checkStopConditions. ---- */
+    function molesGameAmtInput() {
+        return document.querySelector('[data-testid="input-game-amount"]') ||
+               document.querySelector('[data-testid="game-amount"]');
+    }
+    function setMolesGameAmount(val) {
+        const el = molesGameAmtInput();
+        if (!el || !isFiniteNum(val)) return;
+        const proto = (typeof unsafeWindow !== 'undefined' ? unsafeWindow : window).HTMLInputElement.prototype;
+        const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set ||
+                       Object.getOwnPropertyDescriptor(proto, 'value')?.set;
+        const str = String(Number(Number(val).toPrecision(8)));
+        if (setter) setter.call(el, str); else el.value = str;
+        el.dispatchEvent(new Event('input',  { bubbles: true }));
+        el.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+    function isFiniteNum(n) { return typeof n === 'number' && isFinite(n); }
+    /** The current payout multiplier, from the profit field or cashout label.
+     *  `btn` is the resolved cashout element (its label may hold the "N×"), but
+     *  the "Cashout" control is sometimes the bet-button itself, so we also fall
+     *  back to the profit field and a scan of both known buttons. */
+    function readMolesMult(btn) {
+        const p = document.querySelector('[data-testid="profit-input"]');
+        if (p && p.value) { const n = parseFloat(p.value); if (Number.isFinite(n) && n > 0) return n; }
+        const readX = (el) => { const m = el && (el.textContent || '').match(/([\d.]+)\s*[×xX]/); return m ? parseFloat(m[1]) : 0; };
+        return readX(btn) || readX(document.querySelector(SEL.cashout)) || readX(document.querySelector(SEL.bet)) || 0;
+    }
+
+    /** Play one round via the page UI. Returns 'win' | 'bust' | null (aborted),
+     *  and reports the money so the strategy + stops react like API mode. */
+    async function domRound() {
+        // Drive the bet from the tool's running bet so martingale takes effect;
+        // fall back to the tool's base bet if nothing is set yet.
+        const wager = state.currentBet || cfg.amount || 0;
+        if (wager > 0) setMolesGameAmount(wager);
+
+        // Wait until the bet button is enabled AND shows "Play" — the
+        // label flips between "Play" (no active round) and "Cashout"
+        // (active round, click to bail). If we just check `isEnabled`
+        // we'd happily click a leftover Cashout, which actually starts
+        // a new round in some states. Reading the label fixes that.
+        const bet = await waitForBet((el) =>
+            isEnabled(el) && /play/i.test(el.textContent || ''), 15000);
+        log('Play');
+        realClick(bet);
+
+        for (let i = 0; i < cfg.picksPerRound; i++) {
+            // After the first pick a mole can end the round at any moment,
+            // permanently disabling Random Pick — blind-waiting on it froze the
+            // loop for the full 30s timeout and the bust was never recorded:
+            // the round didn't count, martingale didn't step, stop-loss never
+            // checked, and the next lap just bet again. So from pick 2 on,
+            // watch for the round ending (bet button back to an enabled
+            // "Play") as well as the next pick arming, and score the bust the
+            // moment it shows. Pick 1 can't be preceded by a bust, and right
+            // after our own Play click the button can still briefly read
+            // "Play", so the round-over check is skipped there.
+            let rand = null;
+            const waitStart = Date.now();
+            while (Date.now() - waitStart < 30000) {
+                const r = document.querySelector(SEL.random);
+                if (r && isEnabled(r)) { rand = r; break; }
+                if (i > 0) {
+                    const over = findBetButton();
+                    if (over && isEnabled(over) && /play/i.test(over.textContent || '')) {
+                        log('Bust — mole hit on pick', i);
+                        publishReveal(lastDomRound ? [lastDomRound] : [], 'bust', 0, { wager, payout: 0, currency: cfg.currency });
+                        return 'bust';
+                    }
+                }
+                if (!state.running) return null;
+                await sleep(120);
+            }
+            if (!rand) throw new Error('waitFor timeout: ' + SEL.random);
+            await sleep(jitter());
+            if (!state.running) return null;
+            updateLockSub(`round ${state.count + 1} · pick ${i + 1}/${cfg.picksPerRound}`);
+            log('Random Pick', i + 1);
+            realClick(rand);
+        }
+
+        await sleep(jitter());
+        const end = await waitForBet((el) => {
+            if (!isEnabled(el)) return false;
+            const txt = (el.textContent || '').toLowerCase();
+            return /cashout|play/.test(txt);
+        }, 15000).catch(() => null);
+
+        if (!end) {
+            log('Round end timeout — assuming bust');
+            publishReveal(lastDomRound ? [lastDomRound] : [], 'bust', 0, { wager, payout: 0, currency: cfg.currency });
+            return 'bust';
+        }
+        const label = (end.textContent || '').toLowerCase();
+        if (/cashout/.test(label)) {
+            const mult = readMolesMult(end);            // read BEFORE clicking; the label clears after
+            log('Cashout', mult);
+            realClick(end);
+            publishReveal(lastDomRound ? [lastDomRound] : [], 'win', mult, { wager, payout: wager * (mult || 0), currency: cfg.currency });
+            return 'win';
+        }
+        // Label is "Play" — the round busted. Don't click; otherwise we'd fire
+        // a brand-new bet inside this round and double-up next iteration.
+        log('Bust — round over');
+        publishReveal(lastDomRound ? [lastDomRound] : [], 'bust', 0, { wager, payout: 0, currency: cfg.currency });
+        return 'bust';
+    }
+
+    /* =========================================================
+    API strategy — reuses page cookies; sniffs rotating tokens
+    from real requests the page makes.
+    ========================================================= */
+    let sniffedLockdown = null;
+    let sniffedAccess = null;
+
+    function readSessionCookie() {
+        const m = document.cookie.match(/(?:^|;\s*)session=([^;]+)/);
+        return m ? decodeURIComponent(m[1]) : null;
+    }
+    let _cachedHdrs = null;
+    function buildHeaders() {
+        if (!_cachedHdrs || _cachedHdrs['x-access-token'] !== sniffedAccess ||
+            _cachedHdrs['x-lockdown-token'] !== (sniffedLockdown || undefined)) {
+            _cachedHdrs = {
+                'content-type': 'application/json',
+                'x-access-token': sniffedAccess,
+                'x-language': 'en',
+            };
+            if (sniffedLockdown) _cachedHdrs['x-lockdown-token'] = sniffedLockdown;
+        }
+        return _cachedHdrs;
+    }
+    function refreshAccessFromCookie() {
+        const s = readSessionCookie();
+        if (s && s !== sniffedAccess) { sniffedAccess = s; _cachedHdrs = null; }
+    }
+    refreshAccessFromCookie();
+    setInterval(refreshAccessFromCookie, 3000);
+
+    function installFetchSniffer(target, label) {
+        if (!target || !target.fetch || target.__moles_fetch_patched) return;
+        const orig = target.fetch;
+        target.fetch = function (input, init) {
+            try {
+                const headers = (init && init.headers) || {};
+                const get = (k) => (headers instanceof Headers
+                    ? headers.get(k)
+                    : headers[k] || headers[k.toLowerCase()]);
+                const ld = get('x-lockdown-token'); if (ld) sniffedLockdown = ld;
+                const at = get('x-access-token');   if (at) sniffedAccess   = at;
+            } catch (e) {}
+            return orig.apply(this, arguments);
+        };
+        target.__moles_fetch_patched = true;
+        console.log('%c[Moles]', 'color:#1A7CFF;font-weight:700', 'fetch sniffer installed on', label);
+    }
+    installFetchSniffer(window, 'window');
+    if (typeof unsafeWindow !== 'undefined' && unsafeWindow !== window) {
+        installFetchSniffer(unsafeWindow, 'unsafeWindow');
+    }
+
+    (function installXhrSniffer() {
+        const targets = [window.XMLHttpRequest && window.XMLHttpRequest.prototype];
+        if (typeof unsafeWindow !== 'undefined' && unsafeWindow.XMLHttpRequest &&
+            unsafeWindow.XMLHttpRequest.prototype !== window.XMLHttpRequest?.prototype) {
+            targets.push(unsafeWindow.XMLHttpRequest.prototype);
+        }
+        targets.filter(Boolean).forEach((proto) => {
+            if (proto.__moles_xhr_patched) return;
+            const origSet = proto.setRequestHeader;
+            proto.setRequestHeader = function (name, value) {
+                try {
+                    const lc = String(name).toLowerCase();
+                    if (lc === 'x-lockdown-token' && value) sniffedLockdown = value;
+                    if (lc === 'x-access-token'   && value) sniffedAccess   = value;
+                } catch (e) {}
+                return origSet.apply(this, arguments);
+            };
+            proto.__moles_xhr_patched = true;
+        });
+    })();
+
+    function nanoid(n = 21) {
+        const a = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-';
+        let s = ''; for (let i = 0; i < n; i++) s += a[Math.floor(Math.random() * a.length)];
+        return s;
+    }
+
+    function detectCurrency() {
+        const m = document.cookie.match(/(?:^|;\s*)currency_currency=([^;]+)/);
+        if (m) return decodeURIComponent(m[1]);
+        const sel = document.querySelector('[data-testid*="currency" i], [data-test*="currency" i]');
+        if (sel) {
+            const txt = (sel.textContent || '').trim().toLowerCase();
+            if (txt && txt.length <= 8) return txt;
+        }
+        return null;
+    }
+    function syncCurrency() {
+        const c = detectCurrency();
+        if (c && c !== cfg.currency) {
+            cfg.currency = c;
+            saveCfg();
+            const inp = document.querySelector('#moles-master-container [data-k="currency"]');
+            if (inp && document.activeElement !== inp) inp.value = c;
+        }
+    }
+
+    async function prewarmConnection() {
+        try {
+            await fetch(location.origin + '/_api/casino/moles/bet', {
+                method: 'OPTIONS',
+                credentials: 'include',
+                keepalive: true,
+            });
+        } catch (e) { /* expected; we don't care about the response */ }
+    }
+
+    let lastFetchObserved = performance.now();
+
+    const rateLimiter = {
+        recent429: [],
+        backoffUntil: 0,
+        scale: 1.0,
+        note429() {
+            const now = performance.now();
+            this.recent429.push(now);
+            while (this.recent429.length && this.recent429[0] < now - 5000) this.recent429.shift();
+            if (this.recent429.length >= 2) {
+                this.scale = Math.max(0.25, this.scale * 0.5);
+                this.backoffUntil = now + 10000;
+            }
+        },
+        adaptiveSleep() {
+            const now = performance.now();
+            if (now < this.backoffUntil) return 250 + Math.random() * 250;
+            if (this.scale < 1) this.scale = Math.min(1, this.scale + 0.05);
+            return 0;
+        },
+        effectiveConcurrency(target) {
+            return Math.max(1, target);
+        },
+    };
+
+    function beep(pattern = 'win') {
+        try {
+            const AC = window.AudioContext || window.webkitAudioContext;
+            const ctx = new AC();
+            const now = ctx.currentTime;
+            const baseGain = molesVolume / 100;
+            const notes = pattern === 'win' ? [880, 1320, 1760]
+                    : pattern === 'bust' ? [440, 220]
+                    : pattern === 'hit' ? [523.25, 659.25, 783.99]
+                    : [660];
+            notes.forEach((freq, i) => {
+                const o = ctx.createOscillator();
+                const g = ctx.createGain();
+                o.type = 'square';
+                o.frequency.value = freq;
+                g.gain.setValueAtTime(0.0001 * baseGain, now + i * 0.12);
+                g.gain.exponentialRampToValueAtTime(0.18 * baseGain, now + i * 0.12 + 0.01);
+                g.gain.exponentialRampToValueAtTime(0.0001 * baseGain, now + i * 0.12 + 0.10);
+                o.connect(g); g.connect(ctx.destination);
+                o.start(now + i * 0.12); o.stop(now + i * 0.12 + 0.12);
+            });
+            setTimeout(() => ctx.close(), notes.length * 130 + 200);
+        } catch (e) {}
+    }
+
+    function addVolumeControlToPanel() {
+        const lockSide = document.querySelector('#moles-board-lock .lock-side');
+        if (!lockSide || lockSide.querySelector('.hud-volume-group')) return;
+        const volHTML = `
+            <div class="hud-volume-group">
+                <label>
+                    <span>🔊 VOLUME</span>
+                    <span id="moles-vol-val">${molesVolume}</span>
+                </label>
+                <input type="range" id="moles-vol-slider" min="0" max="100" value="${molesVolume}">
+            </div>
+        `;
+        const statsSection = lockSide.querySelector('.lock-stats') || lockSide;
+        statsSection.insertAdjacentHTML('afterend', volHTML);
+        const slider = document.getElementById('moles-vol-slider');
+        const valDisplay = document.getElementById('moles-vol-val');
+        if (slider) {
+            slider.addEventListener('input', () => {
+                molesVolume = parseInt(slider.value, 10);
+                if (valDisplay) valDisplay.textContent = molesVolume;
+                localStorage.setItem('moles_volume', molesVolume);
+            });
+        }
+    }
+
+    function exportCsv() {
+        if (!runLog.length) { log('runLog empty'); return; }
+        const head = 'iso,wager,payout,multiplier,outcome,pnl,rows';
+        const rows = runLog.map(r =>
+            new Date(r.t).toISOString() + ',' +
+            r.wager + ',' + r.payout + ',' + r.mult + ',' +
+            r.outcome + ',' + r.pnl + ',' + r.rows
+        );
+        const blob = new Blob([head + '\n' + rows.join('\n')], { type: 'text/csv' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `moles-autoplay-${location.host}-${new Date().toISOString().replace(/[:.]/g,'-')}.csv`;
+        document.body.appendChild(a); a.click(); a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 5000);
+    }
+
+    async function apiCall(op, body) {
+        if (!sniffedAccess) {
+            throw new Error('No session cookie found — are you logged in?');
+        }
+        const r = await fetch(location.origin + '/_api/casino/moles/' + op, {
+            method: 'POST',
+            credentials: 'include',
+            keepalive: true,
+            headers: buildHeaders(),
+            body: JSON.stringify(body),
+        });
+        lastFetchObserved = performance.now();
+        if (r.status === 429) {
+            rateLimiter.note429();
+            throw new Error(op + ' 429');
+        }
+        if (!r.ok) throw new Error(op + ' ' + r.status);
+        return r.json();
+    }
+
+    function apiIsReady() {
+        return !!sniffedAccess;
+    }
+    function apiReadyLabel() {
+        if (!apiIsReady()) {
+            return 'REST · no session cookie — log in on ' + location.host;
+        }
+        const idleMs = performance.now() - lastFetchObserved;
+        if (state.running && idleMs > 90000) {
+            return 'REST · STALE? no traffic in ' + Math.round(idleMs / 1000) + 's — click anywhere';
+        }
+        let bits = 'REST · ready · ' + location.host + ' · ' + (cfg.currency || '?');
+        if (rateLimiter.scale < 1) bits += ' · 429-backoff x' + rateLimiter.scale.toFixed(2);
+        return bits;
+    }
+
+    async function apiRound() {
+        const HOLES_PER_ROW = 7;
+        const t0 = performance.now();
+        const identifier = nanoid();
+
+        const stakeAmount = state.currentBet || cfg.amount;
+        const betRes = await apiCall('bet', {
+            currency: cfg.currency,
+            amount: stakeAmount,
+            molesCount: cfg.molesCount,
+            identifier,
+        });
+
+        const wagerAmt = betRes?.molesBet?.amount ?? stakeAmount;
+        const wagerCcy = betRes?.molesBet?.currency ?? cfg.currency;
+        let rounds = betRes?.molesBet?.state?.rounds || [];
+        // The wager is counted once, at win/bust below. Counting it here too
+        // (non-turbo only) doubled reveal.wagered — understating P/L by a bet
+        // per round and tripping the stop conditions at the wrong thresholds.
+        if (!cfg.turbo) publishReveal(rounds, 'pending', 0, { currency: wagerCcy });
+
+        for (let i = 0; i < cfg.picksPerRound; i++) {
+            if (!state.running) { if (!cfg.turbo) publishReveal(rounds, 'stopped', 0); return performance.now() - t0; }
+
+            const pick = Math.floor(Math.random() * HOLES_PER_ROW);
+            const res = await apiCall('next', { pick })
+                .catch(e => { log('pick err', e.message); return null; });
+            if (!res) {
+                if (!cfg.turbo) publishReveal(rounds, 'error', 0);
+                return performance.now() - t0;
+            }
+            rounds = res.molesNext?.state?.rounds || rounds;
+            const last = rounds[rounds.length - 1];
+            const active = res.molesNext?.active;
+            const mult = res.molesNext?.payoutMultiplier || last?.multiplier || 0;
+            if (active === false) {
+                publishReveal(rounds, 'bust', mult, { payout: 0, wager: wagerAmt });
+                beep('bust');
+                applyOutcomeToBet('bust');
+                checkStopConditions();
+                return performance.now() - t0;
+            }
+            if (!cfg.turbo) {
+                publishReveal(rounds, 'live', mult);
+                beep('hit');
+            }
+        }
+
+        const cashRes = await apiCall('cashout', { identifier }).catch(e => { log('cashout err', e.message); return null; });
+        const co = cashRes?.molesCashout;
+        const finalMult = co?.payoutMultiplier ?? cashRes?.payoutMultiplier ?? 0;
+        const finalPayout = co?.payout ?? cashRes?.payout ?? (wagerAmt * finalMult);
+        publishReveal(co?.state?.rounds || rounds, 'win', finalMult, { payout: finalPayout, wager: wagerAmt });
+        beep('win');
+        applyOutcomeToBet('win');
+        checkStopConditions();
+        return performance.now() - t0;
+    }
+
+    const reveal = {
+        rounds: [],
+        outcome: 'idle',
+        mult: 0,
+        gameId: 0,
+        wins: 0, losses: 0,
+        bestMult: 0,
+        currency: '',
+        wagered: 0,
+        returned: 0,
+        biggestPayout: 0,
+        multSum: 0,
+    };
+    /* Latest round as read off the real board by the tile observer. DOM-mode
+       autoplay publishes with this so the lock overlay animates the actual
+       game (mole positions, pick, multiplier) instead of an empty board. */
+    let lastDomRound = null;
+
+    function publishReveal(rounds, outcome, mult, money) {
+        reveal.rounds = rounds;
+        reveal.outcome = outcome;
+        reveal.mult = mult;
+        reveal.gameId++;
+        if (outcome === 'win') { reveal.wins++; reveal.multSum += mult; if (mult > reveal.bestMult) reveal.bestMult = mult; }
+        if (outcome === 'bust') { reveal.losses++; }
+        if (money) {
+            if (typeof money.wager === 'number') reveal.wagered += money.wager;
+            if (typeof money.payout === 'number') reveal.returned += money.payout;
+            if (typeof money.payout === 'number' && money.payout > reveal.biggestPayout)
+                reveal.biggestPayout = money.payout;
+            if (money.currency) reveal.currency = money.currency;
+        }
+        if (outcome === 'win' || outcome === 'bust') {
+            runLog.push({
+                t: Date.now(),
+                wager: money?.wager ?? lastWagerAccrued,
+                payout: outcome === 'win' ? (money?.payout ?? 0) : 0,
+                mult,
+                outcome,
+                pnl: reveal.returned - reveal.wagered,
+                rows: rounds.length,
+            });
+            if (runLog.length > RUNLOG_MAX) runLog.shift();
+        }
+        if (money?.wager) lastWagerAccrued = money.wager;
+    }
+
+    const RUNLOG_MAX = 5000;
+    const runLog = [];
+    let lastWagerAccrued = 0;
+
+    const tps = {
+        timestamps: [],
+        lastLatency: 0,
+        push(latency) {
+            const now = performance.now();
+            this.lastLatency = latency;
+            this.timestamps.push(now);
+            const cutoff = now - 5000;
+            while (this.timestamps.length && this.timestamps[0] < cutoff) this.timestamps.shift();
+        },
+        rps() {
+            const now = performance.now();
+            const cutoff = now - 5000;
+            while (this.timestamps.length && this.timestamps[0] < cutoff) this.timestamps.shift();
+            const span = Math.min(5000, now - (this.timestamps[0] || now));
+            return span > 0 ? (this.timestamps.length / span) * 1000 : 0;
+        },
+    };
+
+    const state = {
+        running: false,
+        count: 0,
+        baseBet: 0,
+        currentBet: 0,
+        stopReason: '',
+        errCount: 0,
+        lastErr: '',
+    };
+
+    function applyOutcomeToBet(outcome) {
+        if (outcome === 'win') {
+            if (cfg.resetOnWin || cfg.onWinPct === 0) state.currentBet = state.baseBet;
+            else state.currentBet = state.currentBet * (1 + cfg.onWinPct / 100);
+        } else if (outcome === 'bust') {
+            if (cfg.resetOnLoss || cfg.onLossPct === 0) state.currentBet = state.baseBet;
+            else state.currentBet = state.currentBet * (1 + cfg.onLossPct / 100);
+        }
+        const floor = Math.max(1e-8, state.baseBet * 1e-4);
+        const ceil = Math.max(state.baseBet * 1e6, 1e9);
+        if (!Number.isFinite(state.currentBet) || state.currentBet < floor) state.currentBet = floor;
+        if (state.currentBet > ceil) state.currentBet = ceil;
+        const betInput = document.querySelector('#moles-master-container input[data-k="amount"]');
+        if (betInput) betInput.value = Number(state.currentBet.toPrecision(8));
+    }
+
+    function checkStopConditions() {
+        const pnl = reveal.returned - reveal.wagered;
+        if (cfg.stopWin > 0 && pnl >= cfg.stopWin) { state.running = false; state.stopReason = 'stop-win'; return true; }
+        if (cfg.stopLoss > 0 && pnl <= -cfg.stopLoss) { state.running = false; state.stopReason = 'stop-loss'; return true; }
+        return false;
+    }
+
+    const martingaleActive = () => !!(cfg.onWinPct || cfg.onLossPct || cfg.resetOnWin || cfg.resetOnLoss);
+
+    let lastUiPaint = 0;
+    function paintStatus() {
+        const now = performance.now();
+        if (now - lastUiPaint < 100) return;
+        lastUiPaint = now;
+        const target = cfg.rounds ? `/${cfg.rounds}` : '';
+        if (cfg.mode === 'api') {
+            const rps = tps.rps();
+            ui.status.textContent =
+                `RUNNING · ${state.count}${target} · ${rps.toFixed(1)}/s · ${tps.lastLatency | 0}ms`;
+            updateLockSub(`round ${state.count}${target} · ${rps.toFixed(1)}/s`);
+        } else {
+            ui.status.textContent = `RUNNING · ${state.count}${target}`;
+            updateLockSub(`round ${state.count}${target}`);
+        }
+    }
+
+    async function domLoop() {
+        while (state.running && (cfg.rounds === 0 || state.count < cfg.rounds)) {
+            try {
+                const outcome = await domRound();
+                state.count++;
+                // Feed the outcome into the bet strategy + stop conditions, the
+                // same as API mode — DOM mode used to ignore both.
+                if (outcome === 'win' || outcome === 'bust') {
+                    applyOutcomeToBet(outcome);
+                    if (checkStopConditions()) break;
+                }
+                paintStatus();
+                await sleep(jitter());
+            } catch (e) {
+                if (e.message === 'stopped') break;
+                log('round err', e);
+                await sleep(1500);
+            }
+        }
+    }
+
+    async function apiTurboLoop() {
+        const userConc = martingaleActive() ? 1 : Math.max(1, cfg.concurrency | 0);
+        const startConc = rateLimiter.effectiveConcurrency(userConc);
+        const workers = [];
+        for (let w = 0; w < startConc; w++) {
+            workers.push((async () => {
+                while (state.running && (cfg.rounds === 0 || state.count < cfg.rounds)) {
+                    try {
+                        const latency = await apiRound();
+                        state.count++;
+                        tps.push(latency);
+                        paintStatus();
+                        const adaptive = rateLimiter.adaptiveSleep();
+                        const sleepMs = Math.max(cfg.apiDelayMs || 0, adaptive);
+                        if (sleepMs > 0) await sleep(sleepMs);
+                    } catch (e) {
+                        if (e.message === 'stopped') break;
+                        state.errCount++;
+                        state.lastErr = e.message || String(e);
+                        log('round err', state.lastErr);
+                        if (state.errCount >= 20) {
+                            state.running = false;
+                            state.stopReason = 'errors: ' + state.lastErr;
+                            break;
+                        }
+                        const isRate = /429/.test(state.lastErr);
+                        await sleep(isRate ? 600 : 150);
+                    }
+                }
+            })());
+        }
+        await Promise.all(workers);
+    }
+
+    async function loop() {
+        ui.root.classList.add('is-running');
+        if (!cfg.turbo) lockBoard(true);
+        tps.timestamps.length = 0; tps.lastLatency = 0;
+        reveal.rounds = []; reveal.outcome = 'idle'; reveal.mult = 0;
+        reveal.gameId = 0; reveal.wins = 0; reveal.losses = 0; reveal.bestMult = 0;
+        reveal.wagered = 0; reveal.returned = 0; reveal.biggestPayout = 0; reveal.multSum = 0;
+        reveal.currency = '';
+        state.baseBet = cfg.amount;
+        state.currentBet = cfg.amount;
+        state.stopReason = '';
+        balanceStartedAt = readPageBalance();
+        history.length = 0; lastHistoryGameId = -1;
+        runLog.length = 0;
+        lastWagerAccrued = 0;
+        rateLimiter.recent429.length = 0; rateLimiter.scale = 1.0; rateLimiter.backoffUntil = 0;
+        lastFetchObserved = performance.now();
+
+        syncCurrency();
+
+        if (cfg.mode === 'api' && !apiIsReady()) {
+            state.running = false;
+            ui.status.textContent = 'NEEDS TOKENS · click Play once manually on the live game';
+            ui.btn.textContent = 'Start';
+            ui.btn.classList.remove('stop'); ui.btn.classList.add('start');
+            ui.root.classList.remove('is-running');
+            unlockBoard();
+            return;
+        }
+
+        if (cfg.mode === 'api') await prewarmConnection();
+
+        if (cfg.mode === 'manual') { state.running = false; return; }
+        if (cfg.mode === 'api') await apiTurboLoop();
+        else await domLoop();
+        state.running = false;
+        ui.btn.textContent = 'Start';
+        ui.btn.classList.remove('stop'); ui.btn.classList.add('start');
+        const reason = state.stopReason
+            ? state.stopReason === 'stop-win' ? ' · STOP-WIN HIT'
+                : state.stopReason === 'stop-loss' ? ' · STOP-LOSS HIT'
+                    : ' · ' + state.stopReason.toUpperCase()
+            : '';
+        ui.status.textContent = `STOPPED · ${state.count} rounds${reason}`;
+        ui.root.classList.remove('is-running');
+        unlockBoard();
+        // (9) Audible cue on terminal stop reasons.
+        if (cfg.audio !== false) {
+            if (state.stopReason === 'stop-win') beep('win');
+            else if (state.stopReason === 'stop-loss') beep('bust');
+        }
+    }
+
+    /* =========================================================
+    UI build
+    ========================================================= */
+    const ui = {};
+    function buildUI() {
+        if (document.getElementById('moles-master-container')) return;
+
+        const root = document.createElement('div');
+        root.id = 'moles-master-container';
+        root.innerHTML = `
+            <div class="hud-header" data-drag>
+                <div>
+                    <h2>Moles Autoplay</h2>
+                    <div class="hud-target-text">${location.host}</div>
+                </div>
+                <button class="hud-collapse" data-act="collapse" title="Collapse">–</button>
+            </div>
+            <div class="hud-body">
+                <div class="mode-wrap" role="tablist">
+                    <button class="mode-btn" data-mode="manual">Manual</button>
+                    <button class="mode-btn" data-mode="dom">DOM</button>
+                    <button class="mode-btn" data-mode="api">API</button>
+                </div>
+
+                <!-- Primary bet controls — surfaced at the top so the user
+                     never has to scroll or switch tabs to change their bet. -->
+                <div class="hud-panel hud-panel-primary">
+                    <div class="hud-grid-2">
+                        <div class="hud-control-group" data-tip="Your wager per round. Martingale adjustments multiply from this base.">
+                            <label>Bet amount <span class="hud-currency-hint" data-currency-hint>${cfg.currency || ''}</span></label>
+                            <input data-k="amount" type="number" step="0.01" min="0" class="hud-input-prominent">
+                        </div>
+                        <div class="hud-control-group" data-tip="Number of moles to reveal per row. More moles = higher multiplier but higher bust risk.">
+                            <label>Moles <span style="opacity:.6">1-6</span></label>
+                            <input data-k="molesCount" type="number" min="1" max="6" class="hud-input-prominent">
+                        </div>
+                    </div>
+                    <div class="hud-bet-quick">
+                        <button type="button" class="bet-quick-btn" data-bet-mult="0.5">½</button>
+                        <button type="button" class="bet-quick-btn" data-bet-mult="2">2×</button>
+                        <button type="button" class="bet-quick-btn" data-bet-reset>RESET</button>
+                    </div>
+                </div>
+
+                <!-- Run controls shared by DOM + API modes. These used to be
+                     duplicated in each mode's panel, so a value set in one mode
+                     did not show when you switched to the other while cfg kept
+                     the old number. One shared control keeps display and cfg
+                     in sync. -->
+                <div class="hud-panel" data-run-only>
+                    <div class="hud-grid-2">
+                        <div class="hud-control-group" data-tip="Total rounds to play. Set to 0 for infinite — stops only on stop-win/loss.">
+                            <label>Rounds <span style="opacity:.6">0=∞</span></label>
+                            <input data-k="rounds" type="number" min="0">
+                        </div>
+                        <div class="hud-control-group" data-tip="How many rows to clear before cashing out each round.">
+                            <label>Picks / round</label>
+                            <input data-k="picksPerRound" type="number" min="1" max="24">
+                        </div>
+                    </div>
+                </div>
+
+                <div class="hud-panel" data-dom-only>
+                    <div class="hud-grid-2">
+                        <div class="hud-control-group" data-tip="Minimum random delay between rounds in DOM mode (milliseconds).">
+                            <label>Min delay <span style="opacity:.6">ms</span></label>
+                            <input data-k="minDelayMs" type="number" min="0">
+                        </div>
+                        <div class="hud-control-group" data-tip="Maximum random delay between rounds in DOM mode (milliseconds).">
+                            <label>Max delay <span style="opacity:.6">ms</span></label>
+                            <input data-k="maxDelayMs" type="number" min="0">
+                        </div>
+                    </div>
+                </div>
+
+                <div class="hud-panel" data-strategy-panel>
+                    <div class="hud-control-group">
+                        <label>Strategy <span style="opacity:.6">0 = off</span></label>
+                    </div>
+                    <div class="hud-grid-2">
+                        <div class="hud-control-group" data-tip="Stop and lock in profit when total P/L reaches this amount. Set 0 to disable.">
+                            <label>Stop win <span style="opacity:.6">+P/L</span></label>
+                            <input data-k="stopWin" type="number" step="0.01" min="0">
+                        </div>
+                        <div class="hud-control-group" data-tip="Stop and cut losses when total P/L drops by this amount. Set 0 to disable.">
+                            <label>Stop loss <span style="opacity:.6">−P/L</span></label>
+                            <input data-k="stopLoss" type="number" step="0.01" min="0">
+                        </div>
+                        <div class="hud-control-group" data-tip="Multiply bet by (100+n)% after a win. 0 resets to base bet. E.g. 50 = +50%.">
+                            <label>On win <span style="opacity:.6">%</span></label>
+                            <input data-k="onWinPct" type="number" step="1">
+                        </div>
+                        <div class="hud-control-group" data-tip="Multiply bet by (100+n)% after a loss (Martingale). 0 resets to base bet. E.g. 100 = double.">
+                            <label>On loss <span style="opacity:.6">%</span></label>
+                            <input data-k="onLossPct" type="number" step="1">
+                        </div>
+                    </div>
+                    <div class="hud-check-row" data-tip="After a win, snap the bet back to your original base bet amount.">
+                        <label for="moles-reset-on-win">Reset bet on win</label>
+                        <label class="hud-toggle">
+                            <input id="moles-reset-on-win" data-k="resetOnWin" type="checkbox">
+                            <span class="hud-toggle-track"><span class="hud-toggle-thumb"></span></span>
+                        </label>
+                    </div>
+                    <div class="hud-check-row" data-tip="After a loss, snap the bet back to your original base bet amount.">
+                        <label for="moles-reset-on-loss">Reset bet on loss</label>
+                        <label class="hud-toggle">
+                            <input id="moles-reset-on-loss" data-k="resetOnLoss" type="checkbox">
+                            <span class="hud-toggle-track"><span class="hud-toggle-thumb"></span></span>
+                        </label>
+                    </div>
+                </div>
+
+                <div class="hud-panel" data-api-only>
+                    <div class="hud-control-group" data-tip="Bypasses the game UI and calls Stake's API directly. Fastest possible autoplay — no click delays.">
+                        <label>API status <span style="opacity:.6">network-bound</span></label>
+                        <div class="hud-api-status" data-api-status>checking…</div>
+                    </div>
+                    <div class="hud-grid-2">
+                        <div class="hud-control-group" data-tip="How many bets to fire simultaneously. Higher = faster rounds/sec but may trigger rate limits.">
+                            <label>Multi bet</label>
+                            <input data-k="concurrency" type="number" min="1" max="16">
+                        </div>
+                        <div class="hud-control-group" data-tip="Minimum pause between API bets in milliseconds. Use to avoid rate limits. 0 = as fast as possible.">
+                            <label>Delay / bet <span style="opacity:.6">ms</span></label>
+                            <input data-k="apiDelayMs" type="number" min="0">
+                        </div>
+                        <div class="hud-control-group" data-tip="Token used for betting, e.g. sweeps or gold. Must match your account's active currency.">
+                            <label>Currency</label>
+                            <input data-k="currency" type="text" style="background:var(--hud-input);border:1px solid var(--hud-input-border);color:var(--hud-text);padding:5px 6px;border-radius:7px;font-size:12px;font-weight:700;text-align:center;outline:none;width:100%">
+                        </div>
+                        <div class="hud-control-group" data-tip="Skip hit animations and intermediate updates — only show final results for maximum speed.">
+                            <label>Turbo mode</label>
+                            <label class="hud-toggle">
+                                <input id="moles-turbo" data-k="turbo" type="checkbox">
+                                <span class="hud-toggle-track"><span class="hud-toggle-thumb"></span></span>
+                            </label>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="hud-panel" data-manual-only>
+                    <div class="hud-control-group">
+                        <label>Amount</label>
+                        <div style="display:flex;gap:4px;align-items:center">
+                            <input data-manual-amount type="number" step="0.01" min="0" class="hud-input-prominent" style="flex:1">
+                            <button type="button" class="bet-quick-btn" data-manual-halve>½</button>
+                            <button type="button" class="bet-quick-btn" data-manual-double>2×</button>
+                        </div>
+                    </div>
+                    <div class="hud-control-group">
+                        <label>Moles</label>
+                        <select data-manual-moles style="background:var(--hud-input);border:1px solid var(--hud-input-border);color:var(--hud-text);padding:5px 6px;border-radius:7px;font-size:12px;width:100%;outline:none">
+                            <option>1</option><option>2</option><option>3</option>
+                            <option>4</option><option>5</option><option>6</option>
+                        </select>
+                    </div>
+                    <div class="btn-group" style="margin-top:6px">
+                        <button type="button" class="hud-rapid-btn start" data-manual-play style="font-size:14px;padding:10px 0">Play</button>
+                        <button type="button" class="hud-rapid-btn stop" data-manual-cashout style="display:none;font-size:14px;padding:10px 0">Cashout</button>
+                    </div>
+                    <div class="btn-group" style="margin-top:5px">
+                        <button type="button" class="hud-reset-btn" data-manual-random style="font-size:13px;padding:9px 0;width:100%">Random Pick</button>
+                    </div>
+                    <div class="hud-control-group" style="margin-top:4px">
+                        <label style="opacity:.6;font-size:10px" data-manual-profit></label>
+                    </div>
+                </div>
+
+                <div class="status-bar" data-status>IDLE</div>
+
+                <div class="btn-group" data-autoplay-btns>
+                    <button class="hud-rapid-btn start" data-act="toggle">Start</button>
+                    <button class="hud-reset-btn" data-act="reset" title="Reset round counter">Reset</button>
+                </div>
+            </div>
+        `;
+
+        const sidebar = document.querySelector('.game-sidebar');
+        if (!sidebar) return;
+        if (getComputedStyle(sidebar).position === 'static') sidebar.style.position = 'relative';
+        sidebar.appendChild(root);
+        ui.root = root;
+        ui.btn = root.querySelector('[data-act="toggle"]');
+        ui.status = root.querySelector('[data-status]');
+
+        root.querySelectorAll('[data-k]').forEach(inp => {
+            const k = inp.dataset.k;
+            if (inp.type === 'checkbox') inp.checked = !!cfg[k];
+            else inp.value = cfg[k];
+            inp.addEventListener('change', () => {
+                const v = inp.type === 'checkbox' ? inp.checked
+                        : inp.type === 'number' ? Number(inp.value)
+                            : inp.value;
+                cfg[k] = v; saveCfg();
+            });
+            if (inp.type === 'number' || inp.type === 'text') {
+                inp.addEventListener('input', () => {
+                    const v = inp.type === 'number' ? Number(inp.value) : inp.value;
+                    cfg[k] = v;
+                });
+            }
+        });
+
+        const apiPanel = root.querySelector('[data-api-only]');
+        const apiStatusEl = root.querySelector('[data-api-status]');
+        const manualPanel = root.querySelector('[data-manual-only]');
+        const autoplayBtns = root.querySelector('[data-autoplay-btns]');
+        const primaryPanel = root.querySelector('.hud-panel-primary');
+        const refreshMode = () => {
+            root.querySelectorAll('.mode-btn').forEach(b =>
+                b.classList.toggle('active', b.dataset.mode === cfg.mode));
+            const isManual = cfg.mode === 'manual';
+            apiPanel.style.display = cfg.mode === 'api' ? '' : 'none';
+            root.querySelectorAll('[data-dom-only]').forEach(el => {
+                el.style.display = cfg.mode === 'dom' ? '' : 'none';
+            });
+            // Shared run controls (rounds + picks) show for both auto modes.
+            root.querySelectorAll('[data-run-only]').forEach(el => {
+                el.style.display = isManual ? 'none' : '';
+            });
+            manualPanel.style.display = isManual ? '' : 'none';
+            autoplayBtns.style.display = isManual ? 'none' : '';
+            if (primaryPanel) primaryPanel.style.display = isManual ? 'none' : '';
+            const stratPanel = root.querySelector('[data-strategy-panel]');
+            if (stratPanel) stratPanel.style.display = isManual ? 'none' : '';
+        };
+        function paintApiStatus() {
+            if (!apiStatusEl) return;
+            const ready = apiIsReady();
+            const label = apiReadyLabel();
+            apiStatusEl.textContent = label;
+            apiStatusEl.dataset.state = ready ? 'ok' : 'wait';
+        }
+        setInterval(paintApiStatus, 1000);
+        paintApiStatus();
+        root.querySelectorAll('.mode-btn').forEach(b => {
+            b.addEventListener('click', () => { cfg.mode = b.dataset.mode; saveCfg(); refreshMode(); });
+        });
+        refreshMode();
+        const betInput = root.querySelector('input[data-k="amount"]');
+        const setBet = (v) => {
+            if (!betInput || !Number.isFinite(v) || v < 0) return;
+            betInput.value = Number(v.toPrecision(8));
+            cfg.amount = Number(betInput.value);
+            saveCfg();
+        };
+        root.querySelectorAll('.bet-quick-btn[data-bet-mult]').forEach(b => {
+            b.addEventListener('click', () => {
+                const m = parseFloat(b.dataset.betMult);
+                const cur = parseFloat(betInput.value) || cfg.amount || 0;
+                setBet(cur * m);
+            });
+        });
+        const resetBtn = root.querySelector('.bet-quick-btn[data-bet-reset]');
+        if (resetBtn) {
+            resetBtn.addEventListener('click', () => setBet(defaults.amount));
+        }
+        setInterval(() => {
+            const hint = root.querySelector('[data-currency-hint]');
+            if (hint && hint.textContent !== (cfg.currency || '')) {
+                hint.textContent = cfg.currency || '';
+            }
+        }, 1500);
+
+        ui.btn.addEventListener('click', () => {
+            state.running = !state.running;
+            if (state.running) {
+                state.count = 0;
+                ui.btn.textContent = 'Stop';
+                ui.btn.classList.remove('start'); ui.btn.classList.add('stop');
+                ui.status.textContent = 'RUNNING…';
+                loop();
+            } else {
+                ui.btn.textContent = 'Start';
+                ui.btn.classList.remove('stop'); ui.btn.classList.add('start');
+                ui.status.textContent = 'STOPPING…';
+            }
+        });
+
+        root.querySelector('[data-act="reset"]').addEventListener('click', () => {
+            state.count = 0;
+            if (!state.running) ui.status.textContent = 'IDLE';
+        });
+
+        let lastClickedHole = -1;
+        document.addEventListener('click', e => {
+            const tile = e.target.closest('[data-testid^="game-tile-"]');
+            if (tile) lastClickedHole = parseInt(tile.dataset.hole, 10);
+        }, true);
+
+        (function wireManualPanel() {
+            const amtIn  = root.querySelector('[data-manual-amount]');
+            const molSel = root.querySelector('[data-manual-moles]');
+            const playBtn    = root.querySelector('[data-manual-play]');
+            const cashoutBtn = root.querySelector('[data-manual-cashout]');
+            const randomBtn  = root.querySelector('[data-manual-random]');
+            const profitLbl  = root.querySelector('[data-manual-profit]');
+
+            const gameAmt  = () => document.querySelector('[data-testid="input-game-amount"]');
+            const gameMols = () => document.querySelector('[data-testid="game-moles-count"]');
+            const gameBet  = () => document.querySelector(SEL.bet);
+            const gameCash = () => document.querySelector(SEL.cashout);
+            const gameRand = () => document.querySelector(SEL.random);
+            const gameProfit = () => document.querySelector('[data-testid="profit-input"]');
+
+            function syncFromGame() {
+                const a = gameAmt(); if (a && document.activeElement !== amtIn) amtIn.value = a.value;
+                const m = gameMols(); if (m) molSel.value = m.value;
+                const p = gameProfit(); if (p && profitLbl) profitLbl.textContent = p.value ? 'Net: ' + p.value : '';
+                const hasCashout = !!gameCash();
+                playBtn.style.display   = hasCashout ? 'none' : '';
+                cashoutBtn.style.display = hasCashout ? '' : 'none';
+                randomBtn.disabled = !isEnabled(gameRand());
+            }
+            setInterval(() => { if (cfg.mode === 'manual') syncFromGame(); }, 300);
+
+            function injectValue(el, val) {
+                if (!el) return;
+                const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set
+                    || Object.getOwnPropertyDescriptor((typeof unsafeWindow !== 'undefined' ? unsafeWindow : window).HTMLInputElement.prototype, 'value')?.set;
+                if (nativeInputValueSetter) nativeInputValueSetter.call(el, val);
+                else el.value = val;
+                el.dispatchEvent(new Event('input', { bubbles: true }));
+                el.dispatchEvent(new Event('change', { bubbles: true }));
+            }
+
+            amtIn.addEventListener('change', () => { const a = gameAmt(); if (a) injectValue(a, amtIn.value); });
+            amtIn.addEventListener('input',  () => { const a = gameAmt(); if (a) injectValue(a, amtIn.value); });
+
+            root.querySelector('[data-manual-halve]').addEventListener('click', () => {
+                const a = gameAmt(); if (!a) return;
+                realClick(document.querySelector('[data-testid="amount-halve"]') || a);
+            });
+            root.querySelector('[data-manual-double]').addEventListener('click', () => {
+                const a = gameAmt(); if (!a) return;
+                realClick(document.querySelector('[data-testid="amount-double"]') || a);
+            });
+
+            molSel.addEventListener('change', () => {
+                const m = gameMols();
+                if (!m) return;
+                const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, 'value')?.set;
+                if (nativeSetter) nativeSetter.call(m, molSel.value);
+                else m.value = molSel.value;
+                m.dispatchEvent(new Event('change', { bubbles: true }));
+            });
+
+            playBtn.addEventListener('click', () => { lastClickedHole = -1; const b = gameBet(); if (b) realClick(b); });
+            cashoutBtn.addEventListener('click', () => { const b = gameCash(); if (b) realClick(b); });
+            randomBtn.addEventListener('click', () => { const b = gameRand(); if (b && isEnabled(b)) realClick(b); });
+        })();
+
+        (function manualBoardMirror() {
+            let lastSnapshot = '';
+
+            function readMult() {
+                const p = document.querySelector('[data-testid="profit-input"]');
+                if (p && p.value) {
+                    const n = parseFloat(p.value);
+                    if (Number.isFinite(n) && n > 0) return n;
+                }
+                const cb = document.querySelector(SEL.cashout);
+                if (cb) {
+                    const m = cb.textContent.match(/([\d.]+)\s*×/);
+                    if (m) return parseFloat(m[1]);
+                }
+                return 0;
+            }
+
+            setInterval(() => {
+                // Manual mode owns the whole pipeline here (outcomes included).
+                // DOM autoplay only borrows the board MIRROR — rounds, mole
+                // positions, multiplier — so the lock overlay animates the real
+                // game; its win/bust accounting lives in domRound, and
+                // publishing outcomes from here too would double-count them.
+                const domMirror = cfg.mode === 'dom';
+                if (cfg.mode !== 'manual' && !domMirror) return;
+                const tiles = [...document.querySelectorAll('[data-testid^="game-tile-"]')];
+                if (!tiles.length) return;
+
+                const snap = tiles.map(t => t.dataset.gameTileStatus + t.dataset.hole).join('|');
+                if (snap === lastSnapshot) return;
+                lastSnapshot = snap;
+
+                const statuses = tiles.map(t => ({
+                    hole: parseInt(t.dataset.hole, 10),
+                    status: t.dataset.gameTileStatus || 'idle',
+                }));
+
+                const allIdle = statuses.every(s => s.status === 'idle');
+                if (allIdle) {
+                    // Autoplay resets the board between rounds; keep the settle
+                    // frame domRound published instead of blanking it.
+                    if (domMirror) { lastDomRound = null; return; }
+                    reveal.rounds = [];
+                    reveal.outcome = 'idle';
+                    reveal.mult = 0;
+                    reveal.gameId++;
+                    return;
+                }
+
+                const hasCashout = !!document.querySelector(SEL.cashout);
+                const hasBust = statuses.some(s => s.status === 'mole' || s.status === 'bust');
+                const outcome = hasBust ? 'bust' : hasCashout ? 'live' : 'win';
+
+                const molePositions = statuses.filter(s => s.status === 'mole').map(s => s.hole);
+                const pick = lastClickedHole >= 0 ? lastClickedHole
+                    : (statuses.find(s => s.status === 'selected')?.hole ?? -1);
+                const hit = !molePositions.includes(pick);
+                const mult = readMult();
+
+                const round = { molePositions, pick, hit, multiplier: mult };
+
+                if (domMirror) {
+                    lastDomRound = round;
+                    if (outcome === 'live') {
+                        reveal.rounds = [round];
+                        reveal.outcome = 'live';
+                        reveal.mult = mult;
+                        reveal.gameId++;
+                    }
+                    return;
+                }
+
+                const prevOutcome = reveal.outcome;
+                if (outcome === 'live') {
+                    reveal.rounds = [round];
+                    reveal.outcome = 'live';
+                    reveal.mult = mult;
+                    reveal.gameId++;
+                } else if (outcome === 'bust' && prevOutcome !== 'bust') {
+                    publishReveal([round], 'bust', mult);
+                } else if (outcome === 'win' && prevOutcome !== 'win') {
+                    publishReveal([round], 'win', mult);
+                } else {
+                    reveal.rounds = [round];
+                    reveal.gameId++;
+                }
+            }, 200);
+        })();
+
+        root.querySelector('[data-act="collapse"]').addEventListener('click', (e) => {
+            e.stopPropagation();
+            root.classList.toggle('collapsed');
+            e.currentTarget.textContent = root.classList.contains('collapsed') ? '+' : '–';
+        });
+
+    }
+
+    function makeDraggable(panel, handle) {
+        let dragging = false, dx = 0, dy = 0;
+        handle.addEventListener('pointerdown', (e) => {
+            if (e.target.closest('button, input, select')) return;
+            dragging = true;
+            const r = panel.getBoundingClientRect();
+            dx = e.clientX - r.left; dy = e.clientY - r.top;
+            handle.setPointerCapture(e.pointerId);
+        });
+        handle.addEventListener('pointermove', (e) => {
+            if (!dragging) return;
+            const x = Math.max(0, Math.min(window.innerWidth - panel.offsetWidth, e.clientX - dx));
+            const y = Math.max(0, Math.min(window.innerHeight - panel.offsetHeight, e.clientY - dy));
+            panel.style.left = x + 'px';
+            panel.style.top = y + 'px';
+            panel.style.right = 'auto';
+            panel.style.bottom = 'auto';
+        });
+        handle.addEventListener('pointerup', () => dragging = false);
+        handle.addEventListener('pointercancel', () => dragging = false);
+    }
+
+    /* =========================================================
+    Boot — wait for the board to exist (SPA navigation safe)
+    ========================================================= */
+    function boot() {
+        try {
+            setMolesPageFlag(isOnMolesPage());
+            console.log('%c[Moles]', 'color:#1A7CFF;font-weight:700', 'boot() reached, document.readyState =', document.readyState);
+            buildUI();
+            ensureOverlayMounted();
+            console.log('%c[Moles]', 'color:#1A7CFF;font-weight:700', 'HUD mounted:', !!document.getElementById('moles-master-container'));
+        } catch (e) {
+            console.error('[Moles] boot error:', e);
+        }
+    }
+
+    function ensureOverlayMounted() {
+        if (document.getElementById('moles-board-lock')) return;
+        const gameBoard = document.querySelector('[data-testid="game-moles"]');
+        if (gameBoard) {
+            const container = gameBoard.closest('.game-content.svelte-xd3lbs') ||
+                             gameBoard.parentElement;
+            if (container) {
+                lockBoard(false);
+                startGridRenderer();
+                return;
+            }
+        }
+        ensureOverlayMounted._t = (ensureOverlayMounted._t || 0) + 1;
+        if (ensureOverlayMounted._t < 50) setTimeout(ensureOverlayMounted, 200);
+    }
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', boot);
+    } else {
+        boot();
+    }
+
+    /* Disabling the tool only CSS-hides its HUD. This tool also resizes the
+       shared game chrome, so it has to read its own toggle and undo that too,
+       otherwise a disabled Moles would still squash the sidebar. */
+    function molesEnabled() {
+        try { return isToolIdEnabled('stake-moles'); } catch (e) { return true; }
+    }
+
+    new MutationObserver(() => {
+        if (!isOnMolesPage() || !molesEnabled()) return;
+        if (!document.getElementById('moles-master-container')) buildUI();
+        if (!document.getElementById('moles-board-lock') &&
+            document.querySelector('[data-testid="game-moles"]')) {
+            lockBoard(state.running);
+            if (!gridRafId) startGridRenderer();
+        }
+    }).observe(document.documentElement, { childList: true, subtree: true });
+
+    function reattachHudToSidebar() {
+        const hud = document.getElementById('moles-master-container');
+        if (!hud) return;
+        const sidebar = document.querySelector('.game-sidebar');
+        if (!sidebar) return;
+        sidebar.style.setProperty('min-height', '380px', 'important');
+        sidebar.style.setProperty('max-height', '650px', 'important');
+        sidebar.style.setProperty('height', '650px', 'important');
+        sidebar.style.setProperty('--draggable-max-height', '650px');
+        sidebar.style.setProperty('--game-content-height', '750px');
+        const scrollable = sidebar.querySelector('.scrollable-content') || sidebar;
+        if (scrollable) scrollable.style.setProperty('--max-scroll-height', '600px');
+        const gameContent = document.querySelector('.game-content.svelte-xd3lbs');
+        if (gameContent) {
+            gameContent.style.setProperty('min-height', '650px', 'important');
+            gameContent.style.setProperty('max-height', '650px', 'important');
+            gameContent.style.setProperty('height', '650px', 'important');
+        }
+        if (hud.parentElement === sidebar) return;
+        if (getComputedStyle(sidebar).position === 'static') sidebar.style.position = 'relative';
+        sidebar.appendChild(hud);
+    }
+
+    /* The bundle keeps this tool loaded across SPA navigation, so leaving the
+       moles page has to undo everything we did to the shared game chrome:
+       drop the CSS flag, clear the inline styles reattachHudToSidebar wrote,
+       and take the HUD + overlay down. */
+    function setMolesPageFlag(on) {
+        const root = document.documentElement;
+        if (on) root.setAttribute('data-moles-active', '1');
+        else root.removeAttribute('data-moles-active');
+    }
+
+    function clearMolesLayout() {
+        const sb = document.querySelector('.game-sidebar');
+        if (sb) {
+            ['position', 'zIndex', 'minWidth', 'width', 'flexShrink',
+             'minHeight', 'maxHeight', 'height', 'overflow'].forEach(p => { sb.style[p] = ''; });
+            sb.style.removeProperty('--draggable-max-height');
+            sb.style.removeProperty('--game-content-height');
+        }
+        const gc = document.querySelector('.game-content.svelte-xd3lbs');
+        if (gc) ['minHeight', 'maxHeight', 'height'].forEach(p => { gc.style[p] = ''; });
+        const hud = document.getElementById('moles-master-container');
+        if (hud) hud.remove();
+        const lock = document.getElementById('moles-board-lock');
+        if (lock) lock.remove();
+        if (gridRafId) stopGridRenderer();
+    }
+
+    setInterval(() => {
+        if (!isOnMolesPage() || !molesEnabled()) {
+            if (document.documentElement.hasAttribute('data-moles-active')) {
+                state.running = false;      // never keep autoplaying off-page
+                setMolesPageFlag(false);
+                clearMolesLayout();
+            }
+            return;
+        }
+        setMolesPageFlag(true);
+        if (!document.getElementById('moles-master-container')) buildUI();
+        reattachHudToSidebar();
+        ensureOverlayMounted();
+        if (!resizeObserver) setupResizeObserver();
+    }, 500);
+
+    window.addEventListener('unload', () => {
+        if (resizeDebounceTimer) clearTimeout(resizeDebounceTimer);
+        if (resizeObserver) resizeObserver.disconnect();
+    });
+    }
 
     /* =========================================================
        TOOL REGISTRY — DEFINITIONS
@@ -14712,7 +21717,7 @@ function tool_stake_7day_tracker() {
     register({
         id: 'stake-dice',
         name: 'Stake Dice',
-        description: 'Manual / IOW / Smart bet-sizing modes plus the Advanced IOW (Calculator / Optimizer / Results) tab on Stake Dice.',
+        description: 'Manual / IOW / Smart bet-sizing modes plus the Advanced IOW (Calculator / Strategy Finder / Results) tab on Stake Dice.',
         matches: [
             'https://stake.us/casino/games/dice*',
             'https://stake.com/casino/games/dice*',
@@ -14862,11 +21867,286 @@ function tool_stake_7day_tracker() {
         if (_nutsIowSmartInit.ran) return;
         try { tool_nuts_iow_smart(); _nutsIowSmartInit.ran = true; }
         catch (e) { console.error('[UnifiedTools] nuts-iow-smart init error:', e); }
+        try { initNutsDiceToolPanel(); }
+        catch (e) { console.error('[UnifiedTools] nuts dice-tool panel init error:', e); }
+    }
+    /* Build the real DiceTool panel on Nuts and stitch it into the Advanced IOW
+       tab. The panel is the same one Stake/Shuffle use (all tabs + simulator);
+       tool_nuts_iow_smart mounts #dt-aio-panel into #hud-content when the user
+       is in Advanced IOW mode. Here we just build it once and (a) hide its own
+       floating chrome, (b) inject the bridge CSS that makes it fill the tab. */
+    function initNutsDiceToolPanel() {
+        // Nuts only. On Stake/Shuffle setupIowDiceIntegration owns the DiceTool
+        // panel; this bootstrap must never touch those pages.
+        if (!/(^|\.)nuts\.gg$/i.test(location.hostname)) return;
+        if (window.__nuts_dt_panel_init__) return;
+        window.__nuts_dt_panel_init__ = true;
+        /* DiceTool.exe replica skin — a verbatim copy of DT_STAKE_SKIN_CSS from
+           setupIowDiceIntegration (which only runs on Stake/Shuffle), so the
+           Nuts Advanced IOW panel renders identically to Stake's. Keep the two
+           copies in sync; both are scoped to `#hud-content > #dt-aio-panel`. */
+        const NUTS_DT_SKIN_CSS = `
+/* Panel chrome */
+#hud-content > #dt-aio-panel { --dt-font-scale: 1 !important; background: #162a35 !important; border: 1px solid #2f4553 !important; border-radius: 8px !important; font-size: 12.5px !important; line-height: 1.45 !important; color: #c9d1d9; font-family: "Segoe UI", -apple-system, sans-serif !important; overflow: hidden !important; }
+/* Tab strip = ttk.Notebook: flat tabs, selected = select_bg #1f333e */
+#hud-content > #dt-aio-panel .dt-tabs { background: #162a35 !important; border-bottom: 1px solid #2f4553 !important; padding: 5px 8px 0 !important; gap: 2px; }
+#hud-content > #dt-aio-panel .dt-tab-btn { flex: 0 1 auto !important; padding: 7px 13px !important; font-size: 12px !important; font-weight: 700 !important; color: #c9d1d9 !important; background: #10202b !important; border: 1px solid #2f4553 !important; border-bottom: none !important; border-radius: 4px 4px 0 0 !important; text-transform: none; letter-spacing: 0; }
+#hud-content > #dt-aio-panel .dt-tab-btn:hover { background: #1a2c38 !important; color: #ffffff !important; }
+#hud-content > #dt-aio-panel .dt-tab-btn.active { background: #1f333e !important; color: #ffffff !important; border-color: #3a5566 !important; }
+#hud-content > #dt-aio-panel .dt-tab-btn .dt-tab-icon { display: none !important; }
+/* Body */
+#hud-content > #dt-aio-panel .dt-body { padding: 18px 12px 10px !important; background: #162a35; }
+#hud-content > #dt-aio-panel .dt-panel.active { gap: 17px !important; }
+#hud-content > #dt-aio-panel .dt-body::-webkit-scrollbar, #hud-content > #dt-aio-panel .dt-scroll::-webkit-scrollbar, #hud-content > #dt-aio-panel .dt-terms-scroll::-webkit-scrollbar { width: 10px; height: 10px; }
+#hud-content > #dt-aio-panel .dt-body::-webkit-scrollbar-thumb, #hud-content > #dt-aio-panel .dt-scroll::-webkit-scrollbar-thumb, #hud-content > #dt-aio-panel .dt-terms-scroll::-webkit-scrollbar-thumb { background: #2f4553; border-radius: 2px; border: 2px solid #162a35; }
+/* LabelFrames: sunken, 2px slate border, serif italic underlined title on the border */
+#hud-content > #dt-aio-panel .dt-card { background: #162a35 !important; border: 2px solid #c9d1d9 !important; border-radius: 4px !important; padding: 16px 12px 12px !important; margin-bottom: 0 !important; box-shadow: inset 1px 1px 4px rgba(0,0,0,0.35) !important; position: relative !important; overflow: visible !important; }
+#hud-content > #dt-aio-panel .dt-card-title { position: absolute !important; top: -11px !important; left: 10px !important; background: #162a35 !important; padding: 0 7px !important; font-family: "Times New Roman", Georgia, serif !important; font-style: italic !important; font-weight: 700 !important; text-decoration: underline !important; font-size: 14px !important; color: #c9d1d9 !important; letter-spacing: 0; text-transform: none; white-space: nowrap; }
+/* Labels + entries (ttk clam) */
+#hud-content > #dt-aio-panel .dt-lbl { font-size: 12.5px; font-weight: 700; color: #c9d1d9; white-space: nowrap; }
+#hud-content > #dt-aio-panel input.dt-entry, #hud-content > #dt-aio-panel select.dt-theme-select { background: #071824 !important; color: #c9d1d9 !important; border: 1px solid #2f4553 !important; border-radius: 3px !important; padding: 5px 8px !important; font-size: 12px !important; font-family: "Segoe UI", -apple-system, sans-serif !important; min-width: 0; width: 100%; text-align: left; box-shadow: inset 1px 1px 2px rgba(0,0,0,0.4); }
+#hud-content > #dt-aio-panel input.dt-entry:focus, #hud-content > #dt-aio-panel select.dt-theme-select:focus { outline: none !important; border-color: #c9d1d9 !important; box-shadow: 0 0 0 1px #c9d1d9 !important; }
+#hud-content > #dt-aio-panel input.dt-entry::selection { background: #1f333e; color: #ffffff; }
+#hud-content > #dt-aio-panel input.dt-out-val[readonly] { opacity: 1 !important; font-weight: 400 !important; }
+/* Buttons (ttk clam) */
+#hud-content > #dt-aio-panel .dt-btn { background: #071824 !important; border: 1px solid #2f4553 !important; color: #c9d1d9 !important; border-radius: 3px !important; font-size: 12px !important; font-weight: 600 !important; letter-spacing: 0; text-transform: none !important; padding: 6px 12px !important; min-height: 30px !important; font-family: "Segoe UI", -apple-system, sans-serif !important; box-shadow: none !important; }
+#hud-content > #dt-aio-panel .dt-btn:hover { background: #1a2c38 !important; color: #ffffff !important; border-color: #3a5566 !important; }
+#hud-content > #dt-aio-panel .dt-btn:active { background: #1f333e !important; transform: none !important; }
+#hud-content > #dt-aio-panel .dt-btn:disabled { opacity: 0.45 !important; }
+#hud-content > #dt-aio-panel .dt-btn-copy { padding: 4px 11px !important; min-height: 24px !important; font-size: 11.5px !important; }
+#hud-content > #dt-aio-panel .dt-btn-block { width: 100%; margin-top: 13px !important; }
+/* Calculator grid: Calculated Values | (Parameters + Simulation Controls) */
+#hud-content > #dt-aio-panel .dt-calc-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr); gap: 14px; align-items: start; }
+#hud-content > #dt-aio-panel .dt-calc-right { display: flex; flex-direction: column; gap: 17px; min-width: 0; }
+#hud-content > #dt-aio-panel .dt-cv-row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 9px; align-items: center; padding: 7px 0; }
+/* Profit Stop stays in the DOM (calcValues + the Stats-tab mirror write/read
+   #dt-out_profit) but is not displayed — the strategy's stop condition uses
+   Balance Target, so that is the number shown and copied. */
+#hud-content > #dt-aio-panel .dt-cv-row[hidden] { display: none !important; }
+#hud-content > #dt-aio-panel .dt-pm-grid { display: grid; grid-template-columns: auto minmax(0, 1fr) auto minmax(0, 1fr); gap: 9px 10px; align-items: center; }
+#hud-content > #dt-aio-panel .dt-pm-btns { display: flex; gap: 10px; margin-top: 13px; }
+#hud-content > #dt-aio-panel .dt-pm-btns .dt-btn { flex: 1 1 0; }
+#hud-content > #dt-aio-panel .dt-ctl-row { display: flex; align-items: center; gap: 10px; margin: 6px 0; }
+#hud-content > #dt-aio-panel .dt-ctl-row .dt-btn { flex: 0 0 auto; min-width: 112px; }
+#hud-content > #dt-aio-panel .dt-ctl-row input.dt-entry { width: 84px; flex: 0 0 auto; text-align: center; }
+#hud-content > #dt-aio-panel .dt-ctl-row .dt-progress-wrap { flex: 1 1 auto; margin: 0 !important; }
+/* Optimizer */
+#hud-content > #dt-aio-panel .dt-opt-grid { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 9px 12px; align-items: center; }
+#hud-content > #dt-aio-panel .dt-opt-runrow { margin-top: 13px; }
+#hud-content > #dt-aio-panel .dt-opt-foot, #hud-content > #dt-aio-panel .dt-res-foot { display: flex; justify-content: space-between; gap: 10px; }
+/* Progress (chunky tk bar, #00ff80 on dark trough) + status */
+#hud-content > #dt-aio-panel .dt-progress-wrap { background: #071824 !important; border: 1px solid #2f4553 !important; height: 14px !important; border-radius: 2px !important; margin: 0 !important; }
+#hud-content > #dt-aio-panel .dt-progress-bar { background: #00ff80 !important; }
+#hud-content > #dt-aio-panel .dt-status-line { font-size: 11.5px !important; color: #c9d1d9 !important; text-align: center; font-family: "Segoe UI", -apple-system, sans-serif !important; opacity: 1 !important; margin: 0 !important; }
+/* Scroll regions */
+#hud-content > #dt-aio-panel .dt-scroll { border: 1px solid #2f4553 !important; border-radius: 3px !important; background: #071824 !important; }
+#hud-content > #dt-aio-panel .dt-res-scroll { flex: 1 1 auto; min-height: 220px; max-height: none !important; }
+#hud-content > #dt-aio-panel #dt-panel-results.active { flex: 1 1 auto; min-height: 0; }
+/* Simulation Results treeview (Statistic | Value) */
+#hud-content > #dt-aio-panel table.dt-stats { font-size: 12px !important; }
+#hud-content > #dt-aio-panel table.dt-stats th { position: sticky; top: 0; background: #071824; color: #c9d1d9; font-size: 12px; font-weight: 700; padding: 6px 11px; border-bottom: 1px solid #2f4553; text-align: left; }
+#hud-content > #dt-aio-panel table.dt-stats th:last-child { text-align: center; }
+#hud-content > #dt-aio-panel table.dt-stats td { padding: 5px 11px !important; border-bottom: 1px solid #14262f !important; font-size: 12px !important; }
+#hud-content > #dt-aio-panel table.dt-stats td:first-child { color: #c9d1d9 !important; font-weight: 400 !important; width: 55%; }
+#hud-content > #dt-aio-panel table.dt-stats td:last-child { color: #c9d1d9 !important; text-align: center !important; font-family: "Segoe UI", -apple-system, sans-serif !important; font-weight: 400 !important; }
+#hud-content > #dt-aio-panel table.dt-stats td.dt-empty { text-align: center; color: #7d8a96; padding: 14px !important; }
+/* Optimizer Results treeview: all columns, centered, gray striping like the app */
+#hud-content > #dt-aio-panel table.dt-results { font-size: 11.5px !important; }
+#hud-content > #dt-aio-panel table.dt-results th { position: sticky; top: 0; background: #071824 !important; color: #c9d1d9 !important; font-size: 11.5px !important; font-weight: 700 !important; letter-spacing: 0; text-transform: none !important; text-align: center !important; padding: 6px 9px !important; border-bottom: 1px solid #2f4553 !important; border-right: 1px solid #14262f; font-family: "Segoe UI", -apple-system, sans-serif !important; white-space: nowrap; }
+#hud-content > #dt-aio-panel table.dt-results td { text-align: center !important; color: #c9d1d9 !important; padding: 4px 9px !important; border-bottom: none !important; font-family: "Segoe UI", -apple-system, sans-serif !important; white-space: nowrap; }
+#hud-content > #dt-aio-panel table.dt-results tr:nth-child(odd) td { background: #2d2d2d !important; }
+#hud-content > #dt-aio-panel table.dt-results tr:nth-child(even) td { background: #383838 !important; }
+#hud-content > #dt-aio-panel table.dt-results tr:hover td { background: #454545 !important; }
+#hud-content > #dt-aio-panel table.dt-results tr.selected td { background: #1f333e !important; color: #ffffff !important; font-weight: 400 !important; box-shadow: none !important; }
+/* The app has no color-coded cells or risk bars — neutralize them */
+#hud-content > #dt-aio-panel td.dt-cell-good, #hud-content > #dt-aio-panel td.dt-cell-mid, #hud-content > #dt-aio-panel td.dt-cell-bad { color: #c9d1d9 !important; }
+#hud-content > #dt-aio-panel table.dt-results tr.selected td.dt-cell-good, #hud-content > #dt-aio-panel table.dt-results tr.selected td.dt-cell-mid, #hud-content > #dt-aio-panel table.dt-results tr.selected td.dt-cell-bad { color: #ffffff !important; }
+#hud-content > #dt-aio-panel .dt-riskbar { display: none !important; }
+#hud-content > #dt-aio-panel #dt-res_status { display: none !important; }
+/* Settings: centered fixed-width column of LabelFrames */
+#hud-content > #dt-aio-panel .dt-settings-center { width: 100%; max-width: 440px; margin: 14px auto 0; display: flex; flex-direction: column; gap: 24px; }
+#hud-content > #dt-aio-panel .dt-set-row { display: flex; justify-content: space-between; align-items: center; gap: 14px; padding: 9px 0; }
+#hud-content > #dt-aio-panel .dt-sep { height: 1px; background: #2f4553; }
+#hud-content > #dt-aio-panel .dt-set-desc { font-size: 11px; font-style: italic; color: #7d8a96; margin: 2px 0 8px; line-height: 1.4; }
+#hud-content > #dt-aio-panel .dt-set-val { color: #7d8a96; font-size: 12px; }
+/* The IOW HUD strips native checkbox chrome globally — restore it here,
+   same as the bridge does for the Stats deck autostop checkbox. */
+#hud-content > #dt-aio-panel .dt-chk { appearance: auto !important; -webkit-appearance: auto !important; width: 15px !important; height: 15px !important; margin: 0 !important; padding: 0 !important; position: static !important; opacity: 1 !important; visibility: visible !important; pointer-events: auto !important; accent-color: #00ff80; cursor: pointer; flex: 0 0 auto !important; }
+#hud-content > #dt-aio-panel select.dt-theme-select { width: auto !important; flex: 0 0 auto !important; }
+#hud-content > #dt-aio-panel input.dt-num-input { width: 64px !important; flex: 0 0 auto !important; text-align: center !important; }
+/* Terms: the app's plain glossary text area (no search box) */
+#hud-content > #dt-aio-panel #dt-panel-terms.active { padding: 0 !important; }
+#hud-content > #dt-aio-panel .dt-terms-search { display: none !important; }
+#hud-content > #dt-aio-panel .dt-terms-scroll { background: #0f212e !important; border: 1px solid #2f4553 !important; border-radius: 4px !important; padding: 14px 18px !important; font-size: 12px !important; line-height: 1.5 !important; font-family: "Segoe UI", -apple-system, sans-serif !important; color: #c9d1d9 !important; }
+#hud-content > #dt-aio-panel .dt-terms-heading { color: #c9d1d9 !important; font-size: 17px !important; font-weight: 700 !important; letter-spacing: 0 !important; text-transform: none; border-bottom: none !important; padding-bottom: 0 !important; margin: 16px 0 6px !important; }
+#hud-content > #dt-aio-panel .dt-terms-heading:first-child { margin-top: 0 !important; }
+#hud-content > #dt-aio-panel .dt-terms-subheading { color: #c9d1d9 !important; font-size: 14px !important; font-weight: 700 !important; letter-spacing: 0; text-transform: none; margin: 10px 0 3px !important; }
+#hud-content > #dt-aio-panel .dt-terms-label { color: #c9d1d9 !important; font-weight: 700 !important; }
+#hud-content > #dt-aio-panel .dt-terms-dash { color: #7d8a96 !important; }
+#hud-content > #dt-aio-panel .dt-terms-def, #hud-content > #dt-aio-panel .dt-terms-text { color: #c9d1d9 !important; }
+#hud-content > #dt-aio-panel .dt-terms-empty { display: none !important; }
+/* Leftover modern chrome that must never surface in the replica */
+#hud-content > #dt-aio-panel .dt-help, #hud-content > #dt-aio-panel .dt-hint, #hud-content > #dt-aio-panel .dt-steps, #hud-content > #dt-aio-panel .dt-coach { display: none !important; }`;
+        /* NUTS THEME - panel internals. The skin above is kept for its GEOMETRY
+           (the calc/optimizer grids, paddings, sticky table headers) and this
+           repaints it in the HUD's neon-glass palette. Last in the sheet so it
+           wins ties. The tab strip deliberately borrows .mode-btn.active's
+           gradient, tying it to the mode pills directly above it.
+           The --hud-* vars resolve because the panel lives inside the HUD. */
+        const NUTS_DT_THEME_CSS = `
+#ratchet-master-container #hud-content > #dt-aio-panel { background: var(--hud-panel) !important; border: 1px solid var(--hud-border-soft) !important;
+  border-radius: 14px !important; color: var(--hud-text) !important; font-family: "Proxima Nova", "Segoe UI", sans-serif !important;
+  box-shadow: 0 16px 34px rgba(0, 0, 0, 0.26), inset 0 1px 0 rgba(255, 255, 255, 0.05) !important; backdrop-filter: blur(20px) saturate(1.24) !important; }
+/* Tab strip = pills, active pill = the HUD's accent gradient */
+#ratchet-master-container #hud-content > #dt-aio-panel .dt-tabs { background: transparent !important; border-bottom: 1px solid var(--hud-border-soft) !important;
+  padding: 9px 9px !important; gap: 6px !important; }
+#hud-content > #dt-aio-panel .dt-tab-btn { background: rgba(8, 11, 18, 0.62) !important; border: 1px solid rgba(142, 174, 212, 0.18) !important;
+  border-radius: 9px !important; color: var(--hud-text-soft) !important; font-size: 10.5px !important; font-weight: 800 !important;
+  letter-spacing: 0.06em !important; text-transform: uppercase !important; padding: 7px 12px !important;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease, box-shadow 0.15s ease !important; }
+#hud-content > #dt-aio-panel .dt-tab-btn:hover { background: rgba(25, 243, 255, 0.08) !important; border-color: rgba(25, 243, 255, 0.35) !important;
+  color: var(--hud-text) !important; }
+#hud-content > #dt-aio-panel .dt-tab-btn.active { background: linear-gradient(135deg, var(--hud-accent-a), var(--hud-accent-b) 45%, var(--hud-accent-c)) !important;
+  border-color: rgba(255, 255, 255, 0.2) !important; color: #070911 !important;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.2) inset, 0 0 18px rgba(25, 243, 255, 0.22), 0 0 26px rgba(255, 79, 216, 0.18) !important; }
+#hud-content > #dt-aio-panel .dt-body { background: transparent !important; padding: 14px 12px 12px !important; }
+#hud-content > #dt-aio-panel .dt-body::-webkit-scrollbar-thumb, #hud-content > #dt-aio-panel .dt-scroll::-webkit-scrollbar-thumb,
+#hud-content > #dt-aio-panel .dt-terms-scroll::-webkit-scrollbar-thumb { background: rgba(25, 243, 255, 0.28) !important; border-radius: 999px !important;
+  border: 2px solid transparent !important; background-clip: padding-box !important; }
+/* LabelFrames become glass cards; the notched Times-italic title becomes a
+   lettered cyan caption over a hairline (padding drops to match). */
+#hud-content > #dt-aio-panel .dt-card { background: rgba(10, 14, 22, 0.42) !important; border: 1px solid var(--hud-border-soft) !important;
+  border-radius: 12px !important; padding: 12px !important; box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04) !important; }
+#hud-content > #dt-aio-panel .dt-card-title { position: static !important; top: auto !important; left: auto !important; display: block !important;
+  background: none !important; padding: 0 0 7px !important; margin: 0 0 11px !important; font-family: "Proxima Nova", "Segoe UI", sans-serif !important;
+  font-style: normal !important; text-decoration: none !important; font-size: 10.5px !important; font-weight: 800 !important;
+  letter-spacing: 0.1em !important; text-transform: uppercase !important; color: var(--hud-accent-a) !important;
+  border-bottom: 1px solid rgba(25, 243, 255, 0.25) !important; }
+#hud-content > #dt-aio-panel .dt-lbl { color: var(--hud-text-soft) !important; font-size: 11px !important; font-weight: 700 !important; }
+#hud-content > #dt-aio-panel input.dt-entry, #hud-content > #dt-aio-panel select.dt-theme-select { background: rgba(8, 11, 18, 0.78) !important;
+  color: var(--hud-text) !important; border: 1px solid rgba(142, 174, 212, 0.18) !important; border-radius: 9px !important; padding: 6px 9px !important;
+  font-family: "Proxima Nova", "Segoe UI", sans-serif !important; font-weight: 700 !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04) !important; }
+#hud-content > #dt-aio-panel input.dt-entry:focus, #hud-content > #dt-aio-panel select.dt-theme-select:focus { border-color: var(--hud-accent-a) !important;
+  box-shadow: 0 0 0 2px rgba(25, 243, 255, 0.18), inset 0 1px 0 rgba(255, 255, 255, 0.04) !important; }
+#hud-content > #dt-aio-panel input.dt-entry::selection { background: rgba(25, 243, 255, 0.32); color: #fff; }
+#hud-content > #dt-aio-panel .dt-btn { background: linear-gradient(180deg, rgba(39, 48, 63, 0.88), rgba(17, 22, 33, 0.94)) !important;
+  border: 1px solid rgba(142, 174, 212, 0.18) !important; color: var(--hud-text) !important; border-radius: 9px !important;
+  font-family: "Proxima Nova", "Segoe UI", sans-serif !important; font-size: 10.5px !important; font-weight: 800 !important;
+  text-transform: uppercase !important; letter-spacing: 0.06em !important; box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05) !important;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease, box-shadow 0.15s ease !important; }
+#hud-content > #dt-aio-panel .dt-btn:hover { background: linear-gradient(180deg, rgba(52, 64, 84, 0.92), rgba(22, 28, 42, 0.96)) !important;
+  border-color: rgba(25, 243, 255, 0.4) !important; color: #fff !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06), 0 0 14px rgba(25, 243, 255, 0.14) !important; }
+/* Block buttons are each tab's primary action - give them the accent fill. */
+#hud-content > #dt-aio-panel .dt-btn-block { background: linear-gradient(135deg, var(--hud-accent-a), var(--hud-accent-b) 44%, var(--hud-accent-c)) !important;
+  border-color: rgba(255, 255, 255, 0.18) !important; color: #070911 !important;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.18) inset, 0 0 20px rgba(25, 243, 255, 0.2), 0 0 28px rgba(255, 79, 216, 0.16) !important; }
+#hud-content > #dt-aio-panel .dt-btn-block:hover { filter: brightness(1.08) !important;
+  background: linear-gradient(135deg, var(--hud-accent-a), var(--hud-accent-b) 44%, var(--hud-accent-c)) !important; }
+#hud-content > #dt-aio-panel .dt-progress-wrap { background: rgba(8, 11, 18, 0.78) !important; border: 1px solid rgba(142, 174, 212, 0.18) !important;
+  border-radius: 999px !important; height: 10px !important; overflow: hidden !important; }
+#hud-content > #dt-aio-panel .dt-progress-bar { background: linear-gradient(90deg, var(--hud-accent-a), var(--hud-accent-b) 55%, var(--hud-accent-c)) !important; }
+#hud-content > #dt-aio-panel .dt-status-line { color: var(--hud-text-soft) !important; font-family: "Proxima Nova", "Segoe UI", sans-serif !important; }
+#hud-content > #dt-aio-panel .dt-scroll { background: rgba(8, 11, 18, 0.62) !important; border: 1px solid var(--hud-border-soft) !important;
+  border-radius: 12px !important; }
+#hud-content > #dt-aio-panel .dt-sep { background: var(--hud-border-soft) !important; }
+#hud-content > #dt-aio-panel .dt-set-desc, #hud-content > #dt-aio-panel .dt-set-val { color: var(--hud-text-soft) !important; }
+#hud-content > #dt-aio-panel .dt-chk { accent-color: var(--hud-accent-a) !important; }
+/* Tables: cyan lettered headers, hairline rules. The replica's #2d2d2d/#383838
+   Tk striping is replaced by a near-transparent tint - solid grays read as a
+   hole punched in the glass panel. */
+#hud-content > #dt-aio-panel table.dt-stats th, #hud-content > #dt-aio-panel table.dt-results th { background: rgba(8, 11, 18, 0.92) !important;
+  color: var(--hud-accent-a) !important; font-family: "Proxima Nova", "Segoe UI", sans-serif !important; font-size: 10px !important;
+  font-weight: 800 !important; letter-spacing: 0.08em !important; text-transform: uppercase !important;
+  border-bottom: 1px solid rgba(25, 243, 255, 0.22) !important; }
+#hud-content > #dt-aio-panel table.dt-stats td, #hud-content > #dt-aio-panel table.dt-results td { color: var(--hud-text) !important;
+  font-family: "Proxima Nova", "Segoe UI", sans-serif !important; border-bottom: 1px solid rgba(255, 255, 255, 0.05) !important; }
+#hud-content > #dt-aio-panel table.dt-stats td:first-child { color: var(--hud-text-soft) !important; }
+#hud-content > #dt-aio-panel table.dt-stats td.dt-empty { color: var(--hud-text-soft) !important; }
+#hud-content > #dt-aio-panel table.dt-results tr:nth-child(odd) td { background: rgba(255, 255, 255, 0.028) !important; }
+#hud-content > #dt-aio-panel table.dt-results tr:nth-child(even) td { background: transparent !important; }
+#hud-content > #dt-aio-panel table.dt-results tr:hover td { background: rgba(25, 243, 255, 0.1) !important; }
+#hud-content > #dt-aio-panel table.dt-results tr.selected td { background: rgba(143, 99, 255, 0.24) !important; color: #fff !important; }
+#hud-content > #dt-aio-panel table.dt-results tr.selected td:first-child { box-shadow: inset 2px 0 0 var(--hud-accent-a) !important; }
+/* The replica neutralized the colour-coded cells to match DiceTool.exe; the HUD
+   colour-codes its own numbers, so give them back the HUD's value colours.
+   Must be qualified by the table class: the generic "table.dt-results td" rule
+   above carries an extra element in its selector, so a bare "td.dt-cell-good"
+   loses to it and the cells silently render as plain body text. */
+#hud-content > #dt-aio-panel table.dt-stats td.dt-cell-good,
+#hud-content > #dt-aio-panel table.dt-results td.dt-cell-good { color: var(--hud-positive) !important; }
+#hud-content > #dt-aio-panel table.dt-stats td.dt-cell-mid,
+#hud-content > #dt-aio-panel table.dt-results td.dt-cell-mid { color: #ffd479 !important; }
+#hud-content > #dt-aio-panel table.dt-stats td.dt-cell-bad,
+#hud-content > #dt-aio-panel table.dt-results td.dt-cell-bad { color: var(--hud-negative) !important; }
+#hud-content > #dt-aio-panel table.dt-results tr.selected td.dt-cell-good, #hud-content > #dt-aio-panel table.dt-results tr.selected td.dt-cell-mid,
+#hud-content > #dt-aio-panel table.dt-results tr.selected td.dt-cell-bad { color: #fff !important; }
+/* Terms glossary */
+#hud-content > #dt-aio-panel .dt-terms-scroll { background: rgba(8, 11, 18, 0.62) !important; border: 1px solid var(--hud-border-soft) !important;
+  border-radius: 12px !important; color: var(--hud-text-soft) !important; font-family: "Proxima Nova", "Segoe UI", sans-serif !important; }
+#hud-content > #dt-aio-panel .dt-terms-heading { color: var(--hud-accent-a) !important; font-family: "Proxima Nova", "Segoe UI", sans-serif !important;
+  font-size: 12px !important; font-weight: 800 !important; letter-spacing: 0.08em !important; text-transform: uppercase !important;
+  border-bottom: 1px solid rgba(25, 243, 255, 0.2) !important; padding-bottom: 5px !important; }
+#hud-content > #dt-aio-panel .dt-terms-subheading { color: var(--hud-accent-b) !important; font-family: "Proxima Nova", "Segoe UI", sans-serif !important; }
+#hud-content > #dt-aio-panel .dt-terms-label { color: var(--hud-text) !important; }
+#hud-content > #dt-aio-panel .dt-terms-dash { color: var(--hud-text-soft) !important; }
+#hud-content > #dt-aio-panel .dt-terms-def, #hud-content > #dt-aio-panel .dt-terms-text { color: var(--hud-text-soft) !important; }`;
+        const style = document.createElement('style');
+        style.id = 'nuts-dt-bridge-css';
+        style.textContent =
+            /* Hide the DiceTool's own floating button / backdrop / counter —
+               on Nuts the panel lives inside the HUD, not as a floating panel. */
+            '#dt-aio-button, #dt-backdrop, #dt-aio-counter { display: none !important; }' +
+            /* Bridge: fill the Advanced IOW tab when mounted as a child of #hud-content. */
+            '#ratchet-master-container #hud-content > #dt-aio-panel {' +
+            ' position: static !important; inset: auto !important;' +
+            ' top: auto !important; right: auto !important; bottom: auto !important; left: auto !important;' +
+            ' width: 100% !important; height: auto !important; max-width: none !important; max-height: none !important;' +
+            ' flex: 1 1 auto !important; min-height: 340px !important;' +
+            ' margin: 0 !important; transform: none !important; opacity: 1 !important; visibility: visible !important;' +
+            ' pointer-events: auto !important; z-index: auto !important; display: flex !important; flex-direction: column;' +
+            ' box-shadow: none !important; border: 1px solid rgba(255,255,255,0.08) !important; border-radius: 10px !important; }' +
+            '#ratchet-master-container #hud-content > #dt-aio-panel .dt-head { display: none !important; }' +
+            '#ratchet-master-container #hud-content > #dt-aio-panel .dt-tabs { flex: 0 0 auto !important; }' +
+            '#ratchet-master-container #hud-content > #dt-aio-panel .dt-body { flex: 1 1 auto !important; min-height: 0 !important; overflow: auto !important; }' +
+            // Skin next so it wins ties, exactly as the Stake integration does,
+            // then the Nuts theme repaints it in the HUD's palette.
+            NUTS_DT_SKIN_CSS + NUTS_DT_THEME_CSS;
+        // This tool is registered runAt 'document-start', where <head> does not
+        // reliably exist yet — `document.head.appendChild` threw there, which
+        // silently cost us the whole panel AND left the dice tool's legacy
+        // floating button on screen. Do the real bootstrap once the DOM is up,
+        // and fall back to documentElement the way injectVisibilityCss does.
+        const boot = () => {
+            try {
+                (document.head || document.documentElement).appendChild(style);
+                tool_dice_tool();
+                stripLegacyDiceChrome();
+            } catch (e) { console.error('[UnifiedTools] nuts dice-tool panel bootstrap failed:', e); }
+        };
+        if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot, { once: true });
+        else boot();
+    }
+    /** The DiceTool's legacy floating chrome — the 🎲 launcher button and its
+     *  modal backdrop — has no place on Nuts, where the panel lives inside the
+     *  HUD's Advanced IOW tab (Stake hides them by adding .dt-bridge-hidden in
+     *  tryStitch). The bridge CSS hides them, but remove the nodes outright so
+     *  they can never flash on screen or reappear if that CSS fails to land.
+     *  The dice tool builds them in its own DOM-ready init, so re-check briefly. */
+    function stripLegacyDiceChrome() {
+        const kill = () => ['dt-aio-button', 'dt-backdrop'].forEach(id => {
+            const el = document.getElementById(id);
+            if (el) el.remove();
+        });
+        kill();
+        let ticks = 0;
+        const iv = setInterval(() => { kill(); if (++ticks >= 20) clearInterval(iv); }, 250);
     }
     register({
         id: 'nuts-dice',
         name: 'Nuts Dice',
-        description: 'Manual / IOW / Smart bet-sizing modes on Nuts Dice.',
+        description: 'Manual / IOW / Smart / Advanced IOW bet-sizing modes on Nuts Dice.',
         matches: [
             'https://nuts.gg/dice*',
             'https://*.nuts.gg/dice*'
@@ -14879,7 +22159,7 @@ function tool_stake_7day_tracker() {
     register({
         id: 'nuts-limbo-target',
         name: 'Nuts Limbo/Target',
-        description: 'Manual / IOW / Smart bet-sizing modes on Nuts Target (Limbo equivalent).',
+        description: 'Manual / IOW / Smart / Advanced IOW modes on Nuts Target (Limbo equivalent).',
         matches: [
             'https://nuts.gg/target*',
             'https://*.nuts.gg/target*'
@@ -14919,6 +22199,83 @@ function tool_stake_7day_tracker() {
         group: 'Nuts',
         uiSelectors: ['#mines-auto-gui']
     }, tool_nuts_mines);
+
+    /* ----- Perfect Blackjack -----
+       One body serves all three sites (it branches on hostname), registered
+       once per site so the control panel can group and toggle it. Mirrors the
+       runIowSmartAndDice arrangement above. */
+    register({
+        id: 'stake-blackjack',
+        name: 'Stake Blackjack',
+        description: 'Basic-strategy advisor with optional auto-play on Stake Blackjack.',
+        matches: [
+            'https://stake.com/casino/games/blackjack*',
+            'https://stake.us/casino/games/blackjack*',
+            'https://stake.bet/casino/games/blackjack*',
+            'https://stake.games/casino/games/blackjack*',
+            'https://staketr.com/casino/games/blackjack*',
+            'https://staketr2.com/casino/games/blackjack*',
+            'https://staketr3.com/casino/games/blackjack*',
+            'https://staketr4.com/casino/games/blackjack*',
+            'https://stake.bz/casino/games/blackjack*',
+            'https://stake.pet/casino/games/blackjack*'
+        ],
+        runAt: 'document-end',
+        defaultEnabled: true,
+        group: 'Stake',
+        uiSelectors: ['#bj-perfect-hud']
+    }, tool_blackjack);
+
+    register({
+        id: 'shuffle-blackjack',
+        name: 'Shuffle Blackjack',
+        description: 'Basic-strategy advisor with optional auto-play on Shuffle Blackjack.',
+        matches: [
+            'https://shuffle.com/games/originals/blackjack*',
+            'https://shuffle.us/games/originals/blackjack*'
+        ],
+        runAt: 'document-end',
+        defaultEnabled: true,
+        group: 'Shuffle',
+        uiSelectors: ['#bj-perfect-hud']
+    }, tool_blackjack);
+
+    register({
+        id: 'nuts-blackjack',
+        name: 'Nuts Blackjack',
+        description: 'Basic-strategy advisor with optional auto-play on Nuts Blackjack.',
+        matches: [
+            'https://nuts.gg/blackjack*',
+            'https://*.nuts.gg/blackjack*'
+        ],
+        runAt: 'document-end',
+        defaultEnabled: true,
+        group: 'Nuts',
+        uiSelectors: ['#bj-perfect-hud']
+    }, tool_blackjack);
+
+    /* ----- Stake Moles ----- */
+    register({
+        id: 'stake-moles',
+        name: 'Stake Moles',
+        description: 'Autoplays Moles on Stake via DOM clicks or direct API calls, with a live board overlay.',
+        matches: [
+            'https://stake.com/casino/games/moles*',
+            'https://stake.us/casino/games/moles*',
+            'https://stake.bet/casino/games/moles*',
+            'https://stake.games/casino/games/moles*',
+            'https://staketr.com/casino/games/moles*',
+            'https://staketr2.com/casino/games/moles*',
+            'https://staketr3.com/casino/games/moles*',
+            'https://staketr4.com/casino/games/moles*',
+            'https://stake.bz/casino/games/moles*',
+            'https://stake.pet/casino/games/moles*'
+        ],
+        runAt: 'document-end',
+        defaultEnabled: true,
+        group: 'Stake',
+        uiSelectors: ['#moles-master-container', '#moles-board-lock']
+    }, tool_stake_moles);
 
 
     /* =========================================================
@@ -15704,18 +23061,271 @@ function tool_stake_7day_tracker() {
             // dice-tool tabs (Calculator/Optimizer/Results/Settings) keep
             // their own theming so the user's --dt-* themes still work.
             // Palette pulled from the IOW/Smart HUD CSS at lines 1630-1637.
-            const HUD_BG       = '#0f212e';
-            const HUD_PANEL_BG = 'rgba(26, 44, 56, 0.85)';
-            const HUD_BORDER   = 'rgba(82, 109, 130, 0.55)';
-            const HUD_BORDER_X = 'rgba(255, 255, 255, 0.06)';
+            //
+            // Site-aware: this bridge runs on Stake AND Shuffle, but the HUD it
+            // paints into is purple on Shuffle (the .shuffle-theme block sets
+            // --hud-green: #6c47ff and a violet panel/border). These constants
+            // used to be Stake-only, so on Shuffle the Stats deck, the Tools
+            // pill and the Terms tab rendered Stake green/slate inside a violet
+            // HUD. Mirror .shuffle-theme's values instead.
+            //
+            // Deliberately NOT themed: the positive/negative VALUE colours
+            // (green/red profit numbers). .shuffle-theme doesn't override
+            // --hud-positive/--hud-negative either — green-is-good is semantic,
+            // not brand chrome, and the runtime comparison further down keys off
+            // 'rgb(0, 255, 157)' to decide when a value is at its default.
+            //
+            // The mobile bundle solves the same problem with
+            // `var(--hud-green, #00ff9d)` instead, letting the cascade do it.
+            // Desktop stays with an explicit host check because several tokens
+            // here have no HUD variable to borrow (HUD_LABEL, HUD_FIELD_BG,
+            // HUD_BUTTON_BG, the on-accent ink and the Terms accent), and
+            // because HUD_PANEL_BG is a FLAT translucent colour while
+            // --hud-panel is a gradient — var()-ing that one would silently
+            // restyle Stake's deck cards. Keep both lists in sync by hand.
+            const IS_SHUF_HOST = /(^|\.)shuffle\.(com|us)$/i.test(location.hostname);
+            const HUD_BG       = IS_SHUF_HOST ? '#0a0818' : '#0f212e';
+            const HUD_PANEL_BG = IS_SHUF_HOST ? 'rgba(26, 18, 56, 0.85)' : 'rgba(26, 44, 56, 0.85)';
+            const HUD_BORDER   = IS_SHUF_HOST ? 'rgba(108, 71, 255, 0.5)' : 'rgba(82, 109, 130, 0.55)';
+            const HUD_BORDER_X = IS_SHUF_HOST ? 'rgba(108, 71, 255, 0.18)' : 'rgba(255, 255, 255, 0.06)';
             const HUD_FG       = '#f5fbff';
-            const HUD_LABEL    = '#94a3b8';
-            const HUD_GREEN    = '#00ff9d';
-            const HUD_GREEN_DK = '#00cc7a';
+            const HUD_LABEL    = IS_SHUF_HOST ? '#a99ede' : '#94a3b8';
+            const HUD_GREEN    = IS_SHUF_HOST ? '#6c47ff' : '#00ff9d';
+            const HUD_GREEN_DK = IS_SHUF_HOST ? '#4f35b3' : '#00cc7a';
+            // Text that sits ON the accent. Stake's bright green needs dark ink;
+            // Shuffle's mid-violet needs white.
+            const HUD_ON_ACCENT = IS_SHUF_HOST ? '#ffffff' : '#0f212e';
+            // A faint accent wash for hover states.
+            const HUD_GREEN_SOFT = IS_SHUF_HOST ? 'rgba(108, 71, 255, 0.12)' : 'rgba(0, 255, 157, 0.05)';
+            // Terms glossary headings: the PySide replica's teal reads as a
+            // third brand on Shuffle, so use a lightened violet there.
+            const HUD_TERMS_ACCENT = IS_SHUF_HOST ? '#9d7cff' : '#249f87';
+            const HUD_TERMS_RULE   = IS_SHUF_HOST ? 'rgba(157, 124, 255, 0.25)' : 'rgba(36, 159, 135, 0.25)';
             const HUD_RED      = '#e11d48';
-            const HUD_FIELD_BG = 'rgba(8, 11, 18, 0.65)';
-            const HUD_BUTTON_BG = 'rgba(15, 33, 46, 0.75)';
+            const HUD_FIELD_BG = IS_SHUF_HOST ? 'rgba(8, 6, 20, 0.72)' : 'rgba(8, 11, 18, 0.65)';
+            const HUD_BUTTON_BG = IS_SHUF_HOST ? 'rgba(22, 15, 48, 0.8)' : 'rgba(15, 33, 46, 0.75)';
 
+            /* ---- ADVANCED IOW — DiceTool.exe replica skin (Stake theme) ----
+               Reproduces the desktop Dice Tool app exactly, in its Stake
+               theme (Archive/Dice Tool ui/main_window.py THEMES["Stake"]):
+               ttk.Notebook tabs, sunken LabelFrames with Times New Roman
+               italic underlined titles on 2px #c9d1d9 borders, #071824
+               clam entries/buttons, chunky #00ff80 progress bars, and the
+               app's gray-striped (#2d2d2d/#383838) results treeview.
+               Appended AFTER the compact bridge rules so it wins ties;
+               scoped to the stitched HUD panel. Stats tab (.hud-*) is
+               untouched. */
+            const DT_STAKE_SKIN_CSS = `
+/* Panel chrome */
+#hud-content > #dt-aio-panel { --dt-font-scale: 1 !important; background: #162a35 !important; border: 1px solid #2f4553 !important; border-radius: 8px !important; font-size: 12.5px !important; line-height: 1.45 !important; color: #c9d1d9; font-family: "Segoe UI", -apple-system, sans-serif !important; overflow: hidden !important; }
+/* Tab strip = ttk.Notebook: flat tabs, selected = select_bg #1f333e */
+#hud-content > #dt-aio-panel .dt-tabs { background: #162a35 !important; border-bottom: 1px solid #2f4553 !important; padding: 5px 8px 0 !important; gap: 2px; }
+#hud-content > #dt-aio-panel .dt-tab-btn { flex: 0 1 auto !important; padding: 7px 13px !important; font-size: 12px !important; font-weight: 700 !important; color: #c9d1d9 !important; background: #10202b !important; border: 1px solid #2f4553 !important; border-bottom: none !important; border-radius: 4px 4px 0 0 !important; text-transform: none; letter-spacing: 0; }
+#hud-content > #dt-aio-panel .dt-tab-btn:hover { background: #1a2c38 !important; color: #ffffff !important; }
+#hud-content > #dt-aio-panel .dt-tab-btn.active { background: #1f333e !important; color: #ffffff !important; border-color: #3a5566 !important; }
+#hud-content > #dt-aio-panel .dt-tab-btn .dt-tab-icon { display: none !important; }
+/* Body */
+#hud-content > #dt-aio-panel .dt-body { padding: 18px 12px 10px !important; background: #162a35; }
+#hud-content > #dt-aio-panel .dt-panel.active { gap: 17px !important; }
+#hud-content > #dt-aio-panel .dt-body::-webkit-scrollbar, #hud-content > #dt-aio-panel .dt-scroll::-webkit-scrollbar, #hud-content > #dt-aio-panel .dt-terms-scroll::-webkit-scrollbar { width: 10px; height: 10px; }
+#hud-content > #dt-aio-panel .dt-body::-webkit-scrollbar-thumb, #hud-content > #dt-aio-panel .dt-scroll::-webkit-scrollbar-thumb, #hud-content > #dt-aio-panel .dt-terms-scroll::-webkit-scrollbar-thumb { background: #2f4553; border-radius: 2px; border: 2px solid #162a35; }
+/* LabelFrames: sunken, 2px slate border, serif italic underlined title on the border */
+#hud-content > #dt-aio-panel .dt-card { background: #162a35 !important; border: 2px solid #c9d1d9 !important; border-radius: 4px !important; padding: 16px 12px 12px !important; margin-bottom: 0 !important; box-shadow: inset 1px 1px 4px rgba(0,0,0,0.35) !important; position: relative !important; overflow: visible !important; }
+#hud-content > #dt-aio-panel .dt-card-title { position: absolute !important; top: -11px !important; left: 10px !important; background: #162a35 !important; padding: 0 7px !important; font-family: "Times New Roman", Georgia, serif !important; font-style: italic !important; font-weight: 700 !important; text-decoration: underline !important; font-size: 14px !important; color: #c9d1d9 !important; letter-spacing: 0; text-transform: none; white-space: nowrap; }
+/* Labels + entries (ttk clam) */
+#hud-content > #dt-aio-panel .dt-lbl { font-size: 12.5px; font-weight: 700; color: #c9d1d9; white-space: nowrap; }
+#hud-content > #dt-aio-panel input.dt-entry, #hud-content > #dt-aio-panel select.dt-theme-select { background: #071824 !important; color: #c9d1d9 !important; border: 1px solid #2f4553 !important; border-radius: 3px !important; padding: 5px 8px !important; font-size: 12px !important; font-family: "Segoe UI", -apple-system, sans-serif !important; min-width: 0; width: 100%; text-align: left; box-shadow: inset 1px 1px 2px rgba(0,0,0,0.4); }
+#hud-content > #dt-aio-panel input.dt-entry:focus, #hud-content > #dt-aio-panel select.dt-theme-select:focus { outline: none !important; border-color: #c9d1d9 !important; box-shadow: 0 0 0 1px #c9d1d9 !important; }
+#hud-content > #dt-aio-panel input.dt-entry::selection { background: #1f333e; color: #ffffff; }
+#hud-content > #dt-aio-panel input.dt-out-val[readonly] { opacity: 1 !important; font-weight: 400 !important; }
+/* Buttons (ttk clam) */
+#hud-content > #dt-aio-panel .dt-btn { background: #071824 !important; border: 1px solid #2f4553 !important; color: #c9d1d9 !important; border-radius: 3px !important; font-size: 12px !important; font-weight: 600 !important; letter-spacing: 0; text-transform: none !important; padding: 6px 12px !important; min-height: 30px !important; font-family: "Segoe UI", -apple-system, sans-serif !important; box-shadow: none !important; }
+#hud-content > #dt-aio-panel .dt-btn:hover { background: #1a2c38 !important; color: #ffffff !important; border-color: #3a5566 !important; }
+#hud-content > #dt-aio-panel .dt-btn:active { background: #1f333e !important; transform: none !important; }
+#hud-content > #dt-aio-panel .dt-btn:disabled { opacity: 0.45 !important; }
+#hud-content > #dt-aio-panel .dt-btn-copy { padding: 4px 11px !important; min-height: 24px !important; font-size: 11.5px !important; }
+#hud-content > #dt-aio-panel .dt-btn-block { width: 100%; margin-top: 13px !important; }
+/* Calculator grid: Calculated Values | (Parameters + Simulation Controls) */
+#hud-content > #dt-aio-panel .dt-calc-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr); gap: 14px; align-items: start; }
+#hud-content > #dt-aio-panel .dt-calc-right { display: flex; flex-direction: column; gap: 17px; min-width: 0; }
+#hud-content > #dt-aio-panel .dt-cv-row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 9px; align-items: center; padding: 7px 0; }
+/* Profit Stop stays in the DOM (calcValues + the Stats-tab mirror write/read
+   #dt-out_profit) but is not displayed — the strategy's stop condition uses
+   Balance Target, so that is the number shown and copied. */
+#hud-content > #dt-aio-panel .dt-cv-row[hidden] { display: none !important; }
+#hud-content > #dt-aio-panel .dt-pm-grid { display: grid; grid-template-columns: auto minmax(0, 1fr) auto minmax(0, 1fr); gap: 9px 10px; align-items: center; }
+#hud-content > #dt-aio-panel .dt-pm-btns { display: flex; gap: 10px; margin-top: 13px; }
+#hud-content > #dt-aio-panel .dt-pm-btns .dt-btn { flex: 1 1 0; }
+#hud-content > #dt-aio-panel .dt-ctl-row { display: flex; align-items: center; gap: 10px; margin: 6px 0; }
+#hud-content > #dt-aio-panel .dt-ctl-row .dt-btn { flex: 0 0 auto; min-width: 112px; }
+#hud-content > #dt-aio-panel .dt-ctl-row input.dt-entry { width: 84px; flex: 0 0 auto; text-align: center; }
+#hud-content > #dt-aio-panel .dt-ctl-row .dt-progress-wrap { flex: 1 1 auto; margin: 0 !important; }
+/* Optimizer */
+#hud-content > #dt-aio-panel .dt-opt-grid { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 9px 12px; align-items: center; }
+#hud-content > #dt-aio-panel .dt-opt-runrow { margin-top: 13px; }
+#hud-content > #dt-aio-panel .dt-opt-foot, #hud-content > #dt-aio-panel .dt-res-foot { display: flex; justify-content: space-between; gap: 10px; }
+/* Progress (chunky tk bar, #00ff80 on dark trough) + status */
+#hud-content > #dt-aio-panel .dt-progress-wrap { background: #071824 !important; border: 1px solid #2f4553 !important; height: 14px !important; border-radius: 2px !important; margin: 0 !important; }
+#hud-content > #dt-aio-panel .dt-progress-bar { background: #00ff80 !important; }
+#hud-content > #dt-aio-panel .dt-status-line { font-size: 11.5px !important; color: #c9d1d9 !important; text-align: center; font-family: "Segoe UI", -apple-system, sans-serif !important; opacity: 1 !important; margin: 0 !important; }
+/* Scroll regions */
+#hud-content > #dt-aio-panel .dt-scroll { border: 1px solid #2f4553 !important; border-radius: 3px !important; background: #071824 !important; }
+#hud-content > #dt-aio-panel .dt-res-scroll { flex: 1 1 auto; min-height: 220px; max-height: none !important; }
+#hud-content > #dt-aio-panel #dt-panel-results.active { flex: 1 1 auto; min-height: 0; }
+/* Simulation Results treeview (Statistic | Value) */
+#hud-content > #dt-aio-panel table.dt-stats { font-size: 12px !important; }
+#hud-content > #dt-aio-panel table.dt-stats th { position: sticky; top: 0; background: #071824; color: #c9d1d9; font-size: 12px; font-weight: 700; padding: 6px 11px; border-bottom: 1px solid #2f4553; text-align: left; }
+#hud-content > #dt-aio-panel table.dt-stats th:last-child { text-align: center; }
+#hud-content > #dt-aio-panel table.dt-stats td { padding: 5px 11px !important; border-bottom: 1px solid #14262f !important; font-size: 12px !important; }
+#hud-content > #dt-aio-panel table.dt-stats td:first-child { color: #c9d1d9 !important; font-weight: 400 !important; width: 55%; }
+#hud-content > #dt-aio-panel table.dt-stats td:last-child { color: #c9d1d9 !important; text-align: center !important; font-family: "Segoe UI", -apple-system, sans-serif !important; font-weight: 400 !important; }
+#hud-content > #dt-aio-panel table.dt-stats td.dt-empty { text-align: center; color: #7d8a96; padding: 14px !important; }
+/* Optimizer Results treeview: all columns, centered, gray striping like the app */
+#hud-content > #dt-aio-panel table.dt-results { font-size: 11.5px !important; }
+#hud-content > #dt-aio-panel table.dt-results th { position: sticky; top: 0; background: #071824 !important; color: #c9d1d9 !important; font-size: 11.5px !important; font-weight: 700 !important; letter-spacing: 0; text-transform: none !important; text-align: center !important; padding: 6px 9px !important; border-bottom: 1px solid #2f4553 !important; border-right: 1px solid #14262f; font-family: "Segoe UI", -apple-system, sans-serif !important; white-space: nowrap; }
+#hud-content > #dt-aio-panel table.dt-results td { text-align: center !important; color: #c9d1d9 !important; padding: 4px 9px !important; border-bottom: none !important; font-family: "Segoe UI", -apple-system, sans-serif !important; white-space: nowrap; }
+#hud-content > #dt-aio-panel table.dt-results tr:nth-child(odd) td { background: #2d2d2d !important; }
+#hud-content > #dt-aio-panel table.dt-results tr:nth-child(even) td { background: #383838 !important; }
+#hud-content > #dt-aio-panel table.dt-results tr:hover td { background: #454545 !important; }
+#hud-content > #dt-aio-panel table.dt-results tr.selected td { background: #1f333e !important; color: #ffffff !important; font-weight: 400 !important; box-shadow: none !important; }
+/* The app has no color-coded cells or risk bars — neutralize them */
+#hud-content > #dt-aio-panel td.dt-cell-good, #hud-content > #dt-aio-panel td.dt-cell-mid, #hud-content > #dt-aio-panel td.dt-cell-bad { color: #c9d1d9 !important; }
+#hud-content > #dt-aio-panel table.dt-results tr.selected td.dt-cell-good, #hud-content > #dt-aio-panel table.dt-results tr.selected td.dt-cell-mid, #hud-content > #dt-aio-panel table.dt-results tr.selected td.dt-cell-bad { color: #ffffff !important; }
+#hud-content > #dt-aio-panel .dt-riskbar { display: none !important; }
+#hud-content > #dt-aio-panel #dt-res_status { display: none !important; }
+/* Settings: centered fixed-width column of LabelFrames */
+#hud-content > #dt-aio-panel .dt-settings-center { width: 100%; max-width: 440px; margin: 14px auto 0; display: flex; flex-direction: column; gap: 24px; }
+#hud-content > #dt-aio-panel .dt-set-row { display: flex; justify-content: space-between; align-items: center; gap: 14px; padding: 9px 0; }
+#hud-content > #dt-aio-panel .dt-sep { height: 1px; background: #2f4553; }
+#hud-content > #dt-aio-panel .dt-set-desc { font-size: 11px; font-style: italic; color: #7d8a96; margin: 2px 0 8px; line-height: 1.4; }
+#hud-content > #dt-aio-panel .dt-set-val { color: #7d8a96; font-size: 12px; }
+/* The IOW HUD strips native checkbox chrome globally — restore it here,
+   same as the bridge does for the Stats deck autostop checkbox. */
+#hud-content > #dt-aio-panel .dt-chk { appearance: auto !important; -webkit-appearance: auto !important; width: 15px !important; height: 15px !important; margin: 0 !important; padding: 0 !important; position: static !important; opacity: 1 !important; visibility: visible !important; pointer-events: auto !important; accent-color: #00ff80; cursor: pointer; flex: 0 0 auto !important; }
+#hud-content > #dt-aio-panel select.dt-theme-select { width: auto !important; flex: 0 0 auto !important; }
+#hud-content > #dt-aio-panel input.dt-num-input { width: 64px !important; flex: 0 0 auto !important; text-align: center !important; }
+/* Terms: the app's plain glossary text area (no search box) */
+#hud-content > #dt-aio-panel #dt-panel-terms.active { padding: 0 !important; }
+#hud-content > #dt-aio-panel .dt-terms-search { display: none !important; }
+#hud-content > #dt-aio-panel .dt-terms-scroll { background: #0f212e !important; border: 1px solid #2f4553 !important; border-radius: 4px !important; padding: 14px 18px !important; font-size: 12px !important; line-height: 1.5 !important; font-family: "Segoe UI", -apple-system, sans-serif !important; color: #c9d1d9 !important; }
+#hud-content > #dt-aio-panel .dt-terms-heading { color: #c9d1d9 !important; font-size: 17px !important; font-weight: 700 !important; letter-spacing: 0 !important; text-transform: none; border-bottom: none !important; padding-bottom: 0 !important; margin: 16px 0 6px !important; }
+#hud-content > #dt-aio-panel .dt-terms-heading:first-child { margin-top: 0 !important; }
+#hud-content > #dt-aio-panel .dt-terms-subheading { color: #c9d1d9 !important; font-size: 14px !important; font-weight: 700 !important; letter-spacing: 0; text-transform: none; margin: 10px 0 3px !important; }
+#hud-content > #dt-aio-panel .dt-terms-label { color: #c9d1d9 !important; font-weight: 700 !important; }
+#hud-content > #dt-aio-panel .dt-terms-dash { color: #7d8a96 !important; }
+#hud-content > #dt-aio-panel .dt-terms-def, #hud-content > #dt-aio-panel .dt-terms-text { color: #c9d1d9 !important; }
+#hud-content > #dt-aio-panel .dt-terms-empty { display: none !important; }
+/* Leftover modern chrome that must never surface in the replica */
+#hud-content > #dt-aio-panel .dt-help, #hud-content > #dt-aio-panel .dt-hint, #hud-content > #dt-aio-panel .dt-steps, #hud-content > #dt-aio-panel .dt-coach { display: none !important; }
+`;
+            /* =====================================================================
+               SHUFFLE THEME — the DiceTool panel's internals.
+               The skin above is the DiceTool.exe replica (ttk clam slate:
+               #162a35 frames, 2px #c9d1d9 LabelFrames with Times New Roman
+               titles, #071824 entries, #00ff80 accent) and is shared by Stake
+               and Shuffle. On Shuffle the HUD around it is violet, so the panel
+               read as a slate window pasted into a purple HUD.
+
+               Every rule here is scoped through .shuffle-theme, the class
+               buildHUD puts on the HUD root only on shuffle.us/.com — so this
+               block cannot affect Stake no matter the source order, and the
+               extra #id + .class also outranks the skin's two-#id selectors.
+               Colours are taken from the HUD's OWN custom properties, so the
+               panel tracks .shuffle-theme's palette automatically:
+                 --hud-green #6c47ff, --hud-green-dark #4f35b3,
+                 --hud-panel violet gradient, --hud-border rgba(108,71,255,.5).
+               Colour and type only - nothing here moves a box.
+               (No backticks in here - this block is a JS template literal.) */
+            const SHUF = '#ratchet-master-container.shuffle-theme #hud-content > #dt-aio-panel';
+            const DT_SHUFFLE_THEME_CSS = IS_SHUF_HOST ? `
+${SHUF} { background: var(--hud-panel) !important; border: 1px solid var(--hud-border) !important; border-radius: 12px !important;
+  color: #f5fbff !important; box-shadow: 0 18px 40px rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.04) !important; }
+/* Tab strip = pills; the active pill takes the HUD's own violet gradient so it
+   matches the Manual / IOW / Smart / Tools pills sitting right above it. */
+${SHUF} .dt-tabs { background: transparent !important; border-bottom: 1px solid var(--hud-border-soft) !important; padding: 9px !important; gap: 6px !important; }
+${SHUF} .dt-tab-btn { background: rgba(8, 6, 20, 0.72) !important; border: 1px solid rgba(108, 71, 255, 0.22) !important;
+  border-radius: 9px !important; color: #a99ede !important; font-size: 10.5px !important; font-weight: 800 !important;
+  letter-spacing: 0.06em !important; text-transform: uppercase !important; padding: 7px 12px !important;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease, box-shadow 0.15s ease !important; }
+${SHUF} .dt-tab-btn:hover { background: rgba(108, 71, 255, 0.14) !important; border-color: rgba(108, 71, 255, 0.5) !important; color: #f5fbff !important; }
+${SHUF} .dt-tab-btn.active { background: linear-gradient(135deg, var(--hud-green), var(--hud-green-dark)) !important;
+  border-color: rgba(157, 124, 255, 0.6) !important; color: #ffffff !important;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.12) inset, 0 0 16px rgba(108, 71, 255, 0.45) !important; }
+${SHUF} .dt-body { background: transparent !important; padding: 14px 12px 12px !important; }
+${SHUF} .dt-body::-webkit-scrollbar-thumb, ${SHUF} .dt-scroll::-webkit-scrollbar-thumb, ${SHUF} .dt-terms-scroll::-webkit-scrollbar-thumb {
+  background: rgba(108, 71, 255, 0.45) !important; border-radius: 999px !important; border: 2px solid transparent !important; background-clip: padding-box !important; }
+/* LabelFrames become violet cards; the notched Times-italic title becomes a
+   lettered caption over a hairline (padding drops to match). */
+${SHUF} .dt-card { background: rgba(16, 11, 36, 0.72) !important; border: 1px solid var(--hud-border-soft) !important;
+  border-radius: 12px !important; padding: 12px !important; box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03) !important; }
+${SHUF} .dt-card-title { position: static !important; top: auto !important; left: auto !important; display: block !important;
+  background: none !important; padding: 0 0 7px !important; margin: 0 0 11px !important;
+  font-family: "Segoe UI", -apple-system, sans-serif !important; font-style: normal !important; text-decoration: none !important;
+  font-size: 10.5px !important; font-weight: 800 !important; letter-spacing: 0.1em !important; text-transform: uppercase !important;
+  color: #9d7cff !important; border-bottom: 1px solid rgba(108, 71, 255, 0.3) !important; }
+${SHUF} .dt-lbl { color: #a99ede !important; font-size: 11px !important; font-weight: 700 !important; }
+${SHUF} input.dt-entry, ${SHUF} select.dt-theme-select { background: rgba(8, 6, 20, 0.85) !important; color: #f5fbff !important;
+  border: 1px solid rgba(108, 71, 255, 0.22) !important; border-radius: 9px !important; padding: 6px 9px !important;
+  font-weight: 700 !important; box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03) !important; }
+${SHUF} input.dt-entry:focus, ${SHUF} select.dt-theme-select:focus { border-color: var(--hud-green) !important;
+  box-shadow: 0 0 0 2px rgba(108, 71, 255, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.03) !important; }
+${SHUF} input.dt-entry::selection { background: rgba(108, 71, 255, 0.4); color: #fff; }
+${SHUF} .dt-btn { background: linear-gradient(180deg, rgba(42, 30, 84, 0.9), rgba(18, 12, 40, 0.94)) !important;
+  border: 1px solid rgba(108, 71, 255, 0.28) !important; color: #f5fbff !important; border-radius: 9px !important;
+  font-size: 10.5px !important; font-weight: 800 !important; text-transform: uppercase !important; letter-spacing: 0.06em !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04) !important;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease, box-shadow 0.15s ease !important; }
+${SHUF} .dt-btn:hover { background: linear-gradient(180deg, rgba(56, 40, 108, 0.94), rgba(24, 16, 52, 0.96)) !important;
+  border-color: rgba(157, 124, 255, 0.6) !important; color: #fff !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05), 0 0 14px rgba(108, 71, 255, 0.3) !important; }
+/* Block buttons are each tab's primary action - give them the accent fill. */
+${SHUF} .dt-btn-block { background: linear-gradient(135deg, var(--hud-green), var(--hud-green-dark)) !important;
+  border-color: rgba(157, 124, 255, 0.6) !important; color: #ffffff !important;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.12) inset, 0 0 18px rgba(108, 71, 255, 0.42) !important; }
+${SHUF} .dt-btn-block:hover { filter: brightness(1.12) !important;
+  background: linear-gradient(135deg, var(--hud-green), var(--hud-green-dark)) !important; }
+${SHUF} .dt-progress-wrap { background: rgba(8, 6, 20, 0.85) !important; border: 1px solid rgba(108, 71, 255, 0.22) !important;
+  border-radius: 999px !important; height: 10px !important; overflow: hidden !important; }
+${SHUF} .dt-progress-bar { background: linear-gradient(90deg, var(--hud-green), #9d7cff) !important; }
+${SHUF} .dt-status-line { color: #a99ede !important; }
+${SHUF} .dt-scroll { background: rgba(8, 6, 20, 0.72) !important; border: 1px solid var(--hud-border-soft) !important; border-radius: 12px !important; }
+${SHUF} .dt-sep { background: var(--hud-border-soft) !important; }
+${SHUF} .dt-set-desc, ${SHUF} .dt-set-val { color: #a99ede !important; }
+${SHUF} .dt-chk { accent-color: var(--hud-green) !important; }
+/* Tables: violet lettered headers, hairline rules. The replica's #2d2d2d /
+   #383838 Tk striping reads as a gray hole punched in a violet panel. */
+${SHUF} table.dt-stats th, ${SHUF} table.dt-results th { background: rgba(8, 6, 20, 0.94) !important; color: #9d7cff !important;
+  font-size: 10px !important; font-weight: 800 !important; letter-spacing: 0.08em !important; text-transform: uppercase !important;
+  border-bottom: 1px solid rgba(108, 71, 255, 0.35) !important; }
+${SHUF} table.dt-stats td, ${SHUF} table.dt-results td { color: #f5fbff !important; border-bottom: 1px solid rgba(255, 255, 255, 0.05) !important; }
+${SHUF} table.dt-stats td:first-child { color: #a99ede !important; }
+${SHUF} table.dt-stats td.dt-empty { color: #a99ede !important; }
+${SHUF} table.dt-results tr:nth-child(odd) td { background: rgba(108, 71, 255, 0.06) !important; }
+${SHUF} table.dt-results tr:nth-child(even) td { background: transparent !important; }
+${SHUF} table.dt-results tr:hover td { background: rgba(108, 71, 255, 0.16) !important; }
+${SHUF} table.dt-results tr.selected td { background: rgba(108, 71, 255, 0.34) !important; color: #fff !important; }
+${SHUF} table.dt-results tr.selected td:first-child { box-shadow: inset 2px 0 0 #9d7cff !important; }
+/* The replica neutralized the colour-coded cells to match DiceTool.exe. Give
+   them back, using the same green/red the HUD uses for profit numbers — those
+   stay semantic on Shuffle, they are not brand chrome.
+   Must be qualified by the table class: the generic "table.dt-results td" rule
+   above carries an extra element in its selector, so a bare "td.dt-cell-good"
+   loses to it and the cells silently render as plain body text. */
+${SHUF} table.dt-stats td.dt-cell-good, ${SHUF} table.dt-results td.dt-cell-good { color: #00ff9d !important; }
+${SHUF} table.dt-stats td.dt-cell-mid, ${SHUF} table.dt-results td.dt-cell-mid { color: #ffd479 !important; }
+${SHUF} table.dt-stats td.dt-cell-bad, ${SHUF} table.dt-results td.dt-cell-bad { color: #ff6b8a !important; }
+${SHUF} table.dt-results tr.selected td.dt-cell-good, ${SHUF} table.dt-results tr.selected td.dt-cell-mid,
+${SHUF} table.dt-results tr.selected td.dt-cell-bad { color: #fff !important; }
+/* Terms glossary */
+${SHUF} .dt-terms-scroll { background: rgba(8, 6, 20, 0.72) !important; border: 1px solid var(--hud-border-soft) !important;
+  border-radius: 12px !important; color: #cfc4f0 !important; }
+${SHUF} .dt-terms-heading { color: #9d7cff !important; font-size: 12px !important; font-weight: 800 !important;
+  letter-spacing: 0.08em !important; text-transform: uppercase !important;
+  border-bottom: 1px solid rgba(108, 71, 255, 0.3) !important; padding-bottom: 5px !important; }
+${SHUF} .dt-terms-subheading { color: #b79dff !important; }
+${SHUF} .dt-terms-label { color: #f5fbff !important; }
+${SHUF} .dt-terms-dash { color: #a99ede !important; }
+${SHUF} .dt-terms-def, ${SHUF} .dt-terms-text { color: #cfc4f0 !important; }` : '';
             const bridgeCss = document.createElement('style');
             bridgeCss.id = 'dt-iow-bridge-css';
             bridgeCss.textContent = [
@@ -15810,9 +23420,9 @@ function tool_stake_7day_tracker() {
                    This is independent of the .active class (which gets
                    stripped every 500ms by syncModeButtons), so no flicker. */
                 '#ratchet-master-container[data-tools-active="1"] #mode-dice-tools {',
-                '  background: #00ff9d !important;',
-                '  color: #0f212e !important;',
-                '  box-shadow: 0 0 12px #00ff9d !important;',
+                '  background: ' + HUD_GREEN + ' !important;',
+                '  color: ' + HUD_ON_ACCENT + ' !important;',
+                '  box-shadow: 0 0 12px ' + HUD_GREEN + ' !important;',
                 '}',
                 /* ---- Stats tab — uses the IOW/Smart .hud-* class hierarchy
                        directly, so the existing HUD CSS in this script paints
@@ -15923,28 +23533,29 @@ function tool_stake_7day_tracker() {
                 '#dt-panel-stats details.hud-streaks-toggle { flex: 1 1 0; }',
                 '#dt-panel-stats details.hud-streaks-toggle summary { list-style: none; padding: 8px 12px; background: ' + HUD_PANEL_BG + '; border: 1px solid ' + HUD_BORDER_X + '; border-radius: 10px; cursor: pointer; font-size: 11px; font-weight: 800; color: #cbd5e1; text-transform: uppercase; letter-spacing: 0.4px; display: flex; justify-content: space-between; align-items: center; }',
                 '#dt-panel-stats details.hud-streaks-toggle summary::-webkit-details-marker { display: none; }',
-                '#dt-panel-stats details.hud-streaks-toggle summary:hover { background: rgba(0,255,157,0.05); }',
+                '#dt-panel-stats details.hud-streaks-toggle summary:hover { background: ' + HUD_GREEN_SOFT + '; }',
                 '#dt-panel-stats details.hud-streaks-toggle summary::after { content: "▼"; color: ' + HUD_GREEN + '; font-size: 10px; transition: transform 0.15s; }',
                 '#dt-panel-stats details.hud-streaks-toggle[open] summary::after { transform: rotate(180deg); }',
                 '#dt-panel-stats .hud-streaks-list { padding: 6px 12px; background: rgba(8,11,18,0.55); border: 1px solid ' + HUD_BORDER_X + '; border-top: none; border-radius: 0 0 10px 10px; font-family: "Roboto Mono", monospace; font-size: 11px; color: ' + HUD_FG + '; line-height: 1.6; }',
                 /* ---- Terms tab — glossary panel. Mirrors the original
-                       PySide terms_tab.py styling: teal headings (#249f87),
+                       PySide terms_tab.py styling: teal headings (violet on
+                       Shuffle, see HUD_TERMS_ACCENT),
                        white definitions, dark background, generous padding,
                        scrollable content area. */
                 '#dt-panel-terms.active { display: flex !important; flex-direction: column; flex: 1 1 auto; min-height: 0; padding: 10px !important; }',
                 '#dt-panel-terms .dt-terms-scroll { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 14px 18px; background: ' + HUD_PANEL_BG + '; border: 1px solid ' + HUD_BORDER_X + '; border-radius: 12px; color: ' + HUD_FG + '; font-family: "Segoe UI", -apple-system, BlinkMacSystemFont, sans-serif; line-height: 1.5; font-size: 12px; }',
                 '#dt-panel-terms .dt-terms-scroll::-webkit-scrollbar { width: 8px; }',
                 '#dt-panel-terms .dt-terms-scroll::-webkit-scrollbar-thumb { background: ' + HUD_BORDER + '; border-radius: 4px; }',
-                '#dt-panel-terms .dt-terms-heading { color: #249f87; font-size: 16px; font-weight: 800; letter-spacing: 0.5px; margin: 14px 0 6px; padding-bottom: 4px; border-bottom: 1px solid rgba(36, 159, 135, 0.25); }',
+                '#dt-panel-terms .dt-terms-heading { color: ' + HUD_TERMS_ACCENT + '; font-size: 16px; font-weight: 800; letter-spacing: 0.5px; margin: 14px 0 6px; padding-bottom: 4px; border-bottom: 1px solid ' + HUD_TERMS_RULE + '; }',
                 '#dt-panel-terms .dt-terms-heading:first-child { margin-top: 0; }',
-                '#dt-panel-terms .dt-terms-subheading { color: #249f87; font-size: 13px; font-weight: 700; letter-spacing: 0.3px; margin: 10px 0 4px; }',
+                '#dt-panel-terms .dt-terms-subheading { color: ' + HUD_TERMS_ACCENT + '; font-size: 13px; font-weight: 700; letter-spacing: 0.3px; margin: 10px 0 4px; }',
                 '#dt-panel-terms .dt-terms-row { margin: 3px 0; padding: 0; }',
-                '#dt-panel-terms .dt-terms-label { color: #249f87; font-weight: 700; }',
+                '#dt-panel-terms .dt-terms-label { color: ' + HUD_TERMS_ACCENT + '; font-weight: 700; }',
                 '#dt-panel-terms .dt-terms-dash { color: ' + HUD_LABEL + '; }',
                 '#dt-panel-terms .dt-terms-def { color: ' + HUD_FG + '; }',
                 '#dt-panel-terms .dt-terms-text { margin: 3px 0; color: ' + HUD_FG + '; }',
                 '#dt-panel-terms .dt-terms-spacer { height: 6px; }'
-            ].join('\n');
+            ].join('\n') + DT_STAKE_SKIN_CSS + DT_SHUFFLE_THEME_CSS;
             // Guard against re-stitch (SPA navigation rebuilt HUD). The
             // bridge CSS is process-wide so we only need it once.
             if (!document.getElementById('dt-iow-bridge-css')) {
@@ -15971,7 +23582,7 @@ function tool_stake_7day_tracker() {
             toolsBtn.id = 'mode-dice-tools';
             toolsBtn.className = 'mode-btn';
             toolsBtn.textContent = 'Advanced IOW';
-            toolsBtn.title = 'Advanced IOW (Calculator / Optimizer / Results / Settings)';
+            toolsBtn.title = 'Advanced IOW (Calculator / Strategy Finder / Results / Settings)';
             modeWrap.appendChild(toolsBtn);
 
             toolsBtn.addEventListener('click', () => {
@@ -16066,7 +23677,7 @@ function tool_stake_7day_tracker() {
             const statsBtn = document.createElement('button');
             statsBtn.className = 'dt-tab-btn';
             statsBtn.dataset.tab = 'stats';
-            statsBtn.innerHTML = '<span class="dt-tab-icon">📈</span>Stats';
+            statsBtn.innerHTML = 'Stats';
             const calcBtn = tabsNav.querySelector('[data-tab="calc"]');
             if (calcBtn) tabsNav.insertBefore(statsBtn, calcBtn);
             else tabsNav.insertBefore(statsBtn, tabsNav.firstChild);
@@ -16230,7 +23841,7 @@ function tool_stake_7day_tracker() {
             const termsBtn = document.createElement('button');
             termsBtn.className = 'dt-tab-btn';
             termsBtn.dataset.tab = 'terms';
-            termsBtn.innerHTML = '<span class="dt-tab-icon">📖</span>Terms';
+            termsBtn.innerHTML = 'Terms';
             tabsNav.appendChild(termsBtn);
 
             // Source content. Mirrors terms_tab.py's TERMS_TEXT layout:
@@ -16299,25 +23910,49 @@ function tool_stake_7day_tracker() {
                 'Bust rate – The percentage of trials that failed to meet the first profit stop.\n' +
                 '\n' +
                 '\n' +
-                'OPTIMIZER TAB\n' +
+                'EASY MODE TAB\n' +
                 '\n' +
-                'PARAMETER RANGES\n' +
-                'Combo – A single set of parameter values tested by the optimizer.\n' +
-                'Starting Balance – The initial balance applied to all combos during optimization.\n' +
-                'Trials per Combo – The number of simulations run for each parameter combination.\n' +
-                'Bet Divisor Range – Range or list of values to test for bet divisors.\n' +
-                'Profit Multiplier Range – Range or list of values to test for profit multipliers.\n' +
-                'Win Increase % Range – Range or list of win increase percentages to test.\n' +
-                'Loss Reset – Range or list of loss reset counts to test.\n' +
-                'Buffer % Range – Range or list of buffer percentages to test.\n' +
+                'PARAMETERS\n' +
+                'Multiplier – The payout multiplier you want to play at, or Any to see the multiplier each combo produces (set Win Increase % first).\n' +
+                'Win Increase % – Your desired win increase %, or Any to search every whole number 1-500. Loss Reset and Buffer % are worked out automatically: loss reset runs up to the multiplier value (max 100) and the buffer absorbs the decimals so your values are matched exactly.\n' +
+                'Any (button) – The small button next to each field resets that field back to Any.\n' +
+                'Win Chance – The dice win chance implied by the multiplier (99 / multiplier) when it is pinned.\n' +
+                'Combos – How many parameter combinations are currently listed.\n' +
+                '\n' +
+                'RESULTS DEFINITIONS\n' +
+                'Multiplier – The payout multiplier that combo produces (always your pinned value when Multiplier is set).\n' +
+                'Win Increase % – The win increase percentage you would enter in the game.\n' +
+                'Loss Reset – The number of losses before the bet resets to base.\n' +
+                'Buffer % – The buffer for that combo (solved to 2 decimals when left on Any).\n' +
+                'Win Chance % – The dice win chance for that combo\'s multiplier.\n' +
+                'Reset Odds % – The chance that any given run of Loss Reset bets are all losses, triggering a bet reset.\n' +
                 '\n' +
                 'BUTTONS\n' +
-                'Run Optimizer – Begins testing all combinations using the provided ranges.\n' +
+                'Apply Selected to Calculator – Loads the selected combo (Win Increase %, Loss Reset, Buffer %) into the Calculator tab.\n' +
+                '\n' +
+                '\n' +
+                'STRATEGY FINDER TAB\n' +
+                '\n' +
+                'PARAMETER RANGES\n' +
+                'Combo – A single set of parameter values tested by the strategy finder.\n' +
+                'Starting Balance – The initial balance applied to all combos during optimization.\n' +
+                'Trials per Combo – The number of simulations run for each parameter combination.\n' +
+                'Bet Divisor Range – Bet divisor values to test, entered as From - To fields.\n' +
+                'Profit Multiplier Range – Profit multiplier values to test, entered as From - To fields.\n' +
+                'Win Increase % Range – Win increase percentages to test, entered as From - To fields.\n' +
+                'Loss Reset – Loss reset counts to test (integers), entered as From - To fields.\n' +
+                'Buffer % Range – Buffer percentages to test, entered as From - To fields.\n' +
+                'From / To – The lowest and highest value of a range. Leave To blank to test a single value, or leave the whole range blank and use only Values.\n' +
+                'Step – The increment used to walk a range (e.g., 50 - 100 with step 5 tests 50, 55 ... 100). Leave blank for the default.\n' +
+                'Values – Individual numbers to test, comma-separated (e.g., 25,30,40). These are combined with the range if both are filled.\n' +
+                '\n' +
+                'BUTTONS\n' +
+                'Run Strategy Finder – Begins testing all combinations using the provided ranges.\n' +
                 'Clear Results – Removes existing results from the results tab.\n' +
-                'Stop – Terminates the optimization process currently running. (Note: If you get the Large Search Warning popup, you won\'t be able to use Stop. Doing so may break the optimizer and you\'ll need to reload the page.)\n' +
+                'Stop – Terminates the search currently running. (Note: If you get the Large Search Warning popup, you won\'t be able to use Stop. Doing so may break the strategy finder and you\'ll need to reload the page.)\n' +
                 '\n' +
                 '\n' +
-                'OPTIMIZER RESULTS TAB\n' +
+                'STRATEGY FINDER RESULTS TAB\n' +
                 '\n' +
                 'RESULTS DEFINITIONS\n' +
                 'BetDiv – Bet divisor used in the tested combo.\n' +
