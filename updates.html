@@ -52,6 +52,29 @@
         <!-- ============ Add new releases above this line (newest first) ============ -->
         <article class="release latest" data-reveal>
           <div class="release-head">
+            <span class="ver-badge">v3.32</span>
+            <span class="chip">Desktop</span>
+            <span class="ver-badge">v6.04</span>
+            <span class="chip">Mobile</span>
+            <span class="rel-date">July 27, 2026</span>
+          </div>
+          <h2 class="rel-title">Keno Hotspot, a two-tab Advanced IOW, and a daily code-claim counter</h2>
+          <ul class="changes">
+            <li><span class="tag added">Added</span><span class="ctxt"><b>Keno Hotspot</b> (Stake, Shuffle &amp; Nuts): the Keno panel now records every completed draw and tints the board by how often each number has come up &mdash; warm above expectation, cool below, with the count printed on the tile. <b>Hottest</b> and <b>Coldest</b> rank numbers by how far they sit from expectation in standard deviations, so the list means the same thing at 50 draws or 500. Choose the window it measures over (last 50 / 100 / 250 / 500 / all), then <b>Pick hottest</b> or <b>Pick coldest</b> drops that many numbers onto the board. Heatmap and on-tile counts can each be switched off, and history is kept separately per site. Worth saying plainly: draws are independent, so a hot number is <i>not</i> a likelier number &mdash; this shows what has happened, not what will.</span></li>
+            <li><span class="tag added">Added</span><span class="ctxt"><b>Codes claimed</b> counter (7-Day Wager Tracker): shows how many of your <b>10 daily bonus codes</b> you have used, as a running <b>N/10</b> that turns amber with two left and red at the cap. Underneath it tells you how many are left and counts down to the daily reset, switching to &ldquo;all 10 back in&hellip;&rdquo; once you are capped &mdash; the whole allowance returns at the boundary rather than trickling back one at a time. Claims are picked up on their own as you make them.</span></li>
+            <li><span class="tag changed">Changed</span><span class="ctxt"><b>Keno</b> is now one panel with one switch. Hotspot and the preset manager share the <b>Keno</b> toggle instead of appearing as two separate tools, and the Hotspot section takes its colours from the panel it sits in, so it matches Stake, Shuffle and Nuts rather than wearing Stake's palette everywhere.</span></li>
+            <li><span class="tag changed">Changed</span><span class="ctxt"><b>Advanced IOW</b> (Dice) is two tabs instead of five: <b>Find New Strategy</b> and <b>Play</b>. Enter a Multiplier &mdash; or leave it on <b>Any</b> &mdash; and every matching combination is listed with its Win Increase %, Loss Reset, Buffer % and Reset Odds %, sortable by any column. The Win Increase % input and the Win Chance column were dropped from the search, since both follow from the multiplier anyway.</span></li>
+            <li><span class="tag changed">Changed</span><span class="ctxt"><b>Apply Selected to Calculator</b> is now <b>Build Strategy</b>, and it finishes the job in one press: it fills the values in, calculates them, <b>creates the strategy inside the game</b>, and moves you to the Play tab. It previously only filled the calculator in, leaving you to import the strategy yourself as a separate step that was easy to miss.</span></li>
+            <li><span class="tag changed">Changed</span><span class="ctxt"><b>Dice</b> (nuts.gg): the conditions controls are consolidated into a single always-visible command bar with <b>START</b> at its right-hand end, and the bet field has moved out of the HUD into the side panel.</span></li>
+            <li><span class="tag fixed">Fixed</span><span class="ctxt"><b>Dice</b>, <b>Keno</b> and <b>Mines</b> (Stake) had no enable/disable toggle on any Stake domain except stake.com and stake.us. They now cover every mirror &mdash; stake.bet, stake.games, stake.bz, stake.pet and staketr.com through staketr4.com &mdash; matching every other Stake tool.</span></li>
+            <li><span class="tag fixed">Fixed</span><span class="ctxt"><b>Perfect Blackjack</b> (mobile): collapsing the panel to see the table also hid the Hit / Stand / Double / Split call, which is precisely when you want it while playing a hand yourself. The advice now stays on screen when collapsed; collapsing hides only the automation controls and statistics.</span></li>
+            <li><span class="tag fixed">Fixed</span><span class="ctxt"><b>Dice</b> (nuts.gg): the balance is now read from the visible text rather than a page title that stops updating, and bets are counted from the game socket instead of being inferred from which way the balance moved. The command bar also rebuilt itself on every tick, stacking copies of itself, and on mobile the site's own controls could paint over the HUD at desktop widths.</span></li>
+            <li><span class="tag fixed">Fixed</span><span class="ctxt"><b>Codes claimed</b> reset at the wrong time outside US Central. The allowance rolls over at one moment worldwide &mdash; 7&nbsp;PM Central &mdash; but the countdown was built against your own clock, so it flipped at 7&nbsp;PM wherever you were: an hour early in Mountain, five hours early in the UK. It is now pinned to the real boundary and converted into your local time, US daylight saving included.</span></li>
+            <li><span class="tag fixed">Fixed</span><span class="ctxt">Two of the single-tool downloads were built with the wrong tool's registration block attached and would not load. Rebuilt, and the build now checks every file.</span></li>
+          </ul>
+        </article>
+        <article class="release" data-reveal>
+          <div class="release-head">
             <span class="ver-badge">v2.80</span>
             <span class="chip">Desktop</span>
             <span class="rel-date">July 15, 2026</span>

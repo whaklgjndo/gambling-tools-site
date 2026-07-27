@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Stake Mines — Desktop
 // @namespace    http://tampermonkey.net/
-// @version      3.31
+// @version      3.32
 // @description  Standalone single-tool build, extracted from the unified bundle.
 // @author       .
 // @match        https://stake.com/*
@@ -23,7 +23,7 @@
 (function () {
     'use strict';
 
-    console.log('%cStake Mines — Desktop — standalone build v3.31', 'color:#17c7b8;font-weight:800;font-size:13px');
+    console.log('%cStake Mines — Desktop — standalone build v3.32', 'color:#17c7b8;font-weight:800;font-size:13px');
 
     /* =========================================================
        UNIFIED LOADER — STORAGE KEYS & SETTINGS
@@ -940,8 +940,16 @@ let isRunning = false;
         name: 'Stake Mines',
         description: 'Auto-plays Mines on Stake with weighted random tile picks.',
         matches: [
+            'https://stake.com/casino/games/mines*',
             'https://stake.us/casino/games/mines*',
-            'https://stake.com/casino/games/mines*'
+            'https://stake.bet/casino/games/mines*',
+            'https://stake.games/casino/games/mines*',
+            'https://staketr.com/casino/games/mines*',
+            'https://staketr2.com/casino/games/mines*',
+            'https://staketr3.com/casino/games/mines*',
+            'https://staketr4.com/casino/games/mines*',
+            'https://stake.bz/casino/games/mines*',
+            'https://stake.pet/casino/games/mines*'
         ],
         runAt: 'document-end',
         defaultEnabled: true,

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Stake Keno — Mobile
 // @namespace    http://tampermonkey.net/
-// @version      6.03
+// @version      6.04
 // @description  Standalone single-tool mobile build, extracted from the unified mobile bundle.
 // @author       .
 // @match        https://stake.com/*
@@ -22,7 +22,7 @@
 (function () {
     'use strict';
 
-    try { console.log('[Stake Keno — Mobile] standalone build v6.03'); } catch (e) {}
+    try { console.log('[Stake Keno — Mobile] standalone build v6.04'); } catch (e) {}
 
 
     try { console.log('[unified-mobile] boot v5.64 — DiceTool.exe replica UI for the dice tool (Calculator / Easy Mode / Strategy Finder / Results / Settings)'); } catch (e) {}
@@ -1820,7 +1820,572 @@
         renderPresets();
         seedPicksOnce();
         renderCurrent();
+
+        // The hotspot mounts into the panel built above, so mobile gains it
+        // with no extra toggle — the Keno switch governs both halves.
+        tool_keno_hotspot();
     }
+
+    /* === source: keno-hotspot (Stake / Shuffle / Nuts) === */
+    /**
+     * Keno Hotspot — hot/cold heatmap for Stake, Shuffle and Nuts.
+     *
+     * Records every completed draw, tints the board hot→cold by how often each
+     * number has come up over a rolling window, and applies the hottest (or
+     * coldest) N numbers in one click.
+     *
+     * One body serves all three sites via SITES below, because each casino
+     * marks its tiles differently and none of them agree:
+     *
+     *   Stake    data-game-tile-status. Resting is `hidden` — NOT `idle`, which
+     *            is Mines' vocabulary; assuming that made every tile read as
+     *            drawn and nothing was ever recorded. Resting is therefore
+     *            re-derived per read as the plurality status (see restingOf).
+     *   Shuffle  hashed CSS-module classes, and its own Keno tool documents
+     *            them exactly: selectedButton = pick that missed, buttonSuccess
+     *            = pick that was drawn, buttonFailed = drawn but not picked.
+     *            So drawn = buttonSuccess | buttonFailed — no inference needed.
+     *   Nuts     no stable classes at all; state lives in the cover element's
+     *            computed background colour (purple = picked, green = drawn).
+     *
+     * Capture accumulates the UNION of drawn-looking tiles across the reveal
+     * rather than reading the settled board. Nuts forces this — its own tool
+     * notes that a hit "flashes green during the reveal then reverts to
+     * purple", so the final frame is missing every number you actually hit. The
+     * union also makes progressive reveals safe on Stake and Shuffle, where
+     * tiles light one at a time and any single frame is a partial draw.
+     *
+     * A reveal commits when the expected count is reached, or failing that when
+     * the set stops growing for STABLE_TICKS polls — so a site that draws a
+     * different number of spots still records correctly.
+     *
+     * Heat is a z-score so it is comparable across window sizes, and it makes no
+     * assumption about board size or draws-per-round: expected hits per number
+     * is simply the total drawn spread evenly over the board,
+     *     mean = total / spots,  p = (total / rounds) / spots,
+     *     z    = (count − mean) / sqrt(rounds · p · (1 − p)).
+     * Worth saying plainly: draws are independent, so a hot number is not a
+     * likelier number. This shows what HAS happened, not what will.
+     */
+    function tool_keno_hotspot() {
+        'use strict';
+        if (tool_keno_hotspot._booted) return;
+        tool_keno_hotspot._booted = true;
+
+        var KH_VERSION   = '1.10';
+        var MAX_PICKS    = 10;   // every one of the three caps a ticket at 10
+        var DRAWS_CAP    = 2000; // rolling history cap (~100KB of JSON)
+        var STABLE_TICKS = 3;    // ~1.2s of no new tiles ends a reveal
+        var POLL_MS      = 400;
+
+        function qsa(sel) { return Array.prototype.slice.call(document.querySelectorAll(sel)); }
+        function rgb(el) {
+            var m = (getComputedStyle(el).backgroundColor || '').match(/(\d+),\s*(\d+),\s*(\d+)/);
+            return m ? [+m[1], +m[2], +m[3]] : null;
+        }
+        /** The status held by the most tiles. A reveal lights a minority of the
+         *  board and a ticket is at most 10 spots, so resting always wins. */
+        function restingOf(all, statusFn) {
+            var freq = {}, best = -1, resting = null, i, s;
+            for (i = 0; i < all.length; i++) {
+                s = statusFn(all[i]);
+                freq[s] = (freq[s] || 0) + 1;
+                if (freq[s] > best) { best = freq[s]; resting = s; }
+            }
+            return resting;
+        }
+        function stakeStatus(b) {
+            return String(b.getAttribute('data-game-tile-status') || '').toLowerCase();
+        }
+        var STAKE_NOT_DRAWN = { hidden: 1, idle: 1, none: 1, selected: 1, '': 1 };
+
+        var SITES = {
+            stake: {
+                label: 'Stake',
+                key: 'keno-hotspot-stake-v1',
+                onPage: function () { return /casino\/games\/keno(?:\/|$|\?|#)/i.test(location.pathname || ''); },
+                tiles: function () { return qsa('button[data-testid^="game-tile-"]'); },
+                number: function (b, i) {
+                    var m = (b.getAttribute('data-testid') || '').match(/game-tile-(\d+)/);
+                    if (m) return parseInt(m[1], 10);
+                    var d = parseInt(b.dataset ? b.dataset.index : NaN, 10);
+                    return isNaN(d) ? (i + 1) : d + 1;
+                },
+                prepare: function (all) { return restingOf(all, stakeStatus); },
+                isDrawn: function (b, resting) {
+                    var s = stakeStatus(b);
+                    return s !== resting && !STAKE_NOT_DRAWN[s];
+                },
+                isPicked: function (b) {
+                    var s = stakeStatus(b);
+                    return s === 'selected' || s === 'match';
+                },
+                expect: 10
+            },
+            shuffle: {
+                label: 'Shuffle',
+                key: 'keno-hotspot-shuffle-v1',
+                onPage: function () { return /games\/originals\/keno(?:\/|$|\?|#)/i.test(location.pathname || ''); },
+                tiles: function () { return qsa('button[data-testid^="keno-button-"]'); },
+                number: function (b, i) {
+                    var m = ((b.dataset && b.dataset.testid) || b.getAttribute('data-testid') || '').match(/keno-button-(\d+)/);
+                    return m ? parseInt(m[1], 10) : (i + 1);
+                },
+                prepare: function () { return null; },
+                // Documented by Shuffle's own Keno tool — no inference needed.
+                isDrawn: function (b) { return /buttonSuccess|buttonFailed/.test(b.className || ''); },
+                isPicked: function (b) { return /selectedButton|buttonSuccess/.test(b.className || ''); },
+                expect: 10
+            },
+            nuts: {
+                label: 'Nuts',
+                key: 'keno-hotspot-nuts-v1',
+                onPage: function () { return /\/keno(?:\/|$|\?|#)/i.test(location.pathname || ''); },
+                // Content-based, mirroring the Nuts Keno tool: a tile is a
+                // <button> whose first <span> is exactly a number 1-40, and all
+                // 40 must be present. Returned in number order.
+                tiles: function () {
+                    var byNum = {}, count = 0, btns = qsa('button'), i;
+                    for (i = 0; i < btns.length; i++) {
+                        var span = btns[i].querySelector('span');
+                        if (!span) continue;
+                        var txt = (span.textContent || '').trim();
+                        var n = parseInt(txt, 10);
+                        if (n >= 1 && n <= 40 && txt === String(n) && !byNum[n]) { byNum[n] = btns[i]; count++; }
+                    }
+                    if (count < 40) return [];
+                    var out = [];
+                    for (i = 1; i <= 40; i++) out.push(byNum[i]);
+                    return out;
+                },
+                number: function (b, i) { return i + 1; },   // tiles() is number-ordered
+                prepare: function () { return null; },
+                // Cover element (children[1]) carries the state as a colour:
+                // purple = picked, green = drawn, grey = untouched.
+                isDrawn: function (b) {
+                    var cover = b.children && b.children[1];
+                    if (!cover) return false;
+                    var c = rgb(cover);
+                    return !!c && c[1] > c[0] + 50 && c[1] > 120;
+                },
+                isPicked: function (b) {
+                    var cover = b.children && b.children[1];
+                    if (!cover) return false;
+                    var c = rgb(cover);
+                    return !!c && (c[0] + c[2]) > 200 && c[1] < 100;
+                },
+                expect: 10
+            }
+        };
+
+        function detectSite() {
+            var h = location.hostname;
+            if (/shuffle\./i.test(h)) return SITES.shuffle;
+            if (/(^|\.)nuts\.gg$/i.test(h)) return SITES.nuts;
+            return SITES.stake;
+        }
+        var SITE    = detectSite();
+        // Governed by the site's Keno toggle — the hotspot is part of that
+        // tool now, not a separately registered one.
+        var TOOL_ID = (SITE === SITES.shuffle ? 'shuffle' : SITE === SITES.nuts ? 'nuts' : 'stake') + '-keno';
+
+        function onPage() { try { return SITE.onPage(); } catch (e) { return false; } }
+        /** The control panel's switch. Unknown ids read as enabled. */
+        function khEnabled() {
+            try { return isToolIdEnabled(TOOL_ID); } catch (e) { return true; }
+        }
+
+        /* ---------------------------------------------------------------
+           STORE — a rolling list of draws, {t, n:[numbers]}. Keyed per site;
+           localStorage is per-origin anyway, but the explicit key keeps a
+           multi-brand origin from ever mixing two boards.
+           --------------------------------------------------------------- */
+        var store = { draws: [], window: 100 };
+        try {
+            var raw = JSON.parse(localStorage.getItem(SITE.key) || 'null');
+            if (raw && Array.isArray(raw.draws)) {
+                store.draws = raw.draws;
+                if (raw.window != null) store.window = raw.window;
+            }
+        } catch (e) {}
+        var storeDirty = false;
+        function saveStore() { storeDirty = true; }
+        setInterval(function () {          // batch writes; the ticker touches these often
+            if (!storeDirty) return;
+            storeDirty = false;
+            try { localStorage.setItem(SITE.key, JSON.stringify(store)); } catch (e) {}
+        }, 1200);
+
+        function recordDraw(nums) {
+            store.draws.push({ t: Date.now(), n: nums });
+            if (store.draws.length > DRAWS_CAP) store.draws.shift();
+            saveStore();
+        }
+        function resetStore() { store.draws = []; saveStore(); render(); paintTiles(); }
+
+        /* ---------------------------------------------------------------
+           STATS
+           --------------------------------------------------------------- */
+        /** Draws inside the active window. window = 0 means "everything". */
+        function windowDraws() {
+            var w = store.window | 0;
+            if (!w || w >= store.draws.length) return store.draws;
+            return store.draws.slice(store.draws.length - w);
+        }
+
+        /**
+         * Per-number counts and z-scores. Makes no assumption about board size
+         * or draws-per-round — both are taken from the data.
+         */
+        function computeHeat(draws, spots) {
+            spots = spots || 40;
+            var counts = new Array(spots + 1).fill(0), total = 0, i, j;
+            for (i = 0; i < draws.length; i++) {
+                var d = draws[i].n;
+                for (j = 0; j < d.length; j++) {
+                    var v = d[j];
+                    if (v >= 1 && v <= spots) { counts[v]++; total++; }
+                }
+            }
+            var rounds = draws.length;
+            var mean = spots > 0 ? total / spots : 0;
+            var p = (rounds > 0 && spots > 0) ? (total / rounds) / spots : 0;
+            var sd = Math.sqrt(rounds * p * (1 - p));
+            var z = new Array(spots + 1).fill(0);
+            if (rounds > 0 && sd > 0) {
+                for (i = 1; i <= spots; i++) z[i] = (counts[i] - mean) / sd;
+            }
+            return { counts: counts, z: z, rounds: rounds, mean: mean, sd: sd, spots: spots, total: total };
+        }
+
+        /** Numbers ranked hottest-first (or coldest-first). Ties break by number
+         *  so the ordering is stable and reproducible. */
+        function ranked(heat, coldest) {
+            var out = [], i;
+            for (i = 1; i <= heat.spots; i++) out.push(i);
+            out.sort(function (a, b) {
+                var d = coldest ? (heat.counts[a] - heat.counts[b]) : (heat.counts[b] - heat.counts[a]);
+                return d || (a - b);
+            });
+            return out;
+        }
+
+        /* ---------------------------------------------------------------
+           BOARD READING
+           --------------------------------------------------------------- */
+        function tiles() { try { return SITE.tiles() || []; } catch (e) { return []; } }
+        function boardSize() { var n = tiles().length; return n || 40; }
+
+        /** Numbers currently showing as drawn, or null if the board isn't up. */
+        function readDrawn() {
+            var all = tiles(), i;
+            if (!all.length) return null;
+            var ctx = null;
+            try { ctx = SITE.prepare(all); } catch (e) {}
+            var out = [];
+            for (i = 0; i < all.length; i++) {
+                var hit = false;
+                try { hit = SITE.isDrawn(all[i], ctx); } catch (e) {}
+                if (!hit) continue;
+                var n = SITE.number(all[i], i);
+                if (n) out.push(n);
+            }
+            return out;
+        }
+        function currentPicks() {
+            var all = tiles(), out = [], i;
+            for (i = 0; i < all.length; i++) {
+                var p = false;
+                try { p = SITE.isPicked(all[i]); } catch (e) {}
+                if (!p) continue;
+                var n = SITE.number(all[i], i);
+                if (n) out.push(n);
+            }
+            return out;
+        }
+
+        /* Reveal capture. Accumulates the union of everything that looked drawn
+           since the board was last clear, then commits once the expected count
+           lands or the set stops growing. Nuts needs the union because a hit
+           reverts to the picked colour after flashing; Stake and Shuffle need it
+           because tiles reveal one at a time. */
+        var pending = [], stableTicks = 0, recorded = false;
+
+        function commitPending() {
+            if (!pending.length) return;
+            var nums = pending.slice().sort(function (a, b) { return a - b; });
+            pending = []; stableTicks = 0; recorded = true;
+            if (nums.length > boardSize()) return;    // never record a nonsense draw
+            recordDraw(nums);
+            render();
+            paintTiles();
+        }
+
+        function pollBoard() {
+            var d = readDrawn();
+            if (d == null) return;
+            if (d.length === 0) {
+                // Board is clear. Flush anything still pending (a reveal cleared
+                // before it settled), then re-arm for the next round.
+                if (!recorded && pending.length) commitPending();
+                pending = []; stableTicks = 0; recorded = false;
+                return;
+            }
+            if (recorded) return;                     // this reveal is already banked
+            var grew = false, i;
+            for (i = 0; i < d.length; i++) {
+                if (pending.indexOf(d[i]) < 0) { pending.push(d[i]); grew = true; }
+            }
+            if (grew) stableTicks = 0; else stableTicks++;
+            if (pending.length >= SITE.expect || stableTicks >= STABLE_TICKS) commitPending();
+        }
+
+        /* ---------------------------------------------------------------
+           APPLYING PICKS
+           --------------------------------------------------------------- */
+        function clickTile(n) {
+            var all = tiles(), i;
+            for (i = 0; i < all.length; i++) {
+                if (SITE.number(all[i], i) === n) {
+                    if (all[i].disabled) return false;
+                    all[i].click();
+                    return true;
+                }
+            }
+            return false;
+        }
+        function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+
+        /** Toggle the board to exactly `want`; only the difference is clicked. */
+        var applying = false;
+        async function applyNumbers(want) {
+            if (applying) return;
+            applying = true;
+            try {
+                var have = currentPicks(), i;
+                for (i = 0; i < have.length; i++) {
+                    if (want.indexOf(have[i]) < 0) { clickTile(have[i]); await sleep(45); }
+                }
+                for (i = 0; i < want.length; i++) {
+                    if (have.indexOf(want[i]) < 0) { clickTile(want[i]); await sleep(45); }
+                }
+            } finally { applying = false; }
+            render();
+        }
+
+        function applyExtreme(coldest) {
+            var heat = computeHeat(windowDraws(), boardSize());
+            if (!heat.rounds) { setStatus('No draws recorded yet — play a few rounds.'); return; }
+            var count = Math.max(1, Math.min(MAX_PICKS, parseInt(elSpots && elSpots.value, 10) || 10));
+            var pick = ranked(heat, coldest).slice(0, count).sort(function (a, b) { return a - b; });
+            applyNumbers(pick);
+            setStatus((coldest ? 'Coldest ' : 'Hottest ') + count + ': ' + pick.join(', '));
+        }
+
+        /* ---------------------------------------------------------------
+           TILE TINTING — an absolutely-positioned, pointer-events:none child,
+           so the tile stays clickable and the site's own colours read through.
+           --------------------------------------------------------------- */
+        function tintFor(z) {
+            var a = Math.min(1, Math.abs(z) / 2.5);           // |z| >= 2.5 saturates
+            if (a < 0.08) return null;                        // near-expected: leave clean
+            return z > 0
+                ? 'rgba(255,' + Math.round(150 - 110 * a) + ',60,' + (0.16 + 0.42 * a).toFixed(3) + ')'
+                : 'rgba(60,' + Math.round(150 + 60 * a) + ',255,' + (0.14 + 0.34 * a).toFixed(3) + ')';
+        }
+        function clearTints() {
+            var old = document.querySelectorAll('.keno-hot-tint'), i;
+            for (i = 0; i < old.length; i++) old[i].remove();
+        }
+        function paintTiles() {
+            if (!showHeat) { clearTints(); return; }
+            var all = tiles();
+            if (!all.length) return;
+            var heat = computeHeat(windowDraws(), all.length);
+            if (!heat.rounds) { clearTints(); return; }
+            for (var i = 0; i < all.length; i++) {
+                var btn = all[i], n = SITE.number(btn, i);
+                if (!n) continue;
+                var col = tintFor(heat.z[n]);
+                var tint = btn.querySelector('.keno-hot-tint');
+                if (!col) { if (tint) tint.remove(); continue; }
+                if (!tint) {
+                    if (getComputedStyle(btn).position === 'static') btn.style.position = 'relative';
+                    tint = document.createElement('span');
+                    tint.className = 'keno-hot-tint';
+                    btn.appendChild(tint);
+                }
+                tint.style.background = col;
+                tint.textContent = showCounts ? String(heat.counts[n]) : '';
+            }
+        }
+
+        /* ---------------------------------------------------------------
+           PANEL — the hotspot is not its own window. It mounts as a section
+           inside the Keno preset panel (#keno-preset-gui) that the site's Keno
+           tool builds, so there is one panel and one enable/disable toggle.
+           Colours come from the host panel: --kp-accent is set per site, and
+           everything else is a translucent wash over whatever background the
+           host uses, so this section themes itself on Stake, Shuffle and Nuts
+           without knowing anything about them.
+           --------------------------------------------------------------- */
+        var CSS =
+            '#keno-preset-gui .kh-sect{border-top:1px solid rgba(255,255,255,.10);' +
+            'margin-top:2px;padding-top:10px;display:flex;flex-direction:column;gap:8px}' +
+            '#keno-preset-gui .kh-sect *{box-sizing:border-box}' +
+            '#keno-preset-gui .kh-sect-head{display:flex;align-items:center;justify-content:space-between;' +
+            'font-size:10px;letter-spacing:.6px;text-transform:uppercase;opacity:.65}' +
+            '#keno-preset-gui .kh-sect-head b{color:var(--kp-accent,#10b981);font-weight:700}' +
+            '#keno-preset-gui .kh-row{display:flex;align-items:center;justify-content:space-between;' +
+            'gap:8px;font-size:11px}' +
+            '#keno-preset-gui .kh-sect select,#keno-preset-gui .kh-sect input[type=number]{' +
+            'background:rgba(0,0,0,.28);color:inherit;border:1px solid rgba(255,255,255,.14);' +
+            'border-radius:5px;padding:3px 6px;font-size:11px;font-family:inherit}' +
+            '#keno-preset-gui .kh-sect input[type=number]{width:52px;text-align:center}' +
+            '#keno-preset-gui .kh-sect select:focus,#keno-preset-gui .kh-sect input:focus{' +
+            'outline:none;border-color:var(--kp-accent,#10b981)}' +
+            '#keno-preset-gui .kh-list{background:rgba(0,0,0,.24);border-radius:5px;padding:6px 8px;' +
+            'font-size:11px;line-height:1.55}' +
+            '#keno-preset-gui .kh-list b{font-variant-numeric:tabular-nums}' +
+            '#keno-preset-gui .kh-hot b{color:#f87171}' +
+            '#keno-preset-gui .kh-cold b{color:#60a5fa}' +
+            '#keno-preset-gui .kh-k{display:block;opacity:.5;text-transform:uppercase;font-size:9px;' +
+            'letter-spacing:.5px;margin-bottom:2px}' +
+            '#keno-preset-gui .kh-btns{display:flex;gap:6px}' +
+            '#keno-preset-gui .kh-btn{flex:1;background:rgba(255,255,255,.06);color:inherit;' +
+            'border:1px solid rgba(255,255,255,.14);border-radius:5px;padding:5px 8px;font-size:11px;' +
+            'font-family:inherit;cursor:pointer}' +
+            '#keno-preset-gui .kh-btn:hover{background:rgba(255,255,255,.13)}' +
+            '#keno-preset-gui .kh-btn.hot:hover{border-color:#f87171;color:#fca5a5}' +
+            '#keno-preset-gui .kh-btn.cold:hover{border-color:#60a5fa;color:#93c5fd}' +
+            '#keno-preset-gui .kh-status{font-size:10px;opacity:.55;min-height:1.2em;line-height:1.35}' +
+            '#keno-preset-gui .kh-foot{display:flex;justify-content:space-between;align-items:center;' +
+            'font-size:10px;opacity:.55}' +
+            '#keno-preset-gui .kh-reset{background:transparent;border:1px solid rgba(255,255,255,.14);' +
+            'color:inherit;border-radius:4px;padding:2px 8px;font-size:10px;cursor:pointer;' +
+            'font-family:inherit;opacity:.8}' +
+            '#keno-preset-gui .kh-reset:hover{color:#f87171;border-color:#f87171;opacity:1}' +
+            '.keno-hot-tint{position:absolute;inset:0;border-radius:inherit;pointer-events:none;' +
+            'display:flex;align-items:center;justify-content:center;' +
+            "font:800 10px/1 ui-monospace,SFMono-Regular,Menlo,monospace;color:rgba(255,255,255,.85);" +
+            'text-shadow:0 1px 2px rgba(0,0,0,.7)}';
+
+        function injectCss() {
+            if (document.getElementById('keno-hot-css')) return;
+            var viaGM = false;
+            try { if (typeof GM_addStyle === 'function') { GM_addStyle(CSS); viaGM = true; } } catch (e) {}
+            var marker = document.createElement(viaGM ? 'meta' : 'style');
+            marker.id = 'keno-hot-css';
+            if (!viaGM) marker.textContent = CSS;
+            (document.head || document.documentElement).appendChild(marker);
+        }
+
+        var sect = null, elHot = null, elCold = null, elStat = null, elSpots = null, elCount = null;
+        var showHeat = true, showCounts = true;
+        function setStatus(t) { if (elStat) elStat.textContent = t || ''; }
+
+        /** Where the section lives: the preset panel's content column. */
+        function hostSlot() {
+            var host = document.getElementById('keno-preset-gui');
+            return host ? (host.querySelector('.kp-content') || host) : null;
+        }
+
+        function buildSection() {
+            var el = document.createElement('div');
+            el.className = 'kh-sect';
+            el.innerHTML =
+                '<div class="kh-sect-head"><b>Hotspot</b><span data-kh="count">0 draws</span></div>' +
+                '<div class="kh-row"><span>Window</span>' +
+                  '<select data-kh="window">' +
+                    '<option value="50">last 50</option>' +
+                    '<option value="100">last 100</option>' +
+                    '<option value="250">last 250</option>' +
+                    '<option value="500">last 500</option>' +
+                    '<option value="0">all</option>' +
+                  '</select></div>' +
+                '<div class="kh-list kh-hot"><span class="kh-k">Hottest</span><span data-kh="hot">—</span></div>' +
+                '<div class="kh-list kh-cold"><span class="kh-k">Coldest</span><span data-kh="cold">—</span></div>' +
+                '<div class="kh-row"><span>Spots to pick</span>' +
+                  '<input type="number" min="1" max="' + MAX_PICKS + '" value="10" data-kh="spots"></div>' +
+                '<div class="kh-btns">' +
+                  '<button class="kh-btn hot" type="button" data-kh="pick-hot">Pick hottest</button>' +
+                  '<button class="kh-btn cold" type="button" data-kh="pick-cold">Pick coldest</button>' +
+                '</div>' +
+                '<div class="kh-row"><label style="display:flex;align-items:center;gap:5px;cursor:pointer">' +
+                  '<input type="checkbox" data-kh="heat" checked>Heatmap</label>' +
+                  '<label style="display:flex;align-items:center;gap:5px;cursor:pointer">' +
+                  '<input type="checkbox" data-kh="counts" checked>Counts</label></div>' +
+                '<div class="kh-status"></div>' +
+                '<div class="kh-foot"><span>v' + KH_VERSION + '</span>' +
+                  '<button class="kh-reset" type="button" data-kh="reset">Reset draws</button></div>';
+
+            elHot   = el.querySelector('[data-kh="hot"]');
+            elCold  = el.querySelector('[data-kh="cold"]');
+            elStat  = el.querySelector('.kh-status');
+            elSpots = el.querySelector('[data-kh="spots"]');
+            elCount = el.querySelector('[data-kh="count"]');
+
+            var sel = el.querySelector('[data-kh="window"]');
+            sel.value = String(store.window);
+            sel.addEventListener('change', function () {
+                store.window = parseInt(sel.value, 10) || 0;
+                saveStore(); render(); paintTiles();
+            });
+            el.querySelector('[data-kh="pick-hot"]').addEventListener('click', function () { applyExtreme(false); });
+            el.querySelector('[data-kh="pick-cold"]').addEventListener('click', function () { applyExtreme(true); });
+            el.querySelector('[data-kh="heat"]').addEventListener('change', function (e) { showHeat = e.target.checked; paintTiles(); });
+            el.querySelector('[data-kh="counts"]').addEventListener('change', function (e) { showCounts = e.target.checked; paintTiles(); });
+            el.querySelector('[data-kh="reset"]').addEventListener('click', function () {
+                if (confirm('Clear all recorded ' + SITE.label + ' Keno draws?')) resetStore();
+            });
+            return el;
+        }
+
+        /** "7 +2.1σ" entries for the top/bottom of the ranking. */
+        function listHtml(heat, coldest) {
+            if (!heat.rounds) return '—';
+            return ranked(heat, coldest).slice(0, 6).map(function (n) {
+                var z = heat.z[n];
+                var sig = (z >= 0 ? '+' : '−') + Math.abs(z).toFixed(1);
+                return '<b>' + n + '</b> <span style="opacity:.55">' + sig + 'σ</span>';
+            }).join('  ');
+        }
+
+        function render() {
+            if (!sect || !sect.isConnected) return;
+            var heat = computeHeat(windowDraws(), boardSize());
+            elHot.innerHTML = listHtml(heat, false);
+            elCold.innerHTML = listHtml(heat, true);
+            elCount.textContent = store.draws.length + ' draw' + (store.draws.length === 1 ? '' : 's') +
+                (heat.rounds !== store.draws.length ? ' (' + heat.rounds + ' in window)' : '');
+        }
+
+        /* ---------------------------------------------------------------
+           TICKER — mount, poll, repaint. A bad tick must never kill the loop.
+           The host panel is rebuilt on SPA navigation, so re-appending when the
+           section loses its parent is the normal path, not an error case.
+           --------------------------------------------------------------- */
+        setInterval(function () {
+            try {
+                if (!onPage() || !khEnabled()) {
+                    if (sect && sect.parentNode) sect.remove();
+                    clearTints();
+                    return;
+                }
+                injectCss();
+                var slot = hostSlot();
+                if (!slot) return;                      // Keno panel not up yet
+                if (!sect) sect = buildSection();
+                if (sect.parentNode !== slot) { slot.appendChild(sect); render(); }
+                pollBoard();
+                paintTiles();
+            } catch (e) { /* never let one tick kill the ticker */ }
+        }, POLL_MS);
+
+        console.log('%c[Keno Hotspot] v' + KH_VERSION + ' on ' + SITE.label + ' — ' +
+                    store.draws.length + ' draws stored', 'color:#f87171;font-weight:700');
+    }
+    /* === end body: keno-hotspot === */
 
     /* ============================================================
        ============================================================

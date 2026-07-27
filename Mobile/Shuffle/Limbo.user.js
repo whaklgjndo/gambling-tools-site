@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Shuffle Limbo — Mobile
 // @namespace    http://tampermonkey.net/
-// @version      6.03
+// @version      6.04
 // @description  Standalone single-tool mobile build, extracted from the unified mobile bundle.
 // @author       .
 // @match        https://shuffle.com/*
@@ -14,7 +14,7 @@
 (function () {
     'use strict';
 
-    try { console.log('[Shuffle Limbo — Mobile] standalone build v6.03'); } catch (e) {}
+    try { console.log('[Shuffle Limbo — Mobile] standalone build v6.04'); } catch (e) {}
 
 
     try { console.log('[unified-mobile] boot v5.64 — DiceTool.exe replica UI for the dice tool (Calculator / Easy Mode / Strategy Finder / Results / Settings)'); } catch (e) {}
@@ -3848,9 +3848,10 @@
             statsBtn = document.createElement('button');
             statsBtn.className = 'dt-tab-btn';
             statsBtn.dataset.tab = 'stats';
-            statsBtn.textContent = 'Stats';
-            const calcBtn = tabsNav.querySelector('[data-tab="calc"]');
-            if (calcBtn) tabsNav.insertBefore(statsBtn, calcBtn);
+            statsBtn.textContent = 'Play';
+            // Sit ahead of Find New Strategy so Play is the first tab in the strip.
+            const firstBtn = tabsNav.querySelector('[data-tab="easy"]');
+            if (firstBtn) tabsNav.insertBefore(statsBtn, firstBtn);
             else tabsNav.insertBefore(statsBtn, tabsNav.firstChild);
         }
         if (!statsPanel) {
@@ -5010,7 +5011,7 @@ ${MOB_NU} table.dt-stats td:first-child { color: #aab6c9 !important; }`;
         try {
             const snap = {};
             const ids = ['balance', 'win_inc', 'loss_reset', 'bet_div', 'profit_mult', 'buffer', 'n_trials',
-                         'opt_balance', 'opt_trials', 'easy_mult', 'easy_w'];
+                         'opt_balance', 'opt_trials', 'easy_mult'];
             for (const p of ['opt_betdiv', 'opt_profit', 'opt_w', 'opt_l', 'opt_buf'])
                 for (const s of ['from', 'to', 'step', 'values']) ids.push(p + '_' + s);
             for (const k of ids) {
@@ -5908,11 +5909,12 @@ self.onmessage = async (e) => {
                   <h2 class="dt-title">Dice Tool</h2>
                 </div>
                 <nav class="dt-tabs" role="tablist">
-                  <button class="dt-tab-btn active" data-tab="calc">Calculator / Simulator</button>
-                  <button class="dt-tab-btn" data-tab="easy">Easy Mode</button>
-                  <button class="dt-tab-btn" data-tab="opt">Strategy Finder</button>
-                  <button class="dt-tab-btn" data-tab="results">Strategy Finder Results</button>
-                  <button class="dt-tab-btn" data-tab="settings">Settings</button>
+                  <!-- Only two tabs are exposed. "Play" (data-tab="stats") is created at
+                       runtime by the site integration and inserts itself ahead of this
+                       button. The Calculator / Strategy Finder / Results / Settings panels
+                       are still built into .dt-body below — Build Strategy and dt_calcValues()
+                       read and write their fields — they just have no tab button now. -->
+                  <button class="dt-tab-btn active" data-tab="easy">Find New Strategy</button>
                 </nav>
                 <div class="dt-body">
                   ${dt_buildCalcPanel()}
@@ -5995,7 +5997,7 @@ self.onmessage = async (e) => {
                   <span class="dt-lbl">${label}</span>
                   <input type="text" inputmode="${inputmode || 'decimal'}" class="dt-in dt-entry" id="dt-${id}" value="${value}">`;
         return `
-          <section class="dt-panel active" id="dt-panel-calc">
+          <section class="dt-panel" id="dt-panel-calc">
             <div class="dt-calc-grid">
               <div class="dt-card dt-lf">
                 <div class="dt-card-title">Calculated Values</div>
@@ -6101,7 +6103,7 @@ self.onmessage = async (e) => {
        out automatically so pinned values are matched exactly. ---- */
     function dt_buildEasyPanel() {
         return `
-          <section class="dt-panel" id="dt-panel-easy">
+          <section class="dt-panel active" id="dt-panel-easy">
             <div class="dt-card dt-lf">
               <div class="dt-card-title">Desired Parameters</div>
               <div class="dt-easy-grid">
@@ -6109,11 +6111,6 @@ self.onmessage = async (e) => {
                 <span class="dt-easy-cell">
                   <input type="text" inputmode="decimal" class="dt-in dt-entry" id="dt-easy_mult" value="Any">
                   <button type="button" class="dt-btn dt-btn-small" id="dt-easy_mult_any" title="Reset this field back to Any">Any</button>
-                </span>
-                <span class="dt-lbl">Win Increase %:${dt_helpBtn('Win Increase %')}</span>
-                <span class="dt-easy-cell">
-                  <input type="text" inputmode="decimal" class="dt-in dt-entry" id="dt-easy_w" value="Any">
-                  <button type="button" class="dt-btn dt-btn-small" id="dt-easy_w_any" title="Reset this field back to Any">Any</button>
                 </span>
               </div>
               <div class="dt-easy-meta">
@@ -6131,7 +6128,7 @@ self.onmessage = async (e) => {
                 </table>
               </div>
               <div class="dt-res-foot">
-                <button class="dt-btn" id="dt-easy_apply">Apply Selected to Calculator</button>
+                <button class="dt-btn" id="dt-easy_apply">Build Strategy</button>
               </div>
             </div>
           </section>
@@ -6372,7 +6369,6 @@ self.onmessage = async (e) => {
         { key: 'w', label: 'Win Increase %' },
         { key: 'l', label: 'Loss Reset' },
         { key: 'b', label: 'Buffer %' },
-        { key: 'chance', label: 'Win Chance %' },
         { key: 'odds', label: 'Reset Odds %' }
     ];
     function dt_easyFindCombos(m, w) {
@@ -6413,7 +6409,10 @@ self.onmessage = async (e) => {
         dt_easyTimer = null;
         const body = $dt('easy_body'); if (!body) return;
         const pm = dt_easyParse('easy_mult', 1, 9900);
-        const pw = dt_easyParse('easy_w', 0, DT_EASY_W_MAX);
+        // Win Increase % is no longer pinnable from this tab, so the search
+        // always sweeps it. Kept as a null parse result so dt_easyFindCombos'
+        // three branches stay intact.
+        const pw = { ok: true, v: null };
         $dt('easy_chance').textContent = (pm.ok && pm.v != null) ? (99 / pm.v).toFixed(2) + '%' : '--';
         dt_easySelectedIdx = -1;
         if (!pm.ok || !pw.ok) {
@@ -6424,7 +6423,7 @@ self.onmessage = async (e) => {
         const rows = dt_easyFindCombos(pm.v, pw.v);
         if (rows == null) {
             dt_easyRows = []; body.innerHTML = ''; $dt('easy_count').textContent = '0';
-            $dt('easy_status').textContent = 'Pin Multiplier or Win Increase % to search.';
+            $dt('easy_status').textContent = 'Enter a Multiplier to search.';
             return;
         }
         dt_easyRows = rows;
@@ -6446,7 +6445,7 @@ self.onmessage = async (e) => {
         body.innerHTML = rows.map(r =>
             `<tr data-idx="${r._i}" class="${r._i === dt_easySelectedIdx ? 'selected' : ''}">` +
             `<td>${r.m.toFixed(2)}</td><td>${dt_fmtEasyW(r.w)}</td><td>${r.l}</td>` +
-            `<td>${r.b.toFixed(2)}</td><td>${r.chance.toFixed(2)}</td><td>${r.odds.toFixed(2)}</td></tr>`
+            `<td>${r.b.toFixed(2)}</td><td>${r.odds.toFixed(2)}</td></tr>`
         ).join('');
     }
     function dt_onEasyTableClick(e) {
@@ -6464,7 +6463,12 @@ self.onmessage = async (e) => {
             dt_easySelectedIdx = parseInt(tr.dataset.idx, 10);
         }
     }
-    function dt_easyApplySelected() {
+    /** Build the selected combo into the live strategy and hand the user
+     *  straight to Play. The Calculator panel still holds these fields and
+     *  dt_calcValues() still derives the bet plan from them — the user just
+     *  never has to visit that tab to do it. Falls back to staying put on
+     *  builds where no Play tab was injected. */
+    async function dt_easyBuildStrategy() {
         if (dt_easySelectedIdx < 0 || !dt_easyRows[dt_easySelectedIdx]) { dt_toast('Select a combo row first.'); return; }
         const r = dt_easyRows[dt_easySelectedIdx];
         $dt('win_inc').value = dt_fmtEasyW(r.w);
@@ -6472,8 +6476,26 @@ self.onmessage = async (e) => {
         $dt('buffer').value = r.b.toFixed(2);
         dt_calcValues();
         dt_saveState();
-        dt_switchTab('calc');
-        dt_toast('Combo applied to Calculator');
+        // dt_calcValues() only refreshes the Calculator's own output fields —
+        // on its own it never reaches the game. Building the strategy is a
+        // two-step flow: scrape the live balance so the bet size is derived
+        // from real money, then create the strategy in-game (sets payout and
+        // bet amount, opens Advanced, creates the named "<mult>x" strategy
+        // and configures its conditions).
+        //
+        // Deliberately import rather than "update existing": update only
+        // rewrites one threshold on a strategy the game already has, so with
+        // nothing set up there is nothing for it to update.
+        try {
+            await dt_gameExport();
+            await dt_sleep(150);   // let the calculator settle before its outputs are read
+            await dt_gameImport();
+        } catch (e) {
+            console.error('[Find New Strategy] build failed:', e);
+            dt_toast('Could not build the strategy in-game.');
+            return;
+        }
+        if (document.getElementById('dt-panel-stats')) dt_switchTab('stats');
     }
     function dt_easySchedule() {
         if (dt_easyTimer) clearTimeout(dt_easyTimer);
@@ -7477,7 +7499,7 @@ self.onmessage = async (e) => {
 
     function dt_applyStateToUI() {
         const ids = ['balance', 'win_inc', 'loss_reset', 'bet_div', 'profit_mult', 'buffer', 'n_trials',
-                     'opt_balance', 'opt_trials', 'easy_mult', 'easy_w'];
+                     'opt_balance', 'opt_trials', 'easy_mult'];
         for (const p of ['opt_betdiv', 'opt_profit', 'opt_w', 'opt_l', 'opt_buf'])
             for (const s of ['from', 'to', 'step', 'values']) ids.push(p + '_' + s);
         for (const k of ids) if ($dt(k) && dt_state[k] != null) $dt(k).value = dt_state[k];
@@ -7592,10 +7614,9 @@ self.onmessage = async (e) => {
         const _resCols = $dt('res_allcols'); if (_resCols) _resCols.addEventListener('change', () => { dt_showAllCols = _resCols.checked; dt_renderResults(); });
 
         // Easy Mode
-        ['easy_mult', 'easy_w'].forEach(id => { const el = $dt(id); if (el) el.addEventListener('input', () => { dt_easySchedule(); dt_saveState(); }); });
+        { const el = $dt('easy_mult'); if (el) el.addEventListener('input', () => { dt_easySchedule(); dt_saveState(); }); }
         $dt('easy_mult_any').addEventListener('click', () => { $dt('easy_mult').value = 'Any'; dt_easyRefresh(); dt_saveState(); });
-        $dt('easy_w_any').addEventListener('click', () => { $dt('easy_w').value = 'Any'; dt_easyRefresh(); dt_saveState(); });
-        $dt('easy_apply').addEventListener('click', dt_easyApplySelected);
+        $dt('easy_apply').addEventListener('click', dt_easyBuildStrategy);
         document.getElementById('dt-easy_table').addEventListener('click', dt_onEasyTableClick);
         dt_easyRefresh();
 
@@ -8551,9 +8572,10 @@ self.onmessage = async (e) => {
             const statsBtn = document.createElement('button');
             statsBtn.className = 'dt-tab-btn';
             statsBtn.dataset.tab = 'stats';
-            statsBtn.innerHTML = 'Stats';
-            const calcBtn = tabsNav.querySelector('[data-tab="calc"]');
-            if (calcBtn) tabsNav.insertBefore(statsBtn, calcBtn);
+            statsBtn.innerHTML = 'Play';
+            // Sit ahead of Find New Strategy so Play is the first tab in the strip.
+            const firstBtn = tabsNav.querySelector('[data-tab="easy"]');
+            if (firstBtn) tabsNav.insertBefore(statsBtn, firstBtn);
             else tabsNav.insertBefore(statsBtn, tabsNav.firstChild);
 
             const statsPanel = document.createElement('section');
@@ -8627,6 +8649,16 @@ self.onmessage = async (e) => {
         }
 
         function trySetupTermsTab() {
+            // Disabled: the Advanced IOW panel exposes exactly two tabs
+            // (Play, Find New Strategy). This used to append a third
+            // "Terms" button. Latching termsSetup also stops the 500ms
+            // self-heal tick from calling this again every pass. The
+            // glossary build-out below is intact but unreachable — delete
+            // these three lines to bring the tab back.
+            termsSetup = true;
+            return true;
+        }
+        function trySetupTermsTab_disabled() {
             if (termsSetup) return true;
             const panel = document.getElementById('dt-aio-panel');
             if (!panel) return false;
@@ -8642,7 +8674,7 @@ self.onmessage = async (e) => {
             tabsNav.appendChild(termsBtn);
 
             const TERMS_TEXT =
-                'STATS TAB\n' +
+                'PLAY TAB\n' +
                 '\n' +
                 'CONTROLS DECK\n' +
                 'Balance Divisor – Two-way bound to the Calculator. Higher number = smaller starting bet.\n' +
@@ -8702,12 +8734,11 @@ self.onmessage = async (e) => {
                 'Bust rate – The percentage of trials that failed to meet the first profit stop.\n' +
                 '\n' +
                 '\n' +
-                'EASY MODE TAB\n' +
+                'FIND NEW STRATEGY TAB\n' +
                 '\n' +
                 'PARAMETERS\n' +
-                'Multiplier – The payout multiplier you want to play at, or Any to see the multiplier each combo produces (set Win Increase % first).\n' +
-                'Win Increase % – Your desired win increase %, or Any to search every whole number 1-500. Loss Reset and Buffer % are worked out automatically: loss reset runs up to the multiplier value (max 100) and the buffer absorbs the decimals so your values are matched exactly.\n' +
-                'Any (button) – The small button next to each field resets that field back to Any.\n' +
+                'Multiplier – The payout multiplier you want to play at. Every whole-number Win Increase % from 1-500 is searched against it, and Loss Reset and Buffer % are worked out automatically: loss reset runs up to the multiplier value (max 100) and the buffer absorbs the decimals so your multiplier is matched exactly.\n' +
+                'Any (button) – The small button next to the field resets it back to Any.\n' +
                 'Win Chance – The dice win chance implied by the multiplier (99 / multiplier) when it is pinned.\n' +
                 'Combos – How many parameter combinations are currently listed.\n' +
                 '\n' +
@@ -8716,11 +8747,10 @@ self.onmessage = async (e) => {
                 'Win Increase % – The win increase percentage you would enter in the game.\n' +
                 'Loss Reset – The number of losses before the bet resets to base.\n' +
                 'Buffer % – The buffer for that combo (solved to 2 decimals when left on Any).\n' +
-                'Win Chance % – The dice win chance for that combo\'s multiplier.\n' +
                 'Reset Odds % – The chance that any given run of Loss Reset bets are all losses, triggering a bet reset.\n' +
                 '\n' +
                 'BUTTONS\n' +
-                'Apply Selected to Calculator – Loads the selected combo (Win Increase %, Loss Reset, Buffer %) into the Calculator tab.\n' +
+                'Build Strategy – Builds the selected combo (Win Increase %, Loss Reset, Buffer %) into your strategy and takes you straight to the Play tab.\n' +
                 '\n' +
                 '\n' +
                 'STRATEGY FINDER TAB\n' +

@@ -1,9 +1,9 @@
 // ==UserScript==
 // @name         Stake Moles — Desktop
 // @namespace    http://tampermonkey.net/
-// @version      3.31
+// @version      3.32
 // @description  Standalone single-tool build, extracted from the unified bundle.
-// @author       .
+// @author       Zerocu
 // @match        https://stake.com/*
 // @match        https://stake.bet/*
 // @match        https://stake.games/*
@@ -23,7 +23,7 @@
 (function () {
     'use strict';
 
-    console.log('%cStake Moles — Desktop — standalone build v3.31', 'color:#17c7b8;font-weight:800;font-size:13px');
+    console.log('%cStake Moles — Desktop — standalone build v3.32', 'color:#17c7b8;font-weight:800;font-size:13px');
 
     /* =========================================================
        UNIFIED LOADER — STORAGE KEYS & SETTINGS

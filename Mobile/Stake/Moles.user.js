@@ -1,9 +1,9 @@
 // ==UserScript==
 // @name         Stake Moles — Mobile
 // @namespace    http://tampermonkey.net/
-// @version      6.03
+// @version      6.04
 // @description  Standalone single-tool mobile build, extracted from the unified mobile bundle.
-// @author       .
+// @author       Zerocu
 // @match        https://stake.com/*
 // @match        https://stake.bet/*
 // @match        https://stake.games/*
@@ -22,7 +22,7 @@
 (function () {
     'use strict';
 
-    try { console.log('[Stake Moles — Mobile] standalone build v6.03'); } catch (e) {}
+    try { console.log('[Stake Moles — Mobile] standalone build v6.04'); } catch (e) {}
 
 
     try { console.log('[unified-mobile] boot v5.64 — DiceTool.exe replica UI for the dice tool (Calculator / Easy Mode / Strategy Finder / Results / Settings)'); } catch (e) {}

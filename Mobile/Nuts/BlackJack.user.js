@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Nuts Blackjack — Mobile
 // @namespace    http://tampermonkey.net/
-// @version      6.03
+// @version      6.04
 // @description  Standalone single-tool mobile build, extracted from the unified mobile bundle.
 // @author       .
 // @match        https://nuts.gg/*
@@ -14,7 +14,7 @@
 (function () {
     'use strict';
 
-    try { console.log('[Nuts Blackjack — Mobile] standalone build v6.03'); } catch (e) {}
+    try { console.log('[Nuts Blackjack — Mobile] standalone build v6.04'); } catch (e) {}
 
 
     try { console.log('[unified-mobile] boot v5.64 — DiceTool.exe replica UI for the dice tool (Calculator / Easy Mode / Strategy Finder / Results / Settings)'); } catch (e) {}
@@ -2890,6 +2890,10 @@
             '#bj-perfect-hud.bj-float{position:fixed;top:20px;right:20px;width:246px;z-index:999999;' +
             'box-shadow:0 4px 20px rgba(0,0,0,.4)}' +
             '#bj-perfect-hud.bj-collapsed .bj-body{display:none}' +
+            '#bj-perfect-hud .bj-advice{padding:10px 11px 0}' +
+            /* Nothing follows the advice when collapsed, so it pays for its
+               own bottom padding in that state. */
+            '#bj-perfect-hud.bj-collapsed .bj-advice{padding-bottom:10px}' +
             '#bj-perfect-hud .bj-head{display:flex;align-items:center;justify-content:space-between;' +
             'padding:9px 11px;border-bottom:1px solid var(--bj-line,rgba(255,255,255,.12))}' +
             '#bj-perfect-hud .bj-title{font-weight:700;color:var(--bj-head,#fff);font-size:11px;' +
@@ -3122,10 +3126,16 @@
                    renders both hands and their totals itself, so repeating
                    them here would just be noise. The statistics live on the
                    felt; this panel is the advice plus the controls. */
-                '<div class="bj-body">' +
+                /* The call sits OUTSIDE .bj-body: collapsing the panel must
+                   still leave the advice on screen, because playing the hand
+                   manually is exactly when you want it and the collapsed
+                   panel is what keeps the felt visible on a phone. */
+                '<div class="bj-advice">' +
                   '<div class="bj-act" data-a="">—</div>' +
                   '<div class="bj-why"></div>' +
                   '<div class="bj-ins">NEVER TAKE INSURANCE</div>' +
+                '</div>' +
+                '<div class="bj-body">' +
                   '<div class="bj-eq" data-bj-eq style="display:none">' +
                     '<div class="bj-eq-bar"><span class="bj-eq-win" data-bj-eq-win></span>' +
                       '<span class="bj-eq-push" data-bj-eq-push></span>' +

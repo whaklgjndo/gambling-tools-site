@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Stake Limbo — Desktop
 // @namespace    http://tampermonkey.net/
-// @version      3.31
+// @version      3.32
 // @description  Standalone single-tool build, extracted from the unified bundle.
 // @author       .
 // @match        https://stake.com/*
@@ -23,7 +23,7 @@
 (function () {
     'use strict';
 
-    console.log('%cStake Limbo — Desktop — standalone build v3.31', 'color:#17c7b8;font-weight:800;font-size:13px');
+    console.log('%cStake Limbo — Desktop — standalone build v3.32', 'color:#17c7b8;font-weight:800;font-size:13px');
 
     /* =========================================================
        IOW/SMART → STATS BRIDGE
@@ -4565,9 +4565,10 @@ ${SHUF} .dt-terms-def, ${SHUF} .dt-terms-text { color: #cfc4f0 !important; }` : 
             const statsBtn = document.createElement('button');
             statsBtn.className = 'dt-tab-btn';
             statsBtn.dataset.tab = 'stats';
-            statsBtn.innerHTML = 'Stats';
-            const calcBtn = tabsNav.querySelector('[data-tab="calc"]');
-            if (calcBtn) tabsNav.insertBefore(statsBtn, calcBtn);
+            statsBtn.innerHTML = 'Play';
+            // Sit ahead of Find New Strategy so Play is the first tab in the strip.
+            const firstBtn = tabsNav.querySelector('[data-tab="easy"]');
+            if (firstBtn) tabsNav.insertBefore(statsBtn, firstBtn);
             else tabsNav.insertBefore(statsBtn, tabsNav.firstChild);
 
             // Panel.
@@ -4716,6 +4717,16 @@ ${SHUF} .dt-terms-def, ${SHUF} .dt-terms-text { color: #cfc4f0 !important; }` : 
          * streak meta-rows).
          */
         function trySetupTermsTab() {
+            // Disabled: the Advanced IOW panel exposes exactly two tabs
+            // (Play, Find New Strategy). This used to append a third
+            // "Terms" button. Latching termsSetup also stops the 500ms
+            // self-heal tick from calling this again every pass. The
+            // glossary build-out below is intact but unreachable — delete
+            // these three lines to bring the tab back.
+            termsSetup = true;
+            return true;
+        }
+        function trySetupTermsTab_disabled() {
             if (termsSetup) return true;
             const panel = document.getElementById('dt-aio-panel');
             if (!panel) return false;
@@ -4738,7 +4749,7 @@ ${SHUF} .dt-terms-def, ${SHUF} .dt-terms-text { color: #cfc4f0 !important; }` : 
             // "Label – definition" lines                       → label/def pair
             // The new STATS TAB section is added at the top.
             const TERMS_TEXT =
-                'STATS TAB\n' +
+                'PLAY TAB\n' +
                 '\n' +
                 'CONTROLS DECK\n' +
                 'Balance Divisor – Two-way bound to the Calculator. Higher number = smaller starting bet.\n' +
@@ -4798,12 +4809,11 @@ ${SHUF} .dt-terms-def, ${SHUF} .dt-terms-text { color: #cfc4f0 !important; }` : 
                 'Bust rate – The percentage of trials that failed to meet the first profit stop.\n' +
                 '\n' +
                 '\n' +
-                'EASY MODE TAB\n' +
+                'FIND NEW STRATEGY TAB\n' +
                 '\n' +
                 'PARAMETERS\n' +
-                'Multiplier – The payout multiplier you want to play at, or Any to see the multiplier each combo produces (set Win Increase % first).\n' +
-                'Win Increase % – Your desired win increase %, or Any to search every whole number 1-500. Loss Reset and Buffer % are worked out automatically: loss reset runs up to the multiplier value (max 100) and the buffer absorbs the decimals so your values are matched exactly.\n' +
-                'Any (button) – The small button next to each field resets that field back to Any.\n' +
+                'Multiplier – The payout multiplier you want to play at. Every whole-number Win Increase % from 1-500 is searched against it, and Loss Reset and Buffer % are worked out automatically: loss reset runs up to the multiplier value (max 100) and the buffer absorbs the decimals so your multiplier is matched exactly.\n' +
+                'Any (button) – The small button next to the field resets it back to Any.\n' +
                 'Win Chance – The dice win chance implied by the multiplier (99 / multiplier) when it is pinned.\n' +
                 'Combos – How many parameter combinations are currently listed.\n' +
                 '\n' +
@@ -4812,11 +4822,10 @@ ${SHUF} .dt-terms-def, ${SHUF} .dt-terms-text { color: #cfc4f0 !important; }` : 
                 'Win Increase % – The win increase percentage you would enter in the game.\n' +
                 'Loss Reset – The number of losses before the bet resets to base.\n' +
                 'Buffer % – The buffer for that combo (solved to 2 decimals when left on Any).\n' +
-                'Win Chance % – The dice win chance for that combo\'s multiplier.\n' +
                 'Reset Odds % – The chance that any given run of Loss Reset bets are all losses, triggering a bet reset.\n' +
                 '\n' +
                 'BUTTONS\n' +
-                'Apply Selected to Calculator – Loads the selected combo (Win Increase %, Loss Reset, Buffer %) into the Calculator tab.\n' +
+                'Build Strategy – Builds the selected combo (Win Increase %, Loss Reset, Buffer %) into your strategy and takes you straight to the Play tab.\n' +
                 '\n' +
                 '\n' +
                 'STRATEGY FINDER TAB\n' +

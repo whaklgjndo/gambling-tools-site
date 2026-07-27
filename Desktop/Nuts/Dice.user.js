@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Nuts Dice — Desktop
 // @namespace    http://tampermonkey.net/
-// @version      3.31
+// @version      3.32
 // @description  Standalone single-tool build, extracted from the unified bundle.
 // @author       .
 // @match        https://nuts.gg/*
@@ -15,7 +15,7 @@
 (function () {
     'use strict';
 
-    console.log('%cNuts Dice — Desktop — standalone build v3.31', 'color:#17c7b8;font-weight:800;font-size:13px');
+    console.log('%cNuts Dice — Desktop — standalone build v3.32', 'color:#17c7b8;font-weight:800;font-size:13px');
 
     /* =========================================================
        UNIFIED LOADER — STORAGE KEYS & SETTINGS
@@ -2335,9 +2335,10 @@
             statsBtn = document.createElement('button');
             statsBtn.className = 'dt-tab-btn';
             statsBtn.dataset.tab = 'stats';
-            statsBtn.textContent = 'Stats';
-            const calcBtn = tabsNav.querySelector('[data-tab="calc"]');
-            if (calcBtn) tabsNav.insertBefore(statsBtn, calcBtn);
+            statsBtn.textContent = 'Play';
+            // Sit ahead of Find New Strategy so Play is the first tab in the strip.
+            const firstBtn = tabsNav.querySelector('[data-tab="easy"]');
+            if (firstBtn) tabsNav.insertBefore(statsBtn, firstBtn);
             else tabsNav.insertBefore(statsBtn, tabsNav.firstChild);
         }
         if (!statsPanel) {
@@ -3657,7 +3658,7 @@
         try {
             const snap = {};
             const ids = ['balance', 'win_inc', 'loss_reset', 'bet_div', 'profit_mult', 'buffer', 'n_trials',
-                         'opt_balance', 'opt_trials', 'easy_mult', 'easy_w'];
+                         'opt_balance', 'opt_trials', 'easy_mult'];
             for (const p of ['opt_betdiv', 'opt_profit', 'opt_w', 'opt_l', 'opt_buf'])
                 for (const s of ['from', 'to', 'step', 'values']) ids.push(p + '_' + s);
             for (const k of ids) {
@@ -4858,7 +4859,7 @@ self.onmessage = async (e) => {
         #${PANEL_ID} .dt-opt-dash { text-align: center; color: color-mix(in srgb, var(--dt-fg) 38%, transparent); font-weight: 600; }
 
         /* Easy Mode tab */
-        #${PANEL_ID} .dt-easy-grid { display: grid; grid-template-columns: auto 1fr auto 1fr; gap: 9px 12px; align-items: center; }
+        #${PANEL_ID} .dt-easy-grid { display: grid; grid-template-columns: auto 1fr; gap: 9px 12px; align-items: center; }
         #${PANEL_ID} .dt-easy-cell { display: flex; align-items: center; gap: 6px; }
         #${PANEL_ID} .dt-easy-cell .dt-in { width: 86px; }
         #${PANEL_ID} .dt-easy-meta { display: flex; align-items: center; gap: 10px; margin-top: 11px; flex-wrap: wrap; }
@@ -4931,11 +4932,12 @@ self.onmessage = async (e) => {
               <button class="dt-close" id="dt-close-btn" aria-label="Close">×</button>
             </div>
             <nav class="dt-tabs" role="tablist">
-              <button class="dt-tab-btn active" data-tab="calc">Calculator / Simulator</button>
-              <button class="dt-tab-btn" data-tab="easy">Easy Mode</button>
-              <button class="dt-tab-btn" data-tab="opt">Strategy Finder</button>
-              <button class="dt-tab-btn" data-tab="results">Strategy Finder Results</button>
-              <button class="dt-tab-btn" data-tab="settings">Settings</button>
+              <!-- Only two tabs are exposed. "Play" (data-tab="stats") is created at
+                   runtime by the site integration and inserts itself ahead of this
+                   button. The Calculator / Strategy Finder / Results / Settings panels
+                   are still built into .dt-body below — Build Strategy and calcValues()
+                   read and write their fields — they just have no tab button now. -->
+              <button class="dt-tab-btn active" data-tab="easy">Find New Strategy</button>
             </nav>
             <div class="dt-body">
               ${buildCalcPanel()}
@@ -5062,7 +5064,7 @@ self.onmessage = async (e) => {
                   <span class="dt-lbl">${label}</span>
                   <input type="text" inputmode="${inputmode || 'decimal'}" class="dt-in dt-entry" id="dt-${id}" value="${value}">`;
         return `
-          <section class="dt-panel active" id="dt-panel-calc">
+          <section class="dt-panel" id="dt-panel-calc">
             <div class="dt-calc-grid">
               <div class="dt-card dt-lf">
                 <div class="dt-card-title">Calculated Values</div>
@@ -5170,7 +5172,7 @@ self.onmessage = async (e) => {
        out automatically so pinned values are matched exactly. ---- */
     function buildEasyPanel() {
         return `
-          <section class="dt-panel" id="dt-panel-easy">
+          <section class="dt-panel active" id="dt-panel-easy">
             <div class="dt-card dt-lf">
               <div class="dt-card-title">Desired Parameters</div>
               <div class="dt-easy-grid">
@@ -5178,11 +5180,6 @@ self.onmessage = async (e) => {
                 <span class="dt-easy-cell">
                   <input type="text" inputmode="decimal" class="dt-in dt-entry" id="dt-easy_mult" value="Any">
                   <button type="button" class="dt-btn dt-btn-small" id="dt-easy_mult_any" title="Reset this field back to Any">Any</button>
-                </span>
-                <span class="dt-lbl">Win Increase %:${helpBtn('Win Increase %')}</span>
-                <span class="dt-easy-cell">
-                  <input type="text" inputmode="decimal" class="dt-in dt-entry" id="dt-easy_w" value="Any">
-                  <button type="button" class="dt-btn dt-btn-small" id="dt-easy_w_any" title="Reset this field back to Any">Any</button>
                 </span>
               </div>
               <div class="dt-easy-meta">
@@ -5200,7 +5197,7 @@ self.onmessage = async (e) => {
                 </table>
               </div>
               <div class="dt-res-foot">
-                <button class="dt-btn" id="dt-easy_apply">Apply Selected to Calculator</button>
+                <button class="dt-btn" id="dt-easy_apply">Build Strategy</button>
               </div>
             </div>
           </section>
@@ -5480,7 +5477,6 @@ self.onmessage = async (e) => {
         { key: 'w', label: 'Win Increase %' },
         { key: 'l', label: 'Loss Reset' },
         { key: 'b', label: 'Buffer %' },
-        { key: 'chance', label: 'Win Chance %' },
         { key: 'odds', label: 'Reset Odds %' }
     ];
     function easyFindCombos(m, w) {
@@ -5521,7 +5517,10 @@ self.onmessage = async (e) => {
         easyTimer = null;
         const body = $('easy_body'); if (!body) return;
         const pm = easyParse('easy_mult', 1, 9900);
-        const pw = easyParse('easy_w', 0, EASY_W_MAX);
+        // Win Increase % is no longer pinnable from this tab, so the search
+        // always sweeps it. Kept as a null parse result so easyFindCombos'
+        // three branches stay intact.
+        const pw = { ok: true, v: null };
         $('easy_chance').textContent = (pm.ok && pm.v != null) ? (99 / pm.v).toFixed(2) + '%' : '--';
         easySelectedIdx = -1;
         if (!pm.ok || !pw.ok) {
@@ -5532,7 +5531,7 @@ self.onmessage = async (e) => {
         const rows = easyFindCombos(pm.v, pw.v);
         if (rows == null) {
             easyRows = []; body.innerHTML = ''; $('easy_count').textContent = '0';
-            $('easy_status').textContent = 'Pin Multiplier or Win Increase % to search.';
+            $('easy_status').textContent = 'Enter a Multiplier to search.';
             return;
         }
         easyRows = rows;
@@ -5554,7 +5553,7 @@ self.onmessage = async (e) => {
         body.innerHTML = rows.map(r =>
             `<tr data-idx="${r._i}" class="${r._i === easySelectedIdx ? 'selected' : ''}">` +
             `<td>${r.m.toFixed(2)}</td><td>${fmtEasyW(r.w)}</td><td>${r.l}</td>` +
-            `<td>${r.b.toFixed(2)}</td><td>${r.chance.toFixed(2)}</td><td>${r.odds.toFixed(2)}</td></tr>`
+            `<td>${r.b.toFixed(2)}</td><td>${r.odds.toFixed(2)}</td></tr>`
         ).join('');
     }
     function onEasyTableClick(e) {
@@ -5572,7 +5571,12 @@ self.onmessage = async (e) => {
             easySelectedIdx = parseInt(tr.dataset.idx);
         }
     }
-    function easyApplySelected() {
+    /** Build the selected combo into the live strategy and hand the user
+     *  straight to Play. The Calculator panel still holds these fields and
+     *  calcValues() still derives the bet plan from them — the user just
+     *  never has to visit that tab to do it. Falls back to staying put on
+     *  builds where no Play tab was injected. */
+    async function easyBuildStrategy() {
         if (easySelectedIdx < 0 || !easyRows[easySelectedIdx]) { toast('Select a combo row first.'); return; }
         const r = easyRows[easySelectedIdx];
         $('win_inc').value = fmtEasyW(r.w);
@@ -5580,8 +5584,26 @@ self.onmessage = async (e) => {
         $('buffer').value = r.b.toFixed(2);
         calcValues();
         saveState();
-        switchTab('calc');
-        toast('Combo applied to Calculator');
+        // calcValues() only refreshes the Calculator's own output fields —
+        // on its own it never reaches the game. Building the strategy is a
+        // two-step flow: scrape the live balance so the bet size is derived
+        // from real money, then create the strategy in-game (sets payout and
+        // bet amount, opens Advanced, creates the named "<mult>x" strategy
+        // and configures its conditions).
+        //
+        // Deliberately import rather than "update existing": update only
+        // rewrites one threshold on a strategy the game already has, so with
+        // nothing set up there is nothing for it to update.
+        try {
+            await gameExport();
+            await sleep(150);   // let the calculator settle before its outputs are read
+            await gameImport();
+        } catch (e) {
+            console.error('[Find New Strategy] build failed:', e);
+            toast('Could not build the strategy in-game.');
+            return;
+        }
+        if (document.getElementById('dt-panel-stats')) switchTab('stats');
     }
     function easySchedule() {
         if (easyTimer) clearTimeout(easyTimer);
@@ -6902,7 +6924,7 @@ self.onmessage = async (e) => {
        ========================================================= */
     function applyStateToUI() {
         const ids = ['balance', 'win_inc', 'loss_reset', 'bet_div', 'profit_mult', 'buffer', 'n_trials',
-                     'opt_balance', 'opt_trials', 'easy_mult', 'easy_w'];
+                     'opt_balance', 'opt_trials', 'easy_mult'];
         for (const p of ['opt_betdiv', 'opt_profit', 'opt_w', 'opt_l', 'opt_buf'])
             for (const s of ['from', 'to', 'step', 'values']) ids.push(p + '_' + s);
         for (const k of ids) if ($(k) && state[k] != null) $(k).value = state[k];
@@ -7132,10 +7154,9 @@ self.onmessage = async (e) => {
         document.getElementById('dt-res_table').addEventListener('click', onResTableClick);
 
         // Easy Mode
-        ['easy_mult', 'easy_w'].forEach(id => $(id).addEventListener('input', () => { easySchedule(); saveState(); }));
+        $('easy_mult').addEventListener('input', () => { easySchedule(); saveState(); });
         $('easy_mult_any').addEventListener('click', () => { $('easy_mult').value = 'Any'; easyRefresh(); saveState(); });
-        $('easy_w_any').addEventListener('click', () => { $('easy_w').value = 'Any'; easyRefresh(); saveState(); });
-        $('easy_apply').addEventListener('click', easyApplySelected);
+        $('easy_apply').addEventListener('click', easyBuildStrategy);
         document.getElementById('dt-easy_table').addEventListener('click', onEasyTableClick);
         easyRefresh();
 
@@ -7189,288 +7210,32 @@ self.onmessage = async (e) => {
     }
 
 
-    /* ----- Nuts Dice / Limbo (Target) — same body, split into 2 toggles ----- */
-    const _nutsIowSmartInit = { ran: false };
-    function runNutsIowSmart() {
-        if (_nutsIowSmartInit.ran) return;
-        try { tool_nuts_iow_smart(); _nutsIowSmartInit.ran = true; }
-        catch (e) { console.error('[UnifiedTools] nuts-iow-smart init error:', e); }
-        try { initNutsDiceToolPanel(); }
-        catch (e) { console.error('[UnifiedTools] nuts dice-tool panel init error:', e); }
-    }
-    /* Build the real DiceTool panel on Nuts and stitch it into the Advanced IOW
-       tab. The panel is the same one Stake/Shuffle use (all tabs + simulator);
-       tool_nuts_iow_smart mounts #dt-aio-panel into #hud-content when the user
-       is in Advanced IOW mode. Here we just build it once and (a) hide its own
-       floating chrome, (b) inject the bridge CSS that makes it fill the tab. */
-    function initNutsDiceToolPanel() {
-        // Nuts only. On Stake/Shuffle setupIowDiceIntegration owns the DiceTool
-        // panel; this bootstrap must never touch those pages.
-        if (!/(^|\.)nuts\.gg$/i.test(location.hostname)) return;
-        if (window.__nuts_dt_panel_init__) return;
-        window.__nuts_dt_panel_init__ = true;
-        /* DiceTool.exe replica skin — a verbatim copy of DT_STAKE_SKIN_CSS from
-           setupIowDiceIntegration (which only runs on Stake/Shuffle), so the
-           Nuts Advanced IOW panel renders identically to Stake's. Keep the two
-           copies in sync; both are scoped to `#hud-content > #dt-aio-panel`. */
-        const NUTS_DT_SKIN_CSS = `
-/* Panel chrome */
-#hud-content > #dt-aio-panel { --dt-font-scale: 1 !important; background: #162a35 !important; border: 1px solid #2f4553 !important; border-radius: 8px !important; font-size: 12.5px !important; line-height: 1.45 !important; color: #c9d1d9; font-family: "Segoe UI", -apple-system, sans-serif !important; overflow: hidden !important; }
-/* Tab strip = ttk.Notebook: flat tabs, selected = select_bg #1f333e */
-#hud-content > #dt-aio-panel .dt-tabs { background: #162a35 !important; border-bottom: 1px solid #2f4553 !important; padding: 5px 8px 0 !important; gap: 2px; }
-#hud-content > #dt-aio-panel .dt-tab-btn { flex: 0 1 auto !important; padding: 7px 13px !important; font-size: 12px !important; font-weight: 700 !important; color: #c9d1d9 !important; background: #10202b !important; border: 1px solid #2f4553 !important; border-bottom: none !important; border-radius: 4px 4px 0 0 !important; text-transform: none; letter-spacing: 0; }
-#hud-content > #dt-aio-panel .dt-tab-btn:hover { background: #1a2c38 !important; color: #ffffff !important; }
-#hud-content > #dt-aio-panel .dt-tab-btn.active { background: #1f333e !important; color: #ffffff !important; border-color: #3a5566 !important; }
-#hud-content > #dt-aio-panel .dt-tab-btn .dt-tab-icon { display: none !important; }
-/* Body */
-#hud-content > #dt-aio-panel .dt-body { padding: 18px 12px 10px !important; background: #162a35; }
-#hud-content > #dt-aio-panel .dt-panel.active { gap: 17px !important; }
-#hud-content > #dt-aio-panel .dt-body::-webkit-scrollbar, #hud-content > #dt-aio-panel .dt-scroll::-webkit-scrollbar, #hud-content > #dt-aio-panel .dt-terms-scroll::-webkit-scrollbar { width: 10px; height: 10px; }
-#hud-content > #dt-aio-panel .dt-body::-webkit-scrollbar-thumb, #hud-content > #dt-aio-panel .dt-scroll::-webkit-scrollbar-thumb, #hud-content > #dt-aio-panel .dt-terms-scroll::-webkit-scrollbar-thumb { background: #2f4553; border-radius: 2px; border: 2px solid #162a35; }
-/* LabelFrames: sunken, 2px slate border, serif italic underlined title on the border */
-#hud-content > #dt-aio-panel .dt-card { background: #162a35 !important; border: 2px solid #c9d1d9 !important; border-radius: 4px !important; padding: 16px 12px 12px !important; margin-bottom: 0 !important; box-shadow: inset 1px 1px 4px rgba(0,0,0,0.35) !important; position: relative !important; overflow: visible !important; }
-#hud-content > #dt-aio-panel .dt-card-title { position: absolute !important; top: -11px !important; left: 10px !important; background: #162a35 !important; padding: 0 7px !important; font-family: "Times New Roman", Georgia, serif !important; font-style: italic !important; font-weight: 700 !important; text-decoration: underline !important; font-size: 14px !important; color: #c9d1d9 !important; letter-spacing: 0; text-transform: none; white-space: nowrap; }
-/* Labels + entries (ttk clam) */
-#hud-content > #dt-aio-panel .dt-lbl { font-size: 12.5px; font-weight: 700; color: #c9d1d9; white-space: nowrap; }
-#hud-content > #dt-aio-panel input.dt-entry, #hud-content > #dt-aio-panel select.dt-theme-select { background: #071824 !important; color: #c9d1d9 !important; border: 1px solid #2f4553 !important; border-radius: 3px !important; padding: 5px 8px !important; font-size: 12px !important; font-family: "Segoe UI", -apple-system, sans-serif !important; min-width: 0; width: 100%; text-align: left; box-shadow: inset 1px 1px 2px rgba(0,0,0,0.4); }
-#hud-content > #dt-aio-panel input.dt-entry:focus, #hud-content > #dt-aio-panel select.dt-theme-select:focus { outline: none !important; border-color: #c9d1d9 !important; box-shadow: 0 0 0 1px #c9d1d9 !important; }
-#hud-content > #dt-aio-panel input.dt-entry::selection { background: #1f333e; color: #ffffff; }
-#hud-content > #dt-aio-panel input.dt-out-val[readonly] { opacity: 1 !important; font-weight: 400 !important; }
-/* Buttons (ttk clam) */
-#hud-content > #dt-aio-panel .dt-btn { background: #071824 !important; border: 1px solid #2f4553 !important; color: #c9d1d9 !important; border-radius: 3px !important; font-size: 12px !important; font-weight: 600 !important; letter-spacing: 0; text-transform: none !important; padding: 6px 12px !important; min-height: 30px !important; font-family: "Segoe UI", -apple-system, sans-serif !important; box-shadow: none !important; }
-#hud-content > #dt-aio-panel .dt-btn:hover { background: #1a2c38 !important; color: #ffffff !important; border-color: #3a5566 !important; }
-#hud-content > #dt-aio-panel .dt-btn:active { background: #1f333e !important; transform: none !important; }
-#hud-content > #dt-aio-panel .dt-btn:disabled { opacity: 0.45 !important; }
-#hud-content > #dt-aio-panel .dt-btn-copy { padding: 4px 11px !important; min-height: 24px !important; font-size: 11.5px !important; }
-#hud-content > #dt-aio-panel .dt-btn-block { width: 100%; margin-top: 13px !important; }
-/* Calculator grid: Calculated Values | (Parameters + Simulation Controls) */
-#hud-content > #dt-aio-panel .dt-calc-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr); gap: 14px; align-items: start; }
-#hud-content > #dt-aio-panel .dt-calc-right { display: flex; flex-direction: column; gap: 17px; min-width: 0; }
-#hud-content > #dt-aio-panel .dt-cv-row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 9px; align-items: center; padding: 7px 0; }
-/* Profit Stop stays in the DOM (calcValues + the Stats-tab mirror write/read
-   #dt-out_profit) but is not displayed — the strategy's stop condition uses
-   Balance Target, so that is the number shown and copied. */
-#hud-content > #dt-aio-panel .dt-cv-row[hidden] { display: none !important; }
-#hud-content > #dt-aio-panel .dt-pm-grid { display: grid; grid-template-columns: auto minmax(0, 1fr) auto minmax(0, 1fr); gap: 9px 10px; align-items: center; }
-#hud-content > #dt-aio-panel .dt-pm-btns { display: flex; gap: 10px; margin-top: 13px; }
-#hud-content > #dt-aio-panel .dt-pm-btns .dt-btn { flex: 1 1 0; }
-#hud-content > #dt-aio-panel .dt-ctl-row { display: flex; align-items: center; gap: 10px; margin: 6px 0; }
-#hud-content > #dt-aio-panel .dt-ctl-row .dt-btn { flex: 0 0 auto; min-width: 112px; }
-#hud-content > #dt-aio-panel .dt-ctl-row input.dt-entry { width: 84px; flex: 0 0 auto; text-align: center; }
-#hud-content > #dt-aio-panel .dt-ctl-row .dt-progress-wrap { flex: 1 1 auto; margin: 0 !important; }
-/* Optimizer */
-#hud-content > #dt-aio-panel .dt-opt-grid { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 9px 12px; align-items: center; }
-#hud-content > #dt-aio-panel .dt-opt-runrow { margin-top: 13px; }
-#hud-content > #dt-aio-panel .dt-opt-foot, #hud-content > #dt-aio-panel .dt-res-foot { display: flex; justify-content: space-between; gap: 10px; }
-/* Progress (chunky tk bar, #00ff80 on dark trough) + status */
-#hud-content > #dt-aio-panel .dt-progress-wrap { background: #071824 !important; border: 1px solid #2f4553 !important; height: 14px !important; border-radius: 2px !important; margin: 0 !important; }
-#hud-content > #dt-aio-panel .dt-progress-bar { background: #00ff80 !important; }
-#hud-content > #dt-aio-panel .dt-status-line { font-size: 11.5px !important; color: #c9d1d9 !important; text-align: center; font-family: "Segoe UI", -apple-system, sans-serif !important; opacity: 1 !important; margin: 0 !important; }
-/* Scroll regions */
-#hud-content > #dt-aio-panel .dt-scroll { border: 1px solid #2f4553 !important; border-radius: 3px !important; background: #071824 !important; }
-#hud-content > #dt-aio-panel .dt-res-scroll { flex: 1 1 auto; min-height: 220px; max-height: none !important; }
-#hud-content > #dt-aio-panel #dt-panel-results.active { flex: 1 1 auto; min-height: 0; }
-/* Simulation Results treeview (Statistic | Value) */
-#hud-content > #dt-aio-panel table.dt-stats { font-size: 12px !important; }
-#hud-content > #dt-aio-panel table.dt-stats th { position: sticky; top: 0; background: #071824; color: #c9d1d9; font-size: 12px; font-weight: 700; padding: 6px 11px; border-bottom: 1px solid #2f4553; text-align: left; }
-#hud-content > #dt-aio-panel table.dt-stats th:last-child { text-align: center; }
-#hud-content > #dt-aio-panel table.dt-stats td { padding: 5px 11px !important; border-bottom: 1px solid #14262f !important; font-size: 12px !important; }
-#hud-content > #dt-aio-panel table.dt-stats td:first-child { color: #c9d1d9 !important; font-weight: 400 !important; width: 55%; }
-#hud-content > #dt-aio-panel table.dt-stats td:last-child { color: #c9d1d9 !important; text-align: center !important; font-family: "Segoe UI", -apple-system, sans-serif !important; font-weight: 400 !important; }
-#hud-content > #dt-aio-panel table.dt-stats td.dt-empty { text-align: center; color: #7d8a96; padding: 14px !important; }
-/* Optimizer Results treeview: all columns, centered, gray striping like the app */
-#hud-content > #dt-aio-panel table.dt-results { font-size: 11.5px !important; }
-#hud-content > #dt-aio-panel table.dt-results th { position: sticky; top: 0; background: #071824 !important; color: #c9d1d9 !important; font-size: 11.5px !important; font-weight: 700 !important; letter-spacing: 0; text-transform: none !important; text-align: center !important; padding: 6px 9px !important; border-bottom: 1px solid #2f4553 !important; border-right: 1px solid #14262f; font-family: "Segoe UI", -apple-system, sans-serif !important; white-space: nowrap; }
-#hud-content > #dt-aio-panel table.dt-results td { text-align: center !important; color: #c9d1d9 !important; padding: 4px 9px !important; border-bottom: none !important; font-family: "Segoe UI", -apple-system, sans-serif !important; white-space: nowrap; }
-#hud-content > #dt-aio-panel table.dt-results tr:nth-child(odd) td { background: #2d2d2d !important; }
-#hud-content > #dt-aio-panel table.dt-results tr:nth-child(even) td { background: #383838 !important; }
-#hud-content > #dt-aio-panel table.dt-results tr:hover td { background: #454545 !important; }
-#hud-content > #dt-aio-panel table.dt-results tr.selected td { background: #1f333e !important; color: #ffffff !important; font-weight: 400 !important; box-shadow: none !important; }
-/* The app has no color-coded cells or risk bars — neutralize them */
-#hud-content > #dt-aio-panel td.dt-cell-good, #hud-content > #dt-aio-panel td.dt-cell-mid, #hud-content > #dt-aio-panel td.dt-cell-bad { color: #c9d1d9 !important; }
-#hud-content > #dt-aio-panel table.dt-results tr.selected td.dt-cell-good, #hud-content > #dt-aio-panel table.dt-results tr.selected td.dt-cell-mid, #hud-content > #dt-aio-panel table.dt-results tr.selected td.dt-cell-bad { color: #ffffff !important; }
-#hud-content > #dt-aio-panel .dt-riskbar { display: none !important; }
-#hud-content > #dt-aio-panel #dt-res_status { display: none !important; }
-/* Settings: centered fixed-width column of LabelFrames */
-#hud-content > #dt-aio-panel .dt-settings-center { width: 100%; max-width: 440px; margin: 14px auto 0; display: flex; flex-direction: column; gap: 24px; }
-#hud-content > #dt-aio-panel .dt-set-row { display: flex; justify-content: space-between; align-items: center; gap: 14px; padding: 9px 0; }
-#hud-content > #dt-aio-panel .dt-sep { height: 1px; background: #2f4553; }
-#hud-content > #dt-aio-panel .dt-set-desc { font-size: 11px; font-style: italic; color: #7d8a96; margin: 2px 0 8px; line-height: 1.4; }
-#hud-content > #dt-aio-panel .dt-set-val { color: #7d8a96; font-size: 12px; }
-/* The IOW HUD strips native checkbox chrome globally — restore it here,
-   same as the bridge does for the Stats deck autostop checkbox. */
-#hud-content > #dt-aio-panel .dt-chk { appearance: auto !important; -webkit-appearance: auto !important; width: 15px !important; height: 15px !important; margin: 0 !important; padding: 0 !important; position: static !important; opacity: 1 !important; visibility: visible !important; pointer-events: auto !important; accent-color: #00ff80; cursor: pointer; flex: 0 0 auto !important; }
-#hud-content > #dt-aio-panel select.dt-theme-select { width: auto !important; flex: 0 0 auto !important; }
-#hud-content > #dt-aio-panel input.dt-num-input { width: 64px !important; flex: 0 0 auto !important; text-align: center !important; }
-/* Terms: the app's plain glossary text area (no search box) */
-#hud-content > #dt-aio-panel #dt-panel-terms.active { padding: 0 !important; }
-#hud-content > #dt-aio-panel .dt-terms-search { display: none !important; }
-#hud-content > #dt-aio-panel .dt-terms-scroll { background: #0f212e !important; border: 1px solid #2f4553 !important; border-radius: 4px !important; padding: 14px 18px !important; font-size: 12px !important; line-height: 1.5 !important; font-family: "Segoe UI", -apple-system, sans-serif !important; color: #c9d1d9 !important; }
-#hud-content > #dt-aio-panel .dt-terms-heading { color: #c9d1d9 !important; font-size: 17px !important; font-weight: 700 !important; letter-spacing: 0 !important; text-transform: none; border-bottom: none !important; padding-bottom: 0 !important; margin: 16px 0 6px !important; }
-#hud-content > #dt-aio-panel .dt-terms-heading:first-child { margin-top: 0 !important; }
-#hud-content > #dt-aio-panel .dt-terms-subheading { color: #c9d1d9 !important; font-size: 14px !important; font-weight: 700 !important; letter-spacing: 0; text-transform: none; margin: 10px 0 3px !important; }
-#hud-content > #dt-aio-panel .dt-terms-label { color: #c9d1d9 !important; font-weight: 700 !important; }
-#hud-content > #dt-aio-panel .dt-terms-dash { color: #7d8a96 !important; }
-#hud-content > #dt-aio-panel .dt-terms-def, #hud-content > #dt-aio-panel .dt-terms-text { color: #c9d1d9 !important; }
-#hud-content > #dt-aio-panel .dt-terms-empty { display: none !important; }
-/* Leftover modern chrome that must never surface in the replica */
-#hud-content > #dt-aio-panel .dt-help, #hud-content > #dt-aio-panel .dt-hint, #hud-content > #dt-aio-panel .dt-steps, #hud-content > #dt-aio-panel .dt-coach { display: none !important; }`;
-        /* NUTS THEME - panel internals. The skin above is kept for its GEOMETRY
-           (the calc/optimizer grids, paddings, sticky table headers) and this
-           repaints it in the HUD's neon-glass palette. Last in the sheet so it
-           wins ties. The tab strip deliberately borrows .mode-btn.active's
-           gradient, tying it to the mode pills directly above it.
-           The --hud-* vars resolve because the panel lives inside the HUD. */
-        const NUTS_DT_THEME_CSS = `
-#ratchet-master-container #hud-content > #dt-aio-panel { background: var(--hud-panel) !important; border: 1px solid var(--hud-border-soft) !important;
-  border-radius: 14px !important; color: var(--hud-text) !important; font-family: "Proxima Nova", "Segoe UI", sans-serif !important;
-  box-shadow: 0 16px 34px rgba(0, 0, 0, 0.26), inset 0 1px 0 rgba(255, 255, 255, 0.05) !important; backdrop-filter: blur(20px) saturate(1.24) !important; }
-/* Tab strip = pills, active pill = the HUD's accent gradient */
-#ratchet-master-container #hud-content > #dt-aio-panel .dt-tabs { background: transparent !important; border-bottom: 1px solid var(--hud-border-soft) !important;
-  padding: 9px 9px !important; gap: 6px !important; }
-#hud-content > #dt-aio-panel .dt-tab-btn { background: rgba(8, 11, 18, 0.62) !important; border: 1px solid rgba(142, 174, 212, 0.18) !important;
-  border-radius: 9px !important; color: var(--hud-text-soft) !important; font-size: 10.5px !important; font-weight: 800 !important;
-  letter-spacing: 0.06em !important; text-transform: uppercase !important; padding: 7px 12px !important;
-  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease, box-shadow 0.15s ease !important; }
-#hud-content > #dt-aio-panel .dt-tab-btn:hover { background: rgba(25, 243, 255, 0.08) !important; border-color: rgba(25, 243, 255, 0.35) !important;
-  color: var(--hud-text) !important; }
-#hud-content > #dt-aio-panel .dt-tab-btn.active { background: linear-gradient(135deg, var(--hud-accent-a), var(--hud-accent-b) 45%, var(--hud-accent-c)) !important;
-  border-color: rgba(255, 255, 255, 0.2) !important; color: #070911 !important;
-  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.2) inset, 0 0 18px rgba(25, 243, 255, 0.22), 0 0 26px rgba(255, 79, 216, 0.18) !important; }
-#hud-content > #dt-aio-panel .dt-body { background: transparent !important; padding: 14px 12px 12px !important; }
-#hud-content > #dt-aio-panel .dt-body::-webkit-scrollbar-thumb, #hud-content > #dt-aio-panel .dt-scroll::-webkit-scrollbar-thumb,
-#hud-content > #dt-aio-panel .dt-terms-scroll::-webkit-scrollbar-thumb { background: rgba(25, 243, 255, 0.28) !important; border-radius: 999px !important;
-  border: 2px solid transparent !important; background-clip: padding-box !important; }
-/* LabelFrames become glass cards; the notched Times-italic title becomes a
-   lettered cyan caption over a hairline (padding drops to match). */
-#hud-content > #dt-aio-panel .dt-card { background: rgba(10, 14, 22, 0.42) !important; border: 1px solid var(--hud-border-soft) !important;
-  border-radius: 12px !important; padding: 12px !important; box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04) !important; }
-#hud-content > #dt-aio-panel .dt-card-title { position: static !important; top: auto !important; left: auto !important; display: block !important;
-  background: none !important; padding: 0 0 7px !important; margin: 0 0 11px !important; font-family: "Proxima Nova", "Segoe UI", sans-serif !important;
-  font-style: normal !important; text-decoration: none !important; font-size: 10.5px !important; font-weight: 800 !important;
-  letter-spacing: 0.1em !important; text-transform: uppercase !important; color: var(--hud-accent-a) !important;
-  border-bottom: 1px solid rgba(25, 243, 255, 0.25) !important; }
-#hud-content > #dt-aio-panel .dt-lbl { color: var(--hud-text-soft) !important; font-size: 11px !important; font-weight: 700 !important; }
-#hud-content > #dt-aio-panel input.dt-entry, #hud-content > #dt-aio-panel select.dt-theme-select { background: rgba(8, 11, 18, 0.78) !important;
-  color: var(--hud-text) !important; border: 1px solid rgba(142, 174, 212, 0.18) !important; border-radius: 9px !important; padding: 6px 9px !important;
-  font-family: "Proxima Nova", "Segoe UI", sans-serif !important; font-weight: 700 !important;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04) !important; }
-#hud-content > #dt-aio-panel input.dt-entry:focus, #hud-content > #dt-aio-panel select.dt-theme-select:focus { border-color: var(--hud-accent-a) !important;
-  box-shadow: 0 0 0 2px rgba(25, 243, 255, 0.18), inset 0 1px 0 rgba(255, 255, 255, 0.04) !important; }
-#hud-content > #dt-aio-panel input.dt-entry::selection { background: rgba(25, 243, 255, 0.32); color: #fff; }
-#hud-content > #dt-aio-panel .dt-btn { background: linear-gradient(180deg, rgba(39, 48, 63, 0.88), rgba(17, 22, 33, 0.94)) !important;
-  border: 1px solid rgba(142, 174, 212, 0.18) !important; color: var(--hud-text) !important; border-radius: 9px !important;
-  font-family: "Proxima Nova", "Segoe UI", sans-serif !important; font-size: 10.5px !important; font-weight: 800 !important;
-  text-transform: uppercase !important; letter-spacing: 0.06em !important; box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05) !important;
-  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease, box-shadow 0.15s ease !important; }
-#hud-content > #dt-aio-panel .dt-btn:hover { background: linear-gradient(180deg, rgba(52, 64, 84, 0.92), rgba(22, 28, 42, 0.96)) !important;
-  border-color: rgba(25, 243, 255, 0.4) !important; color: #fff !important;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06), 0 0 14px rgba(25, 243, 255, 0.14) !important; }
-/* Block buttons are each tab's primary action - give them the accent fill. */
-#hud-content > #dt-aio-panel .dt-btn-block { background: linear-gradient(135deg, var(--hud-accent-a), var(--hud-accent-b) 44%, var(--hud-accent-c)) !important;
-  border-color: rgba(255, 255, 255, 0.18) !important; color: #070911 !important;
-  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.18) inset, 0 0 20px rgba(25, 243, 255, 0.2), 0 0 28px rgba(255, 79, 216, 0.16) !important; }
-#hud-content > #dt-aio-panel .dt-btn-block:hover { filter: brightness(1.08) !important;
-  background: linear-gradient(135deg, var(--hud-accent-a), var(--hud-accent-b) 44%, var(--hud-accent-c)) !important; }
-#hud-content > #dt-aio-panel .dt-progress-wrap { background: rgba(8, 11, 18, 0.78) !important; border: 1px solid rgba(142, 174, 212, 0.18) !important;
-  border-radius: 999px !important; height: 10px !important; overflow: hidden !important; }
-#hud-content > #dt-aio-panel .dt-progress-bar { background: linear-gradient(90deg, var(--hud-accent-a), var(--hud-accent-b) 55%, var(--hud-accent-c)) !important; }
-#hud-content > #dt-aio-panel .dt-status-line { color: var(--hud-text-soft) !important; font-family: "Proxima Nova", "Segoe UI", sans-serif !important; }
-#hud-content > #dt-aio-panel .dt-scroll { background: rgba(8, 11, 18, 0.62) !important; border: 1px solid var(--hud-border-soft) !important;
-  border-radius: 12px !important; }
-#hud-content > #dt-aio-panel .dt-sep { background: var(--hud-border-soft) !important; }
-#hud-content > #dt-aio-panel .dt-set-desc, #hud-content > #dt-aio-panel .dt-set-val { color: var(--hud-text-soft) !important; }
-#hud-content > #dt-aio-panel .dt-chk { accent-color: var(--hud-accent-a) !important; }
-/* Tables: cyan lettered headers, hairline rules. The replica's #2d2d2d/#383838
-   Tk striping is replaced by a near-transparent tint - solid grays read as a
-   hole punched in the glass panel. */
-#hud-content > #dt-aio-panel table.dt-stats th, #hud-content > #dt-aio-panel table.dt-results th { background: rgba(8, 11, 18, 0.92) !important;
-  color: var(--hud-accent-a) !important; font-family: "Proxima Nova", "Segoe UI", sans-serif !important; font-size: 10px !important;
-  font-weight: 800 !important; letter-spacing: 0.08em !important; text-transform: uppercase !important;
-  border-bottom: 1px solid rgba(25, 243, 255, 0.22) !important; }
-#hud-content > #dt-aio-panel table.dt-stats td, #hud-content > #dt-aio-panel table.dt-results td { color: var(--hud-text) !important;
-  font-family: "Proxima Nova", "Segoe UI", sans-serif !important; border-bottom: 1px solid rgba(255, 255, 255, 0.05) !important; }
-#hud-content > #dt-aio-panel table.dt-stats td:first-child { color: var(--hud-text-soft) !important; }
-#hud-content > #dt-aio-panel table.dt-stats td.dt-empty { color: var(--hud-text-soft) !important; }
-#hud-content > #dt-aio-panel table.dt-results tr:nth-child(odd) td { background: rgba(255, 255, 255, 0.028) !important; }
-#hud-content > #dt-aio-panel table.dt-results tr:nth-child(even) td { background: transparent !important; }
-#hud-content > #dt-aio-panel table.dt-results tr:hover td { background: rgba(25, 243, 255, 0.1) !important; }
-#hud-content > #dt-aio-panel table.dt-results tr.selected td { background: rgba(143, 99, 255, 0.24) !important; color: #fff !important; }
-#hud-content > #dt-aio-panel table.dt-results tr.selected td:first-child { box-shadow: inset 2px 0 0 var(--hud-accent-a) !important; }
-/* The replica neutralized the colour-coded cells to match DiceTool.exe; the HUD
-   colour-codes its own numbers, so give them back the HUD's value colours.
-   Must be qualified by the table class: the generic "table.dt-results td" rule
-   above carries an extra element in its selector, so a bare "td.dt-cell-good"
-   loses to it and the cells silently render as plain body text. */
-#hud-content > #dt-aio-panel table.dt-stats td.dt-cell-good,
-#hud-content > #dt-aio-panel table.dt-results td.dt-cell-good { color: var(--hud-positive) !important; }
-#hud-content > #dt-aio-panel table.dt-stats td.dt-cell-mid,
-#hud-content > #dt-aio-panel table.dt-results td.dt-cell-mid { color: #ffd479 !important; }
-#hud-content > #dt-aio-panel table.dt-stats td.dt-cell-bad,
-#hud-content > #dt-aio-panel table.dt-results td.dt-cell-bad { color: var(--hud-negative) !important; }
-#hud-content > #dt-aio-panel table.dt-results tr.selected td.dt-cell-good, #hud-content > #dt-aio-panel table.dt-results tr.selected td.dt-cell-mid,
-#hud-content > #dt-aio-panel table.dt-results tr.selected td.dt-cell-bad { color: #fff !important; }
-/* Terms glossary */
-#hud-content > #dt-aio-panel .dt-terms-scroll { background: rgba(8, 11, 18, 0.62) !important; border: 1px solid var(--hud-border-soft) !important;
-  border-radius: 12px !important; color: var(--hud-text-soft) !important; font-family: "Proxima Nova", "Segoe UI", sans-serif !important; }
-#hud-content > #dt-aio-panel .dt-terms-heading { color: var(--hud-accent-a) !important; font-family: "Proxima Nova", "Segoe UI", sans-serif !important;
-  font-size: 12px !important; font-weight: 800 !important; letter-spacing: 0.08em !important; text-transform: uppercase !important;
-  border-bottom: 1px solid rgba(25, 243, 255, 0.2) !important; padding-bottom: 5px !important; }
-#hud-content > #dt-aio-panel .dt-terms-subheading { color: var(--hud-accent-b) !important; font-family: "Proxima Nova", "Segoe UI", sans-serif !important; }
-#hud-content > #dt-aio-panel .dt-terms-label { color: var(--hud-text) !important; }
-#hud-content > #dt-aio-panel .dt-terms-dash { color: var(--hud-text-soft) !important; }
-#hud-content > #dt-aio-panel .dt-terms-def, #hud-content > #dt-aio-panel .dt-terms-text { color: var(--hud-text-soft) !important; }`;
-        const style = document.createElement('style');
-        style.id = 'nuts-dt-bridge-css';
-        style.textContent =
-            /* Hide the DiceTool's own floating button / backdrop / counter —
-               on Nuts the panel lives inside the HUD, not as a floating panel. */
-            '#dt-aio-button, #dt-backdrop, #dt-aio-counter { display: none !important; }' +
-            /* Bridge: fill the Advanced IOW tab when mounted as a child of #hud-content. */
-            '#ratchet-master-container #hud-content > #dt-aio-panel {' +
-            ' position: static !important; inset: auto !important;' +
-            ' top: auto !important; right: auto !important; bottom: auto !important; left: auto !important;' +
-            ' width: 100% !important; height: auto !important; max-width: none !important; max-height: none !important;' +
-            ' flex: 1 1 auto !important; min-height: 340px !important;' +
-            ' margin: 0 !important; transform: none !important; opacity: 1 !important; visibility: visible !important;' +
-            ' pointer-events: auto !important; z-index: auto !important; display: flex !important; flex-direction: column;' +
-            ' box-shadow: none !important; border: 1px solid rgba(255,255,255,0.08) !important; border-radius: 10px !important; }' +
-            '#ratchet-master-container #hud-content > #dt-aio-panel .dt-head { display: none !important; }' +
-            '#ratchet-master-container #hud-content > #dt-aio-panel .dt-tabs { flex: 0 0 auto !important; }' +
-            '#ratchet-master-container #hud-content > #dt-aio-panel .dt-body { flex: 1 1 auto !important; min-height: 0 !important; overflow: auto !important; }' +
-            // Skin next so it wins ties, exactly as the Stake integration does,
-            // then the Nuts theme repaints it in the HUD's palette.
-            NUTS_DT_SKIN_CSS + NUTS_DT_THEME_CSS;
-        // This tool is registered runAt 'document-start', where <head> does not
-        // reliably exist yet — `document.head.appendChild` threw there, which
-        // silently cost us the whole panel AND left the dice tool's legacy
-        // floating button on screen. Do the real bootstrap once the DOM is up,
-        // and fall back to documentElement the way injectVisibilityCss does.
-        const boot = () => {
-            try {
-                (document.head || document.documentElement).appendChild(style);
-                tool_dice_tool();
-                stripLegacyDiceChrome();
-            } catch (e) { console.error('[UnifiedTools] nuts dice-tool panel bootstrap failed:', e); }
-        };
-        if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot, { once: true });
-        else boot();
-    }
-    /** The DiceTool's legacy floating chrome — the 🎲 launcher button and its
-     *  modal backdrop — has no place on Nuts, where the panel lives inside the
-     *  HUD's Advanced IOW tab (Stake hides them by adding .dt-bridge-hidden in
-     *  tryStitch). The bridge CSS hides them, but remove the nodes outright so
-     *  they can never flash on screen or reappear if that CSS fails to land.
-     *  The dice tool builds them in its own DOM-ready init, so re-check briefly. */
-    function stripLegacyDiceChrome() {
-        const kill = () => ['dt-aio-button', 'dt-backdrop'].forEach(id => {
-            const el = document.getElementById(id);
-            if (el) el.remove();
-        });
-        kill();
-        let ticks = 0;
-        const iv = setInterval(() => { kill(); if (++ticks >= 20) clearInterval(iv); }, 250);
-    }
+    register({
+        id: 'nuts-dice',
+        name: 'Nuts Dice',
+        description: 'Manual / IOW / Smart / Advanced IOW bet-sizing modes on Nuts Dice.',
+        matches: [
+            'https://nuts.gg/dice*',
+            'https://*.nuts.gg/dice*'
+        ],
+        runAt: 'document-start',
+        defaultEnabled: true,
+        group: 'Nuts',
+        hijacksPage: true
+    }, runNutsIowSmart);
+    register({
+        id: 'nuts-limbo-target',
+        name: 'Nuts Limbo/Target',
+        description: 'Manual / IOW / Smart / Advanced IOW modes on Nuts Target (Limbo equivalent).',
+        matches: [
+            'https://nuts.gg/target*',
+            'https://*.nuts.gg/target*'
+        ],
+        runAt: 'document-start',
+        defaultEnabled: true,
+        group: 'Nuts',
+        hijacksPage: true
+    }, runNutsIowSmart);
 
     register({
         id: 'nuts-dice',

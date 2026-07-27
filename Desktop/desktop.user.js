@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Desktop
 // @namespace    http://tampermonkey.net/
-// @version      3.31
+// @version      3.32
 // @description  .
 // @author       .
 // @match        https://nuts.gg/*
@@ -4487,7 +4487,7 @@ Bets</span><span id="h-total-bets" class="hud-val">0</span></div>
         try {
             const snap = {};
             const ids = ['balance', 'win_inc', 'loss_reset', 'bet_div', 'profit_mult', 'buffer', 'n_trials',
-                         'opt_balance', 'opt_trials', 'easy_mult', 'easy_w'];
+                         'opt_balance', 'opt_trials', 'easy_mult'];
             for (const p of ['opt_betdiv', 'opt_profit', 'opt_w', 'opt_l', 'opt_buf'])
                 for (const s of ['from', 'to', 'step', 'values']) ids.push(p + '_' + s);
             for (const k of ids) {
@@ -5688,7 +5688,7 @@ self.onmessage = async (e) => {
         #${PANEL_ID} .dt-opt-dash { text-align: center; color: color-mix(in srgb, var(--dt-fg) 38%, transparent); font-weight: 600; }
 
         /* Easy Mode tab */
-        #${PANEL_ID} .dt-easy-grid { display: grid; grid-template-columns: auto 1fr auto 1fr; gap: 9px 12px; align-items: center; }
+        #${PANEL_ID} .dt-easy-grid { display: grid; grid-template-columns: auto 1fr; gap: 9px 12px; align-items: center; }
         #${PANEL_ID} .dt-easy-cell { display: flex; align-items: center; gap: 6px; }
         #${PANEL_ID} .dt-easy-cell .dt-in { width: 86px; }
         #${PANEL_ID} .dt-easy-meta { display: flex; align-items: center; gap: 10px; margin-top: 11px; flex-wrap: wrap; }
@@ -5761,11 +5761,12 @@ self.onmessage = async (e) => {
               <button class="dt-close" id="dt-close-btn" aria-label="Close">×</button>
             </div>
             <nav class="dt-tabs" role="tablist">
-              <button class="dt-tab-btn active" data-tab="calc">Calculator / Simulator</button>
-              <button class="dt-tab-btn" data-tab="easy">Easy Mode</button>
-              <button class="dt-tab-btn" data-tab="opt">Strategy Finder</button>
-              <button class="dt-tab-btn" data-tab="results">Strategy Finder Results</button>
-              <button class="dt-tab-btn" data-tab="settings">Settings</button>
+              <!-- Only two tabs are exposed. "Play" (data-tab="stats") is created at
+                   runtime by the site integration and inserts itself ahead of this
+                   button. The Calculator / Strategy Finder / Results / Settings panels
+                   are still built into .dt-body below — Build Strategy and calcValues()
+                   read and write their fields — they just have no tab button now. -->
+              <button class="dt-tab-btn active" data-tab="easy">Find New Strategy</button>
             </nav>
             <div class="dt-body">
               ${buildCalcPanel()}
@@ -5892,7 +5893,7 @@ self.onmessage = async (e) => {
                   <span class="dt-lbl">${label}</span>
                   <input type="text" inputmode="${inputmode || 'decimal'}" class="dt-in dt-entry" id="dt-${id}" value="${value}">`;
         return `
-          <section class="dt-panel active" id="dt-panel-calc">
+          <section class="dt-panel" id="dt-panel-calc">
             <div class="dt-calc-grid">
               <div class="dt-card dt-lf">
                 <div class="dt-card-title">Calculated Values</div>
@@ -6000,7 +6001,7 @@ self.onmessage = async (e) => {
        out automatically so pinned values are matched exactly. ---- */
     function buildEasyPanel() {
         return `
-          <section class="dt-panel" id="dt-panel-easy">
+          <section class="dt-panel active" id="dt-panel-easy">
             <div class="dt-card dt-lf">
               <div class="dt-card-title">Desired Parameters</div>
               <div class="dt-easy-grid">
@@ -6008,11 +6009,6 @@ self.onmessage = async (e) => {
                 <span class="dt-easy-cell">
                   <input type="text" inputmode="decimal" class="dt-in dt-entry" id="dt-easy_mult" value="Any">
                   <button type="button" class="dt-btn dt-btn-small" id="dt-easy_mult_any" title="Reset this field back to Any">Any</button>
-                </span>
-                <span class="dt-lbl">Win Increase %:${helpBtn('Win Increase %')}</span>
-                <span class="dt-easy-cell">
-                  <input type="text" inputmode="decimal" class="dt-in dt-entry" id="dt-easy_w" value="Any">
-                  <button type="button" class="dt-btn dt-btn-small" id="dt-easy_w_any" title="Reset this field back to Any">Any</button>
                 </span>
               </div>
               <div class="dt-easy-meta">
@@ -6030,7 +6026,7 @@ self.onmessage = async (e) => {
                 </table>
               </div>
               <div class="dt-res-foot">
-                <button class="dt-btn" id="dt-easy_apply">Apply Selected to Calculator</button>
+                <button class="dt-btn" id="dt-easy_apply">Build Strategy</button>
               </div>
             </div>
           </section>
@@ -6310,7 +6306,6 @@ self.onmessage = async (e) => {
         { key: 'w', label: 'Win Increase %' },
         { key: 'l', label: 'Loss Reset' },
         { key: 'b', label: 'Buffer %' },
-        { key: 'chance', label: 'Win Chance %' },
         { key: 'odds', label: 'Reset Odds %' }
     ];
     function easyFindCombos(m, w) {
@@ -6351,7 +6346,10 @@ self.onmessage = async (e) => {
         easyTimer = null;
         const body = $('easy_body'); if (!body) return;
         const pm = easyParse('easy_mult', 1, 9900);
-        const pw = easyParse('easy_w', 0, EASY_W_MAX);
+        // Win Increase % is no longer pinnable from this tab, so the search
+        // always sweeps it. Kept as a null parse result so easyFindCombos'
+        // three branches stay intact.
+        const pw = { ok: true, v: null };
         $('easy_chance').textContent = (pm.ok && pm.v != null) ? (99 / pm.v).toFixed(2) + '%' : '--';
         easySelectedIdx = -1;
         if (!pm.ok || !pw.ok) {
@@ -6362,7 +6360,7 @@ self.onmessage = async (e) => {
         const rows = easyFindCombos(pm.v, pw.v);
         if (rows == null) {
             easyRows = []; body.innerHTML = ''; $('easy_count').textContent = '0';
-            $('easy_status').textContent = 'Pin Multiplier or Win Increase % to search.';
+            $('easy_status').textContent = 'Enter a Multiplier to search.';
             return;
         }
         easyRows = rows;
@@ -6384,7 +6382,7 @@ self.onmessage = async (e) => {
         body.innerHTML = rows.map(r =>
             `<tr data-idx="${r._i}" class="${r._i === easySelectedIdx ? 'selected' : ''}">` +
             `<td>${r.m.toFixed(2)}</td><td>${fmtEasyW(r.w)}</td><td>${r.l}</td>` +
-            `<td>${r.b.toFixed(2)}</td><td>${r.chance.toFixed(2)}</td><td>${r.odds.toFixed(2)}</td></tr>`
+            `<td>${r.b.toFixed(2)}</td><td>${r.odds.toFixed(2)}</td></tr>`
         ).join('');
     }
     function onEasyTableClick(e) {
@@ -6402,7 +6400,12 @@ self.onmessage = async (e) => {
             easySelectedIdx = parseInt(tr.dataset.idx);
         }
     }
-    function easyApplySelected() {
+    /** Build the selected combo into the live strategy and hand the user
+     *  straight to Play. The Calculator panel still holds these fields and
+     *  calcValues() still derives the bet plan from them — the user just
+     *  never has to visit that tab to do it. Falls back to staying put on
+     *  builds where no Play tab was injected. */
+    async function easyBuildStrategy() {
         if (easySelectedIdx < 0 || !easyRows[easySelectedIdx]) { toast('Select a combo row first.'); return; }
         const r = easyRows[easySelectedIdx];
         $('win_inc').value = fmtEasyW(r.w);
@@ -6410,8 +6413,26 @@ self.onmessage = async (e) => {
         $('buffer').value = r.b.toFixed(2);
         calcValues();
         saveState();
-        switchTab('calc');
-        toast('Combo applied to Calculator');
+        // calcValues() only refreshes the Calculator's own output fields —
+        // on its own it never reaches the game. Building the strategy is a
+        // two-step flow: scrape the live balance so the bet size is derived
+        // from real money, then create the strategy in-game (sets payout and
+        // bet amount, opens Advanced, creates the named "<mult>x" strategy
+        // and configures its conditions).
+        //
+        // Deliberately import rather than "update existing": update only
+        // rewrites one threshold on a strategy the game already has, so with
+        // nothing set up there is nothing for it to update.
+        try {
+            await gameExport();
+            await sleep(150);   // let the calculator settle before its outputs are read
+            await gameImport();
+        } catch (e) {
+            console.error('[Find New Strategy] build failed:', e);
+            toast('Could not build the strategy in-game.');
+            return;
+        }
+        if (document.getElementById('dt-panel-stats')) switchTab('stats');
     }
     function easySchedule() {
         if (easyTimer) clearTimeout(easyTimer);
@@ -7732,7 +7753,7 @@ self.onmessage = async (e) => {
        ========================================================= */
     function applyStateToUI() {
         const ids = ['balance', 'win_inc', 'loss_reset', 'bet_div', 'profit_mult', 'buffer', 'n_trials',
-                     'opt_balance', 'opt_trials', 'easy_mult', 'easy_w'];
+                     'opt_balance', 'opt_trials', 'easy_mult'];
         for (const p of ['opt_betdiv', 'opt_profit', 'opt_w', 'opt_l', 'opt_buf'])
             for (const s of ['from', 'to', 'step', 'values']) ids.push(p + '_' + s);
         for (const k of ids) if ($(k) && state[k] != null) $(k).value = state[k];
@@ -7962,10 +7983,9 @@ self.onmessage = async (e) => {
         document.getElementById('dt-res_table').addEventListener('click', onResTableClick);
 
         // Easy Mode
-        ['easy_mult', 'easy_w'].forEach(id => $(id).addEventListener('input', () => { easySchedule(); saveState(); }));
+        $('easy_mult').addEventListener('input', () => { easySchedule(); saveState(); });
         $('easy_mult_any').addEventListener('click', () => { $('easy_mult').value = 'Any'; easyRefresh(); saveState(); });
-        $('easy_w_any').addEventListener('click', () => { $('easy_w').value = 'Any'; easyRefresh(); saveState(); });
-        $('easy_apply').addEventListener('click', easyApplySelected);
+        $('easy_apply').addEventListener('click', easyBuildStrategy);
         document.getElementById('dt-easy_table').addEventListener('click', onEasyTableClick);
         easyRefresh();
 
@@ -8114,6 +8134,7 @@ const PRESETS_KEY = 'keno-presets';
     style.textContent = `
     #keno-preset-gui {
         position: fixed; bottom: 20px; right: 20px; z-index: 999999;
+        --kp-accent: #10b981;
         background: #0f212e; color: #b1bad3; border: 1px solid #2f4553;
         border-radius: 8px; box-shadow: 0 4px 20px rgba(0,0,0,0.4);
         font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
@@ -8336,7 +8357,12 @@ const PRESETS_KEY = 'keno-presets';
     renderPresets();
     renderCurrent();
 
+
+    // The hotspot is part of this tool: it mounts into the panel built
+    // above, so there is one Keno panel and one Keno toggle.
+    tool_keno_hotspot();
     }
+    /* === end tool: stake-keno === */
 
     /* === source: stake-mines-desktop.user.js === */
     function tool_stake_mines() {
@@ -11477,9 +11503,10 @@ let isRunning = false;
             statsBtn = document.createElement('button');
             statsBtn.className = 'dt-tab-btn';
             statsBtn.dataset.tab = 'stats';
-            statsBtn.textContent = 'Stats';
-            const calcBtn = tabsNav.querySelector('[data-tab="calc"]');
-            if (calcBtn) tabsNav.insertBefore(statsBtn, calcBtn);
+            statsBtn.textContent = 'Play';
+            // Sit ahead of Find New Strategy so Play is the first tab in the strip.
+            const firstBtn = tabsNav.querySelector('[data-tab="easy"]');
+            if (firstBtn) tabsNav.insertBefore(statsBtn, firstBtn);
             else tabsNav.insertBefore(statsBtn, tabsNav.firstChild);
         }
         if (!statsPanel) {
@@ -12886,6 +12913,7 @@ const PRESETS_KEY = 'keno-presets';
     style.textContent = `
     #keno-preset-gui {
         position: fixed; bottom: 20px; right: 20px; z-index: 999999;
+        --kp-accent: #19f3ff;
         background: rgba(16, 20, 30, 0.55);
         backdrop-filter: blur(16px);
         -webkit-backdrop-filter: blur(16px);
@@ -13135,7 +13163,12 @@ const PRESETS_KEY = 'keno-presets';
     renderPresets();
     renderCurrent();
 
+
+    // The hotspot is part of this tool: it mounts into the panel built
+    // above, so there is one Keno panel and one Keno toggle.
+    tool_keno_hotspot();
     }
+    /* === end tool: nuts-keno === */
 
     /* === source: nuts-mines-desktop.user.js === */
     function tool_nuts_mines() {
@@ -13657,6 +13690,7 @@ let isRunning = false;
         style.textContent = `
         #keno-preset-gui {
             position: fixed; bottom: 20px; right: 20px; z-index: 999999;
+            --kp-accent: #a855f7;
             background: linear-gradient(180deg, rgba(20, 8, 38, 0.96) 0%, rgba(12, 6, 28, 0.96) 100%);
             color: #e9d5ff; border: 1px solid rgba(168, 85, 247, 0.3);
             border-radius: 12px; box-shadow: 0 8px 32px rgba(0,0,0,0.5), 0 0 24px rgba(168, 85, 247, 0.15);
@@ -13816,7 +13850,12 @@ let isRunning = false;
         setInterval(renderCurrent, 500);
         renderPresets();
         renderCurrent();
+
+    // The hotspot is part of this tool: it mounts into the panel built
+    // above, so there is one Keno panel and one Keno toggle.
+    tool_keno_hotspot();
     }
+    /* === end tool: shuffle-keno === */
 
     /* === source: shuffle-mines-desktop.user.js ===
        Auto-plays Mines on Shuffle with weighted random tile picks. Mirrors
@@ -15807,31 +15846,55 @@ function tool_stake_7day_tracker() {
        buttons in the HUD correct over/under-counts. Stored per account. */
     var CODES_KEY = 'stk7w:codes:v2';     // v2: claim timestamps (v1 stored a bare count)
     var CODES_LIMIT = 10;
-    /* Local time. The dialog says "7:00 PM" with no timezone qualifier, which is
-       how a site renders a boundary it has already converted for the viewer — so
-       the reset is treated as 19:00 in the browser's own zone. If Stake turns out
-       to mean a fixed zone (e.g. 7 PM ET for everyone), this one constant is the
-       only thing that needs to change. */
+    /* The allowance resets at ONE instant globally: 19:00 US Central. It is not
+       19:00 wherever you happen to be — the dialog's unqualified "7:00 PM" is
+       Stake's own zone, not a value converted for the viewer. Building the
+       boundary with setHours() (the browser's zone) therefore reset the counter
+       an hour early in Mountain, five hours early in London, and so on.
+       Pinned to an IANA zone so US DST is handled for us. */
     var CODES_RESET_HOUR = 19;
+    var CODES_RESET_ZONE = 'America/Chicago';
     var codesLastSeen = 0;
     var codesLastClaimAt = 0;
     /* Epoch ms of the most recent reset boundary: today's if it has already
        passed, otherwise yesterday's. Everything claimed before this is spent
        history and no longer counts against the cap. */
-    function codesWindowStart() {
-        var d = new Date();
-        d.setHours(CODES_RESET_HOUR, 0, 0, 0);
-        if (d.getTime() > Date.now()) d.setDate(d.getDate() - 1);
-        return d.getTime();
+    /* Offset of CODES_RESET_ZONE from UTC, in ms, at a given instant. Formats
+       that instant as the zone's wall clock and diffs it against the instant —
+       DST-correct, because the formatter applies whichever offset is actually in
+       force then. */
+    function codesZoneOffset(atMs) {
+        var p = {};
+        try {
+            new Intl.DateTimeFormat('en-US', {
+                timeZone: CODES_RESET_ZONE, hour12: false,
+                year: 'numeric', month: '2-digit', day: '2-digit',
+                hour: '2-digit', minute: '2-digit', second: '2-digit'
+            }).formatToParts(new Date(atMs)).forEach(function (x) { p[x.type] = x.value; });
+        } catch (e) { return -new Date(atMs).getTimezoneOffset() * 60000; }   // no Intl: fall back to local
+        var wall = Date.UTC(+p.year, +p.month - 1, +p.day, (+p.hour) % 24, +p.minute, +p.second);
+        return wall - Math.floor(atMs / 1000) * 1000;
     }
-    /* Epoch ms of the next reset boundary. Built by setting the wall-clock hour
-       and then stepping the date, so a DST shift keeps it at 19:00 local rather
-       than drifting an hour (which adding 24h to the window start would do). */
+    /* Epoch ms of the 19:00-Central boundary `dayShift` days from today, where
+       "today" is the current date in that zone, not in the viewer's. */
+    function codesBoundary(dayShift) {
+        var now = Date.now();
+        var off = codesZoneOffset(now);
+        var wall = new Date(now + off);
+        var y = wall.getUTCFullYear(), m = wall.getUTCMonth(), d = wall.getUTCDate() + (dayShift || 0);
+        var at = Date.UTC(y, m, d, CODES_RESET_HOUR, 0, 0, 0) - off;
+        // Re-resolve at the guessed instant: if the boundary falls the other side
+        // of a DST change, the offset in force there is not today's.
+        var off2 = codesZoneOffset(at);
+        return off2 === off ? at : Date.UTC(y, m, d, CODES_RESET_HOUR, 0, 0, 0) - off2;
+    }
+    function codesWindowStart() {
+        var t = codesBoundary(0);
+        return t > Date.now() ? codesBoundary(-1) : t;
+    }
     function codesNextResetAt() {
-        var d = new Date();
-        d.setHours(CODES_RESET_HOUR, 0, 0, 0);
-        if (d.getTime() <= Date.now()) d.setDate(d.getDate() + 1);
-        return d.getTime();
+        var t = codesBoundary(0);
+        return t <= Date.now() ? codesBoundary(1) : t;
     }
     function codesFmtLeft(ms) {
         if (ms <= 0) return '0s';
@@ -21865,10 +21928,26 @@ function tool_stake_7day_tracker() {
         name: 'Stake Dice',
         description: 'Manual / IOW / Smart bet-sizing modes plus the Advanced IOW (Calculator / Strategy Finder / Results) tab on Stake Dice.',
         matches: [
-            'https://stake.us/casino/games/dice*',
             'https://stake.com/casino/games/dice*',
+            'https://stake.us/casino/games/dice*',
+            'https://stake.bet/casino/games/dice*',
+            'https://stake.games/casino/games/dice*',
+            'https://staketr.com/casino/games/dice*',
+            'https://staketr2.com/casino/games/dice*',
+            'https://staketr3.com/casino/games/dice*',
+            'https://staketr4.com/casino/games/dice*',
+            'https://stake.bz/casino/games/dice*',
+            'https://stake.pet/casino/games/dice*',
+            'https://stake.com/casino/games/primedice*',
             'https://stake.us/casino/games/primedice*',
-            'https://stake.com/casino/games/primedice*'
+            'https://stake.bet/casino/games/primedice*',
+            'https://stake.games/casino/games/primedice*',
+            'https://staketr.com/casino/games/primedice*',
+            'https://staketr2.com/casino/games/primedice*',
+            'https://staketr3.com/casino/games/primedice*',
+            'https://staketr4.com/casino/games/primedice*',
+            'https://stake.bz/casino/games/primedice*',
+            'https://stake.pet/casino/games/primedice*'
         ],
         runAt: 'document-start',
         defaultEnabled: true,
@@ -21959,7 +22038,7 @@ function tool_stake_7day_tracker() {
         runAt: 'document-end',
         defaultEnabled: true,
         group: 'Shuffle',
-        uiSelectors: ['#keno-preset-gui']
+        uiSelectors: ['#keno-preset-gui', '.keno-hot-tint']
     }, tool_shuffle_keno);
 
     /* ----- Stake Keno ----- */
@@ -21969,12 +22048,20 @@ function tool_stake_7day_tracker() {
         description: 'Save & load Keno number + difficulty presets on Stake.',
         matches: [
             'https://stake.com/casino/games/keno*',
-            'https://stake.us/casino/games/keno*'
+            'https://stake.us/casino/games/keno*',
+            'https://stake.bet/casino/games/keno*',
+            'https://stake.games/casino/games/keno*',
+            'https://staketr.com/casino/games/keno*',
+            'https://staketr2.com/casino/games/keno*',
+            'https://staketr3.com/casino/games/keno*',
+            'https://staketr4.com/casino/games/keno*',
+            'https://stake.bz/casino/games/keno*',
+            'https://stake.pet/casino/games/keno*'
         ],
         runAt: 'document-end',
         defaultEnabled: true,
         group: 'Stake',
-        uiSelectors: ['#keno-preset-gui']
+        uiSelectors: ['#keno-preset-gui', '.keno-hot-tint']
     }, tool_stake_keno);
 
     /* ----- Stake Mines ----- */
@@ -21983,8 +22070,16 @@ function tool_stake_7day_tracker() {
         name: 'Stake Mines',
         description: 'Auto-plays Mines on Stake with weighted random tile picks.',
         matches: [
+            'https://stake.com/casino/games/mines*',
             'https://stake.us/casino/games/mines*',
-            'https://stake.com/casino/games/mines*'
+            'https://stake.bet/casino/games/mines*',
+            'https://stake.games/casino/games/mines*',
+            'https://staketr.com/casino/games/mines*',
+            'https://staketr2.com/casino/games/mines*',
+            'https://staketr3.com/casino/games/mines*',
+            'https://staketr4.com/casino/games/mines*',
+            'https://stake.bz/casino/games/mines*',
+            'https://stake.pet/casino/games/mines*'
         ],
         runAt: 'document-end',
         defaultEnabled: true,
@@ -22328,7 +22423,7 @@ function tool_stake_7day_tracker() {
         runAt: 'document-end',
         defaultEnabled: true,
         group: 'Nuts',
-        uiSelectors: ['#keno-preset-gui']
+        uiSelectors: ['#keno-preset-gui', '.keno-hot-tint']
     }, tool_nuts_keno);
 
     /* ----- Nuts Mines ----- */
@@ -22422,6 +22517,567 @@ function tool_stake_7day_tracker() {
         group: 'Stake',
         uiSelectors: ['#moles-master-container', '#moles-board-lock']
     }, tool_stake_moles);
+
+    /* === source: keno-hotspot (Stake / Shuffle / Nuts) === */
+    /**
+     * Keno Hotspot — hot/cold heatmap for Stake, Shuffle and Nuts.
+     *
+     * Records every completed draw, tints the board hot→cold by how often each
+     * number has come up over a rolling window, and applies the hottest (or
+     * coldest) N numbers in one click.
+     *
+     * One body serves all three sites via SITES below, because each casino
+     * marks its tiles differently and none of them agree:
+     *
+     *   Stake    data-game-tile-status. Resting is `hidden` — NOT `idle`, which
+     *            is Mines' vocabulary; assuming that made every tile read as
+     *            drawn and nothing was ever recorded. Resting is therefore
+     *            re-derived per read as the plurality status (see restingOf).
+     *   Shuffle  hashed CSS-module classes, and its own Keno tool documents
+     *            them exactly: selectedButton = pick that missed, buttonSuccess
+     *            = pick that was drawn, buttonFailed = drawn but not picked.
+     *            So drawn = buttonSuccess | buttonFailed — no inference needed.
+     *   Nuts     no stable classes at all; state lives in the cover element's
+     *            computed background colour (purple = picked, green = drawn).
+     *
+     * Capture accumulates the UNION of drawn-looking tiles across the reveal
+     * rather than reading the settled board. Nuts forces this — its own tool
+     * notes that a hit "flashes green during the reveal then reverts to
+     * purple", so the final frame is missing every number you actually hit. The
+     * union also makes progressive reveals safe on Stake and Shuffle, where
+     * tiles light one at a time and any single frame is a partial draw.
+     *
+     * A reveal commits when the expected count is reached, or failing that when
+     * the set stops growing for STABLE_TICKS polls — so a site that draws a
+     * different number of spots still records correctly.
+     *
+     * Heat is a z-score so it is comparable across window sizes, and it makes no
+     * assumption about board size or draws-per-round: expected hits per number
+     * is simply the total drawn spread evenly over the board,
+     *     mean = total / spots,  p = (total / rounds) / spots,
+     *     z    = (count − mean) / sqrt(rounds · p · (1 − p)).
+     * Worth saying plainly: draws are independent, so a hot number is not a
+     * likelier number. This shows what HAS happened, not what will.
+     */
+    function tool_keno_hotspot() {
+        'use strict';
+        if (tool_keno_hotspot._booted) return;
+        tool_keno_hotspot._booted = true;
+
+        var KH_VERSION   = '1.10';
+        var MAX_PICKS    = 10;   // every one of the three caps a ticket at 10
+        var DRAWS_CAP    = 2000; // rolling history cap (~100KB of JSON)
+        var STABLE_TICKS = 3;    // ~1.2s of no new tiles ends a reveal
+        var POLL_MS      = 400;
+
+        function qsa(sel) { return Array.prototype.slice.call(document.querySelectorAll(sel)); }
+        function rgb(el) {
+            var m = (getComputedStyle(el).backgroundColor || '').match(/(\d+),\s*(\d+),\s*(\d+)/);
+            return m ? [+m[1], +m[2], +m[3]] : null;
+        }
+        /** The status held by the most tiles. A reveal lights a minority of the
+         *  board and a ticket is at most 10 spots, so resting always wins. */
+        function restingOf(all, statusFn) {
+            var freq = {}, best = -1, resting = null, i, s;
+            for (i = 0; i < all.length; i++) {
+                s = statusFn(all[i]);
+                freq[s] = (freq[s] || 0) + 1;
+                if (freq[s] > best) { best = freq[s]; resting = s; }
+            }
+            return resting;
+        }
+        function stakeStatus(b) {
+            return String(b.getAttribute('data-game-tile-status') || '').toLowerCase();
+        }
+        var STAKE_NOT_DRAWN = { hidden: 1, idle: 1, none: 1, selected: 1, '': 1 };
+
+        var SITES = {
+            stake: {
+                label: 'Stake',
+                key: 'keno-hotspot-stake-v1',
+                onPage: function () { return /casino\/games\/keno(?:\/|$|\?|#)/i.test(location.pathname || ''); },
+                tiles: function () { return qsa('button[data-testid^="game-tile-"]'); },
+                number: function (b, i) {
+                    var m = (b.getAttribute('data-testid') || '').match(/game-tile-(\d+)/);
+                    if (m) return parseInt(m[1], 10);
+                    var d = parseInt(b.dataset ? b.dataset.index : NaN, 10);
+                    return isNaN(d) ? (i + 1) : d + 1;
+                },
+                prepare: function (all) { return restingOf(all, stakeStatus); },
+                isDrawn: function (b, resting) {
+                    var s = stakeStatus(b);
+                    return s !== resting && !STAKE_NOT_DRAWN[s];
+                },
+                isPicked: function (b) {
+                    var s = stakeStatus(b);
+                    return s === 'selected' || s === 'match';
+                },
+                expect: 10
+            },
+            shuffle: {
+                label: 'Shuffle',
+                key: 'keno-hotspot-shuffle-v1',
+                onPage: function () { return /games\/originals\/keno(?:\/|$|\?|#)/i.test(location.pathname || ''); },
+                tiles: function () { return qsa('button[data-testid^="keno-button-"]'); },
+                number: function (b, i) {
+                    var m = ((b.dataset && b.dataset.testid) || b.getAttribute('data-testid') || '').match(/keno-button-(\d+)/);
+                    return m ? parseInt(m[1], 10) : (i + 1);
+                },
+                prepare: function () { return null; },
+                // Documented by Shuffle's own Keno tool — no inference needed.
+                isDrawn: function (b) { return /buttonSuccess|buttonFailed/.test(b.className || ''); },
+                isPicked: function (b) { return /selectedButton|buttonSuccess/.test(b.className || ''); },
+                expect: 10
+            },
+            nuts: {
+                label: 'Nuts',
+                key: 'keno-hotspot-nuts-v1',
+                onPage: function () { return /\/keno(?:\/|$|\?|#)/i.test(location.pathname || ''); },
+                // Content-based, mirroring the Nuts Keno tool: a tile is a
+                // <button> whose first <span> is exactly a number 1-40, and all
+                // 40 must be present. Returned in number order.
+                tiles: function () {
+                    var byNum = {}, count = 0, btns = qsa('button'), i;
+                    for (i = 0; i < btns.length; i++) {
+                        var span = btns[i].querySelector('span');
+                        if (!span) continue;
+                        var txt = (span.textContent || '').trim();
+                        var n = parseInt(txt, 10);
+                        if (n >= 1 && n <= 40 && txt === String(n) && !byNum[n]) { byNum[n] = btns[i]; count++; }
+                    }
+                    if (count < 40) return [];
+                    var out = [];
+                    for (i = 1; i <= 40; i++) out.push(byNum[i]);
+                    return out;
+                },
+                number: function (b, i) { return i + 1; },   // tiles() is number-ordered
+                prepare: function () { return null; },
+                // Cover element (children[1]) carries the state as a colour:
+                // purple = picked, green = drawn, grey = untouched.
+                isDrawn: function (b) {
+                    var cover = b.children && b.children[1];
+                    if (!cover) return false;
+                    var c = rgb(cover);
+                    return !!c && c[1] > c[0] + 50 && c[1] > 120;
+                },
+                isPicked: function (b) {
+                    var cover = b.children && b.children[1];
+                    if (!cover) return false;
+                    var c = rgb(cover);
+                    return !!c && (c[0] + c[2]) > 200 && c[1] < 100;
+                },
+                expect: 10
+            }
+        };
+
+        function detectSite() {
+            var h = location.hostname;
+            if (/shuffle\./i.test(h)) return SITES.shuffle;
+            if (/(^|\.)nuts\.gg$/i.test(h)) return SITES.nuts;
+            return SITES.stake;
+        }
+        var SITE    = detectSite();
+        // Governed by the site's Keno toggle — the hotspot is part of that
+        // tool now, not a separately registered one.
+        var TOOL_ID = (SITE === SITES.shuffle ? 'shuffle' : SITE === SITES.nuts ? 'nuts' : 'stake') + '-keno';
+
+        function onPage() { try { return SITE.onPage(); } catch (e) { return false; } }
+        /** The control panel's switch. Unknown ids read as enabled. */
+        function khEnabled() {
+            try { return isToolIdEnabled(TOOL_ID); } catch (e) { return true; }
+        }
+
+        /* ---------------------------------------------------------------
+           STORE — a rolling list of draws, {t, n:[numbers]}. Keyed per site;
+           localStorage is per-origin anyway, but the explicit key keeps a
+           multi-brand origin from ever mixing two boards.
+           --------------------------------------------------------------- */
+        var store = { draws: [], window: 100 };
+        try {
+            var raw = JSON.parse(localStorage.getItem(SITE.key) || 'null');
+            if (raw && Array.isArray(raw.draws)) {
+                store.draws = raw.draws;
+                if (raw.window != null) store.window = raw.window;
+            }
+        } catch (e) {}
+        var storeDirty = false;
+        function saveStore() { storeDirty = true; }
+        setInterval(function () {          // batch writes; the ticker touches these often
+            if (!storeDirty) return;
+            storeDirty = false;
+            try { localStorage.setItem(SITE.key, JSON.stringify(store)); } catch (e) {}
+        }, 1200);
+
+        function recordDraw(nums) {
+            store.draws.push({ t: Date.now(), n: nums });
+            if (store.draws.length > DRAWS_CAP) store.draws.shift();
+            saveStore();
+        }
+        function resetStore() { store.draws = []; saveStore(); render(); paintTiles(); }
+
+        /* ---------------------------------------------------------------
+           STATS
+           --------------------------------------------------------------- */
+        /** Draws inside the active window. window = 0 means "everything". */
+        function windowDraws() {
+            var w = store.window | 0;
+            if (!w || w >= store.draws.length) return store.draws;
+            return store.draws.slice(store.draws.length - w);
+        }
+
+        /**
+         * Per-number counts and z-scores. Makes no assumption about board size
+         * or draws-per-round — both are taken from the data.
+         */
+        function computeHeat(draws, spots) {
+            spots = spots || 40;
+            var counts = new Array(spots + 1).fill(0), total = 0, i, j;
+            for (i = 0; i < draws.length; i++) {
+                var d = draws[i].n;
+                for (j = 0; j < d.length; j++) {
+                    var v = d[j];
+                    if (v >= 1 && v <= spots) { counts[v]++; total++; }
+                }
+            }
+            var rounds = draws.length;
+            var mean = spots > 0 ? total / spots : 0;
+            var p = (rounds > 0 && spots > 0) ? (total / rounds) / spots : 0;
+            var sd = Math.sqrt(rounds * p * (1 - p));
+            var z = new Array(spots + 1).fill(0);
+            if (rounds > 0 && sd > 0) {
+                for (i = 1; i <= spots; i++) z[i] = (counts[i] - mean) / sd;
+            }
+            return { counts: counts, z: z, rounds: rounds, mean: mean, sd: sd, spots: spots, total: total };
+        }
+
+        /** Numbers ranked hottest-first (or coldest-first). Ties break by number
+         *  so the ordering is stable and reproducible. */
+        function ranked(heat, coldest) {
+            var out = [], i;
+            for (i = 1; i <= heat.spots; i++) out.push(i);
+            out.sort(function (a, b) {
+                var d = coldest ? (heat.counts[a] - heat.counts[b]) : (heat.counts[b] - heat.counts[a]);
+                return d || (a - b);
+            });
+            return out;
+        }
+
+        /* ---------------------------------------------------------------
+           BOARD READING
+           --------------------------------------------------------------- */
+        function tiles() { try { return SITE.tiles() || []; } catch (e) { return []; } }
+        function boardSize() { var n = tiles().length; return n || 40; }
+
+        /** Numbers currently showing as drawn, or null if the board isn't up. */
+        function readDrawn() {
+            var all = tiles(), i;
+            if (!all.length) return null;
+            var ctx = null;
+            try { ctx = SITE.prepare(all); } catch (e) {}
+            var out = [];
+            for (i = 0; i < all.length; i++) {
+                var hit = false;
+                try { hit = SITE.isDrawn(all[i], ctx); } catch (e) {}
+                if (!hit) continue;
+                var n = SITE.number(all[i], i);
+                if (n) out.push(n);
+            }
+            return out;
+        }
+        function currentPicks() {
+            var all = tiles(), out = [], i;
+            for (i = 0; i < all.length; i++) {
+                var p = false;
+                try { p = SITE.isPicked(all[i]); } catch (e) {}
+                if (!p) continue;
+                var n = SITE.number(all[i], i);
+                if (n) out.push(n);
+            }
+            return out;
+        }
+
+        /* Reveal capture. Accumulates the union of everything that looked drawn
+           since the board was last clear, then commits once the expected count
+           lands or the set stops growing. Nuts needs the union because a hit
+           reverts to the picked colour after flashing; Stake and Shuffle need it
+           because tiles reveal one at a time. */
+        var pending = [], stableTicks = 0, recorded = false;
+
+        function commitPending() {
+            if (!pending.length) return;
+            var nums = pending.slice().sort(function (a, b) { return a - b; });
+            pending = []; stableTicks = 0; recorded = true;
+            if (nums.length > boardSize()) return;    // never record a nonsense draw
+            recordDraw(nums);
+            render();
+            paintTiles();
+        }
+
+        function pollBoard() {
+            var d = readDrawn();
+            if (d == null) return;
+            if (d.length === 0) {
+                // Board is clear. Flush anything still pending (a reveal cleared
+                // before it settled), then re-arm for the next round.
+                if (!recorded && pending.length) commitPending();
+                pending = []; stableTicks = 0; recorded = false;
+                return;
+            }
+            if (recorded) return;                     // this reveal is already banked
+            var grew = false, i;
+            for (i = 0; i < d.length; i++) {
+                if (pending.indexOf(d[i]) < 0) { pending.push(d[i]); grew = true; }
+            }
+            if (grew) stableTicks = 0; else stableTicks++;
+            if (pending.length >= SITE.expect || stableTicks >= STABLE_TICKS) commitPending();
+        }
+
+        /* ---------------------------------------------------------------
+           APPLYING PICKS
+           --------------------------------------------------------------- */
+        function clickTile(n) {
+            var all = tiles(), i;
+            for (i = 0; i < all.length; i++) {
+                if (SITE.number(all[i], i) === n) {
+                    if (all[i].disabled) return false;
+                    all[i].click();
+                    return true;
+                }
+            }
+            return false;
+        }
+        function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+
+        /** Toggle the board to exactly `want`; only the difference is clicked. */
+        var applying = false;
+        async function applyNumbers(want) {
+            if (applying) return;
+            applying = true;
+            try {
+                var have = currentPicks(), i;
+                for (i = 0; i < have.length; i++) {
+                    if (want.indexOf(have[i]) < 0) { clickTile(have[i]); await sleep(45); }
+                }
+                for (i = 0; i < want.length; i++) {
+                    if (have.indexOf(want[i]) < 0) { clickTile(want[i]); await sleep(45); }
+                }
+            } finally { applying = false; }
+            render();
+        }
+
+        function applyExtreme(coldest) {
+            var heat = computeHeat(windowDraws(), boardSize());
+            if (!heat.rounds) { setStatus('No draws recorded yet — play a few rounds.'); return; }
+            var count = Math.max(1, Math.min(MAX_PICKS, parseInt(elSpots && elSpots.value, 10) || 10));
+            var pick = ranked(heat, coldest).slice(0, count).sort(function (a, b) { return a - b; });
+            applyNumbers(pick);
+            setStatus((coldest ? 'Coldest ' : 'Hottest ') + count + ': ' + pick.join(', '));
+        }
+
+        /* ---------------------------------------------------------------
+           TILE TINTING — an absolutely-positioned, pointer-events:none child,
+           so the tile stays clickable and the site's own colours read through.
+           --------------------------------------------------------------- */
+        function tintFor(z) {
+            var a = Math.min(1, Math.abs(z) / 2.5);           // |z| >= 2.5 saturates
+            if (a < 0.08) return null;                        // near-expected: leave clean
+            return z > 0
+                ? 'rgba(255,' + Math.round(150 - 110 * a) + ',60,' + (0.16 + 0.42 * a).toFixed(3) + ')'
+                : 'rgba(60,' + Math.round(150 + 60 * a) + ',255,' + (0.14 + 0.34 * a).toFixed(3) + ')';
+        }
+        function clearTints() {
+            var old = document.querySelectorAll('.keno-hot-tint'), i;
+            for (i = 0; i < old.length; i++) old[i].remove();
+        }
+        function paintTiles() {
+            if (!showHeat) { clearTints(); return; }
+            var all = tiles();
+            if (!all.length) return;
+            var heat = computeHeat(windowDraws(), all.length);
+            if (!heat.rounds) { clearTints(); return; }
+            for (var i = 0; i < all.length; i++) {
+                var btn = all[i], n = SITE.number(btn, i);
+                if (!n) continue;
+                var col = tintFor(heat.z[n]);
+                var tint = btn.querySelector('.keno-hot-tint');
+                if (!col) { if (tint) tint.remove(); continue; }
+                if (!tint) {
+                    if (getComputedStyle(btn).position === 'static') btn.style.position = 'relative';
+                    tint = document.createElement('span');
+                    tint.className = 'keno-hot-tint';
+                    btn.appendChild(tint);
+                }
+                tint.style.background = col;
+                tint.textContent = showCounts ? String(heat.counts[n]) : '';
+            }
+        }
+
+        /* ---------------------------------------------------------------
+           PANEL — the hotspot is not its own window. It mounts as a section
+           inside the Keno preset panel (#keno-preset-gui) that the site's Keno
+           tool builds, so there is one panel and one enable/disable toggle.
+           Colours come from the host panel: --kp-accent is set per site, and
+           everything else is a translucent wash over whatever background the
+           host uses, so this section themes itself on Stake, Shuffle and Nuts
+           without knowing anything about them.
+           --------------------------------------------------------------- */
+        var CSS =
+            '#keno-preset-gui .kh-sect{border-top:1px solid rgba(255,255,255,.10);' +
+            'margin-top:2px;padding-top:10px;display:flex;flex-direction:column;gap:8px}' +
+            '#keno-preset-gui .kh-sect *{box-sizing:border-box}' +
+            '#keno-preset-gui .kh-sect-head{display:flex;align-items:center;justify-content:space-between;' +
+            'font-size:10px;letter-spacing:.6px;text-transform:uppercase;opacity:.65}' +
+            '#keno-preset-gui .kh-sect-head b{color:var(--kp-accent,#10b981);font-weight:700}' +
+            '#keno-preset-gui .kh-row{display:flex;align-items:center;justify-content:space-between;' +
+            'gap:8px;font-size:11px}' +
+            '#keno-preset-gui .kh-sect select,#keno-preset-gui .kh-sect input[type=number]{' +
+            'background:rgba(0,0,0,.28);color:inherit;border:1px solid rgba(255,255,255,.14);' +
+            'border-radius:5px;padding:3px 6px;font-size:11px;font-family:inherit}' +
+            '#keno-preset-gui .kh-sect input[type=number]{width:52px;text-align:center}' +
+            '#keno-preset-gui .kh-sect select:focus,#keno-preset-gui .kh-sect input:focus{' +
+            'outline:none;border-color:var(--kp-accent,#10b981)}' +
+            '#keno-preset-gui .kh-list{background:rgba(0,0,0,.24);border-radius:5px;padding:6px 8px;' +
+            'font-size:11px;line-height:1.55}' +
+            '#keno-preset-gui .kh-list b{font-variant-numeric:tabular-nums}' +
+            '#keno-preset-gui .kh-hot b{color:#f87171}' +
+            '#keno-preset-gui .kh-cold b{color:#60a5fa}' +
+            '#keno-preset-gui .kh-k{display:block;opacity:.5;text-transform:uppercase;font-size:9px;' +
+            'letter-spacing:.5px;margin-bottom:2px}' +
+            '#keno-preset-gui .kh-btns{display:flex;gap:6px}' +
+            '#keno-preset-gui .kh-btn{flex:1;background:rgba(255,255,255,.06);color:inherit;' +
+            'border:1px solid rgba(255,255,255,.14);border-radius:5px;padding:5px 8px;font-size:11px;' +
+            'font-family:inherit;cursor:pointer}' +
+            '#keno-preset-gui .kh-btn:hover{background:rgba(255,255,255,.13)}' +
+            '#keno-preset-gui .kh-btn.hot:hover{border-color:#f87171;color:#fca5a5}' +
+            '#keno-preset-gui .kh-btn.cold:hover{border-color:#60a5fa;color:#93c5fd}' +
+            '#keno-preset-gui .kh-status{font-size:10px;opacity:.55;min-height:1.2em;line-height:1.35}' +
+            '#keno-preset-gui .kh-foot{display:flex;justify-content:space-between;align-items:center;' +
+            'font-size:10px;opacity:.55}' +
+            '#keno-preset-gui .kh-reset{background:transparent;border:1px solid rgba(255,255,255,.14);' +
+            'color:inherit;border-radius:4px;padding:2px 8px;font-size:10px;cursor:pointer;' +
+            'font-family:inherit;opacity:.8}' +
+            '#keno-preset-gui .kh-reset:hover{color:#f87171;border-color:#f87171;opacity:1}' +
+            '.keno-hot-tint{position:absolute;inset:0;border-radius:inherit;pointer-events:none;' +
+            'display:flex;align-items:center;justify-content:center;' +
+            "font:800 10px/1 ui-monospace,SFMono-Regular,Menlo,monospace;color:rgba(255,255,255,.85);" +
+            'text-shadow:0 1px 2px rgba(0,0,0,.7)}';
+
+        function injectCss() {
+            if (document.getElementById('keno-hot-css')) return;
+            var viaGM = false;
+            try { if (typeof GM_addStyle === 'function') { GM_addStyle(CSS); viaGM = true; } } catch (e) {}
+            var marker = document.createElement(viaGM ? 'meta' : 'style');
+            marker.id = 'keno-hot-css';
+            if (!viaGM) marker.textContent = CSS;
+            (document.head || document.documentElement).appendChild(marker);
+        }
+
+        var sect = null, elHot = null, elCold = null, elStat = null, elSpots = null, elCount = null;
+        var showHeat = true, showCounts = true;
+        function setStatus(t) { if (elStat) elStat.textContent = t || ''; }
+
+        /** Where the section lives: the preset panel's content column. */
+        function hostSlot() {
+            var host = document.getElementById('keno-preset-gui');
+            return host ? (host.querySelector('.kp-content') || host) : null;
+        }
+
+        function buildSection() {
+            var el = document.createElement('div');
+            el.className = 'kh-sect';
+            el.innerHTML =
+                '<div class="kh-sect-head"><b>Hotspot</b><span data-kh="count">0 draws</span></div>' +
+                '<div class="kh-row"><span>Window</span>' +
+                  '<select data-kh="window">' +
+                    '<option value="50">last 50</option>' +
+                    '<option value="100">last 100</option>' +
+                    '<option value="250">last 250</option>' +
+                    '<option value="500">last 500</option>' +
+                    '<option value="0">all</option>' +
+                  '</select></div>' +
+                '<div class="kh-list kh-hot"><span class="kh-k">Hottest</span><span data-kh="hot">—</span></div>' +
+                '<div class="kh-list kh-cold"><span class="kh-k">Coldest</span><span data-kh="cold">—</span></div>' +
+                '<div class="kh-row"><span>Spots to pick</span>' +
+                  '<input type="number" min="1" max="' + MAX_PICKS + '" value="10" data-kh="spots"></div>' +
+                '<div class="kh-btns">' +
+                  '<button class="kh-btn hot" type="button" data-kh="pick-hot">Pick hottest</button>' +
+                  '<button class="kh-btn cold" type="button" data-kh="pick-cold">Pick coldest</button>' +
+                '</div>' +
+                '<div class="kh-row"><label style="display:flex;align-items:center;gap:5px;cursor:pointer">' +
+                  '<input type="checkbox" data-kh="heat" checked>Heatmap</label>' +
+                  '<label style="display:flex;align-items:center;gap:5px;cursor:pointer">' +
+                  '<input type="checkbox" data-kh="counts" checked>Counts</label></div>' +
+                '<div class="kh-status"></div>' +
+                '<div class="kh-foot"><span>v' + KH_VERSION + '</span>' +
+                  '<button class="kh-reset" type="button" data-kh="reset">Reset draws</button></div>';
+
+            elHot   = el.querySelector('[data-kh="hot"]');
+            elCold  = el.querySelector('[data-kh="cold"]');
+            elStat  = el.querySelector('.kh-status');
+            elSpots = el.querySelector('[data-kh="spots"]');
+            elCount = el.querySelector('[data-kh="count"]');
+
+            var sel = el.querySelector('[data-kh="window"]');
+            sel.value = String(store.window);
+            sel.addEventListener('change', function () {
+                store.window = parseInt(sel.value, 10) || 0;
+                saveStore(); render(); paintTiles();
+            });
+            el.querySelector('[data-kh="pick-hot"]').addEventListener('click', function () { applyExtreme(false); });
+            el.querySelector('[data-kh="pick-cold"]').addEventListener('click', function () { applyExtreme(true); });
+            el.querySelector('[data-kh="heat"]').addEventListener('change', function (e) { showHeat = e.target.checked; paintTiles(); });
+            el.querySelector('[data-kh="counts"]').addEventListener('change', function (e) { showCounts = e.target.checked; paintTiles(); });
+            el.querySelector('[data-kh="reset"]').addEventListener('click', function () {
+                if (confirm('Clear all recorded ' + SITE.label + ' Keno draws?')) resetStore();
+            });
+            return el;
+        }
+
+        /** "7 +2.1σ" entries for the top/bottom of the ranking. */
+        function listHtml(heat, coldest) {
+            if (!heat.rounds) return '—';
+            return ranked(heat, coldest).slice(0, 6).map(function (n) {
+                var z = heat.z[n];
+                var sig = (z >= 0 ? '+' : '−') + Math.abs(z).toFixed(1);
+                return '<b>' + n + '</b> <span style="opacity:.55">' + sig + 'σ</span>';
+            }).join('  ');
+        }
+
+        function render() {
+            if (!sect || !sect.isConnected) return;
+            var heat = computeHeat(windowDraws(), boardSize());
+            elHot.innerHTML = listHtml(heat, false);
+            elCold.innerHTML = listHtml(heat, true);
+            elCount.textContent = store.draws.length + ' draw' + (store.draws.length === 1 ? '' : 's') +
+                (heat.rounds !== store.draws.length ? ' (' + heat.rounds + ' in window)' : '');
+        }
+
+        /* ---------------------------------------------------------------
+           TICKER — mount, poll, repaint. A bad tick must never kill the loop.
+           The host panel is rebuilt on SPA navigation, so re-appending when the
+           section loses its parent is the normal path, not an error case.
+           --------------------------------------------------------------- */
+        setInterval(function () {
+            try {
+                if (!onPage() || !khEnabled()) {
+                    if (sect && sect.parentNode) sect.remove();
+                    clearTints();
+                    return;
+                }
+                injectCss();
+                var slot = hostSlot();
+                if (!slot) return;                      // Keno panel not up yet
+                if (!sect) sect = buildSection();
+                if (sect.parentNode !== slot) { slot.appendChild(sect); render(); }
+                pollBoard();
+                paintTiles();
+            } catch (e) { /* never let one tick kill the ticker */ }
+        }, POLL_MS);
+
+        console.log('%c[Keno Hotspot] v' + KH_VERSION + ' on ' + SITE.label + ' — ' +
+                    store.draws.length + ' draws stored', 'color:#f87171;font-weight:700');
+    }
+    /* === end body: keno-hotspot === */
 
 
     /* =========================================================
@@ -23823,9 +24479,10 @@ ${SHUF} .dt-terms-def, ${SHUF} .dt-terms-text { color: #cfc4f0 !important; }` : 
             const statsBtn = document.createElement('button');
             statsBtn.className = 'dt-tab-btn';
             statsBtn.dataset.tab = 'stats';
-            statsBtn.innerHTML = 'Stats';
-            const calcBtn = tabsNav.querySelector('[data-tab="calc"]');
-            if (calcBtn) tabsNav.insertBefore(statsBtn, calcBtn);
+            statsBtn.innerHTML = 'Play';
+            // Sit ahead of Find New Strategy so Play is the first tab in the strip.
+            const firstBtn = tabsNav.querySelector('[data-tab="easy"]');
+            if (firstBtn) tabsNav.insertBefore(statsBtn, firstBtn);
             else tabsNav.insertBefore(statsBtn, tabsNav.firstChild);
 
             // Panel.
@@ -23974,6 +24631,16 @@ ${SHUF} .dt-terms-def, ${SHUF} .dt-terms-text { color: #cfc4f0 !important; }` : 
          * streak meta-rows).
          */
         function trySetupTermsTab() {
+            // Disabled: the Advanced IOW panel exposes exactly two tabs
+            // (Play, Find New Strategy). This used to append a third
+            // "Terms" button. Latching termsSetup also stops the 500ms
+            // self-heal tick from calling this again every pass. The
+            // glossary build-out below is intact but unreachable — delete
+            // these three lines to bring the tab back.
+            termsSetup = true;
+            return true;
+        }
+        function trySetupTermsTab_disabled() {
             if (termsSetup) return true;
             const panel = document.getElementById('dt-aio-panel');
             if (!panel) return false;
@@ -23996,7 +24663,7 @@ ${SHUF} .dt-terms-def, ${SHUF} .dt-terms-text { color: #cfc4f0 !important; }` : 
             // "Label – definition" lines                       → label/def pair
             // The new STATS TAB section is added at the top.
             const TERMS_TEXT =
-                'STATS TAB\n' +
+                'PLAY TAB\n' +
                 '\n' +
                 'CONTROLS DECK\n' +
                 'Balance Divisor – Two-way bound to the Calculator. Higher number = smaller starting bet.\n' +
@@ -24056,12 +24723,11 @@ ${SHUF} .dt-terms-def, ${SHUF} .dt-terms-text { color: #cfc4f0 !important; }` : 
                 'Bust rate – The percentage of trials that failed to meet the first profit stop.\n' +
                 '\n' +
                 '\n' +
-                'EASY MODE TAB\n' +
+                'FIND NEW STRATEGY TAB\n' +
                 '\n' +
                 'PARAMETERS\n' +
-                'Multiplier – The payout multiplier you want to play at, or Any to see the multiplier each combo produces (set Win Increase % first).\n' +
-                'Win Increase % – Your desired win increase %, or Any to search every whole number 1-500. Loss Reset and Buffer % are worked out automatically: loss reset runs up to the multiplier value (max 100) and the buffer absorbs the decimals so your values are matched exactly.\n' +
-                'Any (button) – The small button next to each field resets that field back to Any.\n' +
+                'Multiplier – The payout multiplier you want to play at. Every whole-number Win Increase % from 1-500 is searched against it, and Loss Reset and Buffer % are worked out automatically: loss reset runs up to the multiplier value (max 100) and the buffer absorbs the decimals so your multiplier is matched exactly.\n' +
+                'Any (button) – The small button next to the field resets it back to Any.\n' +
                 'Win Chance – The dice win chance implied by the multiplier (99 / multiplier) when it is pinned.\n' +
                 'Combos – How many parameter combinations are currently listed.\n' +
                 '\n' +
@@ -24070,11 +24736,10 @@ ${SHUF} .dt-terms-def, ${SHUF} .dt-terms-text { color: #cfc4f0 !important; }` : 
                 'Win Increase % – The win increase percentage you would enter in the game.\n' +
                 'Loss Reset – The number of losses before the bet resets to base.\n' +
                 'Buffer % – The buffer for that combo (solved to 2 decimals when left on Any).\n' +
-                'Win Chance % – The dice win chance for that combo\'s multiplier.\n' +
                 'Reset Odds % – The chance that any given run of Loss Reset bets are all losses, triggering a bet reset.\n' +
                 '\n' +
                 'BUTTONS\n' +
-                'Apply Selected to Calculator – Loads the selected combo (Win Increase %, Loss Reset, Buffer %) into the Calculator tab.\n' +
+                'Build Strategy – Builds the selected combo (Win Increase %, Loss Reset, Buffer %) into your strategy and takes you straight to the Play tab.\n' +
                 '\n' +
                 '\n' +
                 'STRATEGY FINDER TAB\n' +

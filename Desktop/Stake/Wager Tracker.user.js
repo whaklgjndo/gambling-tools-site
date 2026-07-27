@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Stake Wager Tracker — Desktop
 // @namespace    http://tampermonkey.net/
-// @version      3.31
+// @version      3.32
 // @description  Standalone single-tool build, extracted from the unified bundle.
 // @author       .
 // @match        https://stake.com/*
@@ -23,7 +23,7 @@
 (function () {
     'use strict';
 
-    console.log('%cStake Wager Tracker — Desktop — standalone build v3.31', 'color:#17c7b8;font-weight:800;font-size:13px');
+    console.log('%cStake Wager Tracker — Desktop — standalone build v3.32', 'color:#17c7b8;font-weight:800;font-size:13px');
 
     /* =========================================================
        UNIFIED LOADER — STORAGE KEYS & SETTINGS
@@ -1403,31 +1403,55 @@ function tool_stake_7day_tracker() {
        buttons in the HUD correct over/under-counts. Stored per account. */
     var CODES_KEY = 'stk7w:codes:v2';     // v2: claim timestamps (v1 stored a bare count)
     var CODES_LIMIT = 10;
-    /* Local time. The dialog says "7:00 PM" with no timezone qualifier, which is
-       how a site renders a boundary it has already converted for the viewer — so
-       the reset is treated as 19:00 in the browser's own zone. If Stake turns out
-       to mean a fixed zone (e.g. 7 PM ET for everyone), this one constant is the
-       only thing that needs to change. */
+    /* The allowance resets at ONE instant globally: 19:00 US Central. It is not
+       19:00 wherever you happen to be — the dialog's unqualified "7:00 PM" is
+       Stake's own zone, not a value converted for the viewer. Building the
+       boundary with setHours() (the browser's zone) therefore reset the counter
+       an hour early in Mountain, five hours early in London, and so on.
+       Pinned to an IANA zone so US DST is handled for us. */
     var CODES_RESET_HOUR = 19;
+    var CODES_RESET_ZONE = 'America/Chicago';
     var codesLastSeen = 0;
     var codesLastClaimAt = 0;
     /* Epoch ms of the most recent reset boundary: today's if it has already
        passed, otherwise yesterday's. Everything claimed before this is spent
        history and no longer counts against the cap. */
-    function codesWindowStart() {
-        var d = new Date();
-        d.setHours(CODES_RESET_HOUR, 0, 0, 0);
-        if (d.getTime() > Date.now()) d.setDate(d.getDate() - 1);
-        return d.getTime();
+    /* Offset of CODES_RESET_ZONE from UTC, in ms, at a given instant. Formats
+       that instant as the zone's wall clock and diffs it against the instant —
+       DST-correct, because the formatter applies whichever offset is actually in
+       force then. */
+    function codesZoneOffset(atMs) {
+        var p = {};
+        try {
+            new Intl.DateTimeFormat('en-US', {
+                timeZone: CODES_RESET_ZONE, hour12: false,
+                year: 'numeric', month: '2-digit', day: '2-digit',
+                hour: '2-digit', minute: '2-digit', second: '2-digit'
+            }).formatToParts(new Date(atMs)).forEach(function (x) { p[x.type] = x.value; });
+        } catch (e) { return -new Date(atMs).getTimezoneOffset() * 60000; }   // no Intl: fall back to local
+        var wall = Date.UTC(+p.year, +p.month - 1, +p.day, (+p.hour) % 24, +p.minute, +p.second);
+        return wall - Math.floor(atMs / 1000) * 1000;
     }
-    /* Epoch ms of the next reset boundary. Built by setting the wall-clock hour
-       and then stepping the date, so a DST shift keeps it at 19:00 local rather
-       than drifting an hour (which adding 24h to the window start would do). */
+    /* Epoch ms of the 19:00-Central boundary `dayShift` days from today, where
+       "today" is the current date in that zone, not in the viewer's. */
+    function codesBoundary(dayShift) {
+        var now = Date.now();
+        var off = codesZoneOffset(now);
+        var wall = new Date(now + off);
+        var y = wall.getUTCFullYear(), m = wall.getUTCMonth(), d = wall.getUTCDate() + (dayShift || 0);
+        var at = Date.UTC(y, m, d, CODES_RESET_HOUR, 0, 0, 0) - off;
+        // Re-resolve at the guessed instant: if the boundary falls the other side
+        // of a DST change, the offset in force there is not today's.
+        var off2 = codesZoneOffset(at);
+        return off2 === off ? at : Date.UTC(y, m, d, CODES_RESET_HOUR, 0, 0, 0) - off2;
+    }
+    function codesWindowStart() {
+        var t = codesBoundary(0);
+        return t > Date.now() ? codesBoundary(-1) : t;
+    }
     function codesNextResetAt() {
-        var d = new Date();
-        d.setHours(CODES_RESET_HOUR, 0, 0, 0);
-        if (d.getTime() <= Date.now()) d.setDate(d.getDate() + 1);
-        return d.getTime();
+        var t = codesBoundary(0);
+        return t <= Date.now() ? codesBoundary(1) : t;
     }
     function codesFmtLeft(ms) {
         if (ms <= 0) return '0s';
