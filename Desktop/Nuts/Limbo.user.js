@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Nuts Limbo (Target) — Desktop
 // @namespace    http://tampermonkey.net/
-// @version      3.32
+// @version      3.33
 // @description  Standalone single-tool build, extracted from the unified bundle.
 // @author       .
 // @match        https://nuts.gg/*
@@ -15,7 +15,7 @@
 (function () {
     'use strict';
 
-    console.log('%cNuts Limbo (Target) — Desktop — standalone build v3.32', 'color:#17c7b8;font-weight:800;font-size:13px');
+    console.log('%cNuts Limbo (Target) — Desktop — standalone build v3.33', 'color:#17c7b8;font-weight:800;font-size:13px');
 
     /* =========================================================
        UNIFIED LOADER — STORAGE KEYS & SETTINGS

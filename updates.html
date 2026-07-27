@@ -52,7 +52,7 @@
         <!-- ============ Add new releases above this line (newest first) ============ -->
         <article class="release latest" data-reveal>
           <div class="release-head">
-            <span class="ver-badge">v3.32</span>
+            <span class="ver-badge">v3.33</span>
             <span class="chip">Desktop</span>
             <span class="ver-badge">v6.04</span>
             <span class="chip">Mobile</span>
@@ -67,7 +67,7 @@
             <li><span class="tag changed">Changed</span><span class="ctxt"><b>Apply Selected to Calculator</b> is now <b>Build Strategy</b>, and it finishes the job in one press: it fills the values in, calculates them, <b>creates the strategy inside the game</b>, and moves you to the Play tab. It previously only filled the calculator in, leaving you to import the strategy yourself as a separate step that was easy to miss.</span></li>
             <li><span class="tag changed">Changed</span><span class="ctxt"><b>Dice</b> (nuts.gg): the conditions controls are consolidated into a single always-visible command bar with <b>START</b> at its right-hand end, and the bet field has moved out of the HUD into the side panel.</span></li>
             <li><span class="tag fixed">Fixed</span><span class="ctxt"><b>Dice</b>, <b>Keno</b> and <b>Mines</b> (Stake) had no enable/disable toggle on any Stake domain except stake.com and stake.us. They now cover every mirror &mdash; stake.bet, stake.games, stake.bz, stake.pet and staketr.com through staketr4.com &mdash; matching every other Stake tool.</span></li>
-            <li><span class="tag fixed">Fixed</span><span class="ctxt"><b>Perfect Blackjack</b> (mobile): collapsing the panel to see the table also hid the Hit / Stand / Double / Split call, which is precisely when you want it while playing a hand yourself. The advice now stays on screen when collapsed; collapsing hides only the automation controls and statistics.</span></li>
+            <li><span class="tag fixed">Fixed</span><span class="ctxt"><b>Perfect Blackjack</b> (all sites, desktop and mobile): collapsing the panel to see the table also hid the Hit / Stand / Double / Split call, which is precisely when you want it while playing a hand yourself. The advice now stays on screen when collapsed; collapsing hides only the automation controls and statistics.</span></li>
             <li><span class="tag fixed">Fixed</span><span class="ctxt"><b>Dice</b> (nuts.gg): the balance is now read from the visible text rather than a page title that stops updating, and bets are counted from the game socket instead of being inferred from which way the balance moved. The command bar also rebuilt itself on every tick, stacking copies of itself, and on mobile the site's own controls could paint over the HUD at desktop widths.</span></li>
             <li><span class="tag fixed">Fixed</span><span class="ctxt"><b>Codes claimed</b> reset at the wrong time outside US Central. The allowance rolls over at one moment worldwide &mdash; 7&nbsp;PM Central &mdash; but the countdown was built against your own clock, so it flipped at 7&nbsp;PM wherever you were: an hour early in Mountain, five hours early in the UK. It is now pinned to the real boundary and converted into your local time, US daylight saving included.</span></li>
             <li><span class="tag fixed">Fixed</span><span class="ctxt">Two of the single-tool downloads were built with the wrong tool's registration block attached and would not load. Rebuilt, and the build now checks every file.</span></li>
