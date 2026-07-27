@@ -22526,30 +22526,26 @@ function tool_stake_7day_tracker() {
      * number has come up over a rolling window, and applies the hottest (or
      * coldest) N numbers in one click.
      *
-     * One body serves all three sites via SITES below, because each casino
-     * marks its tiles differently and none of them agree:
+     * One body serves all three sites. Each casino marks its tiles differently
+     * — an attribute on Stake, hashed CSS-module classes on Shuffle, a cover
+     * colour on Nuts — so SITES below supplies a `signature` per site: a string
+     * that changes whenever that tile's appearance changes.
      *
-     *   Stake    data-game-tile-status. Resting is `hidden` — NOT `idle`, which
-     *            is Mines' vocabulary; assuming that made every tile read as
-     *            drawn and nothing was ever recorded. Resting is therefore
-     *            re-derived per read as the plurality status (see restingOf).
-     *   Shuffle  hashed CSS-module classes, and its own Keno tool documents
-     *            them exactly: selectedButton = pick that missed, buttonSuccess
-     *            = pick that was drawn, buttonFailed = drawn but not picked.
-     *            So drawn = buttonSuccess | buttonFailed — no inference needed.
-     *   Nuts     no stable classes at all; state lives in the cover element's
-     *            computed background colour (purple = picked, green = drawn).
+     * The tool never decides which signature means "drawn". A reveal is the set
+     * of tiles whose signature differs from what it was just before the reveal
+     * started. That is deliberate: Nuts' drawn colour is documented nowhere and
+     * was guessed wrong twice, and a hit there flashes green then reverts to the
+     * picked colour, so no single frame — first, last or settled — contains the
+     * whole draw. Baseline comparison needs neither the palette nor a lucky
+     * frame. Mutations drive the sampling, because a flash can begin and end
+     * well inside one polling tick.
      *
-     * Capture accumulates the UNION of drawn-looking tiles across the reveal
-     * rather than reading the settled board. Nuts forces this — its own tool
-     * notes that a hit "flashes green during the reveal then reverts to
-     * purple", so the final frame is missing every number you actually hit. The
-     * union also makes progressive reveals safe on Stake and Shuffle, where
-     * tiles light one at a time and any single frame is a partial draw.
+     * Your own picks move a signature too, so clicks are tracked and a clicked
+     * tile is folded back into the baseline instead of counted.
      *
-     * A reveal commits when the expected count is reached, or failing that when
-     * the set stops growing for STABLE_TICKS polls — so a site that draws a
-     * different number of spots still records correctly.
+     * A reveal is banked only when it reaches exactly the expected count. A
+     * partial reveal is not a smaller sample but a biased one — the numbers
+     * most likely to be missed are the ones you picked — so it is discarded.
      *
      * Heat is a z-score so it is comparable across window sizes, and it makes no
      * assumption about board size or draws-per-round: expected hits per number
@@ -22564,10 +22560,9 @@ function tool_stake_7day_tracker() {
         if (tool_keno_hotspot._booted) return;
         tool_keno_hotspot._booted = true;
 
-        var KH_VERSION   = '1.10';
+        var KH_VERSION   = '1.20';
         var MAX_PICKS    = 10;   // every one of the three caps a ticket at 10
         var DRAWS_CAP    = 2000; // rolling history cap (~100KB of JSON)
-        var STABLE_TICKS = 3;    // ~1.2s of no new tiles ends a reveal
         var POLL_MS      = 400;
 
         function qsa(sel) { return Array.prototype.slice.call(document.querySelectorAll(sel)); }
@@ -22575,21 +22570,9 @@ function tool_stake_7day_tracker() {
             var m = (getComputedStyle(el).backgroundColor || '').match(/(\d+),\s*(\d+),\s*(\d+)/);
             return m ? [+m[1], +m[2], +m[3]] : null;
         }
-        /** The status held by the most tiles. A reveal lights a minority of the
-         *  board and a ticket is at most 10 spots, so resting always wins. */
-        function restingOf(all, statusFn) {
-            var freq = {}, best = -1, resting = null, i, s;
-            for (i = 0; i < all.length; i++) {
-                s = statusFn(all[i]);
-                freq[s] = (freq[s] || 0) + 1;
-                if (freq[s] > best) { best = freq[s]; resting = s; }
-            }
-            return resting;
-        }
         function stakeStatus(b) {
             return String(b.getAttribute('data-game-tile-status') || '').toLowerCase();
         }
-        var STAKE_NOT_DRAWN = { hidden: 1, idle: 1, none: 1, selected: 1, '': 1 };
 
         var SITES = {
             stake: {
@@ -22603,15 +22586,7 @@ function tool_stake_7day_tracker() {
                     var d = parseInt(b.dataset ? b.dataset.index : NaN, 10);
                     return isNaN(d) ? (i + 1) : d + 1;
                 },
-                prepare: function (all) { return restingOf(all, stakeStatus); },
-                isDrawn: function (b, resting) {
-                    var s = stakeStatus(b);
-                    return s !== resting && !STAKE_NOT_DRAWN[s];
-                },
-                isPicked: function (b) {
-                    var s = stakeStatus(b);
-                    return s === 'selected' || s === 'match';
-                },
+                signature: function (b) { return stakeStatus(b); },
                 expect: 10
             },
             shuffle: {
@@ -22623,15 +22598,12 @@ function tool_stake_7day_tracker() {
                     var m = ((b.dataset && b.dataset.testid) || b.getAttribute('data-testid') || '').match(/keno-button-(\d+)/);
                     return m ? parseInt(m[1], 10) : (i + 1);
                 },
-                prepare: function () { return null; },
-                // Documented by Shuffle's own Keno tool — no inference needed.
-                isDrawn: function (b) { return /buttonSuccess|buttonFailed/.test(b.className || ''); },
-                isPicked: function (b) { return /selectedButton|buttonSuccess/.test(b.className || ''); },
+                signature: function (b) { return String(b.className || ''); },
                 expect: 10
             },
             nuts: {
                 label: 'Nuts',
-                key: 'keno-hotspot-nuts-v1',
+                key: 'keno-hotspot-nuts-v2',
                 onPage: function () { return /\/keno(?:\/|$|\?|#)/i.test(location.pathname || ''); },
                 // Content-based, mirroring the Nuts Keno tool: a tile is a
                 // <button> whose first <span> is exactly a number 1-40, and all
@@ -22651,20 +22623,13 @@ function tool_stake_7day_tracker() {
                     return out;
                 },
                 number: function (b, i) { return i + 1; },   // tiles() is number-ordered
-                prepare: function () { return null; },
-                // Cover element (children[1]) carries the state as a colour:
-                // purple = picked, green = drawn, grey = untouched.
-                isDrawn: function (b) {
+                /* The cover element carries the state as a colour. Which colour
+                   means what is deliberately NOT encoded here — only that the
+                   colour changing is what matters. */
+                signature: function (b) {
                     var cover = b.children && b.children[1];
-                    if (!cover) return false;
-                    var c = rgb(cover);
-                    return !!c && c[1] > c[0] + 50 && c[1] > 120;
-                },
-                isPicked: function (b) {
-                    var cover = b.children && b.children[1];
-                    if (!cover) return false;
-                    var c = rgb(cover);
-                    return !!c && (c[0] + c[2]) > 200 && c[1] < 100;
+                    var c = cover && rgb(cover);
+                    return c ? c.join(',') : '';
                 },
                 expect: 10
             }
@@ -22764,72 +22729,145 @@ function tool_stake_7day_tracker() {
 
         /* ---------------------------------------------------------------
            BOARD READING
+
+           A tile's "signature" is however the site renders its state: an
+           attribute on Stake, a class on Shuffle, a colour on Nuts. The tool
+           deliberately does NOT know which signature means "drawn". A reveal is
+           just the set of tiles whose signature changed from what it was
+           immediately before that reveal began.
+
+           That is what makes Nuts work. Its hits flash green and then revert to
+           the picked colour, and its drawn colour is documented nowhere — it was
+           guessed twice here and wrong both times. Comparing against a baseline
+           needs neither fact, and it retires the last hardcoded state names on
+           Stake and Shuffle too.
+
+           Your own picks change a signature as well, and would otherwise read as
+           part of a draw. Clicks are watched to exclude them: a tile you (or
+           Pick hottest) click is folded straight back into the baseline; a tile
+           the game reveals is not.
            --------------------------------------------------------------- */
         function tiles() { try { return SITE.tiles() || []; } catch (e) { return []; } }
         function boardSize() { var n = tiles().length; return n || 40; }
 
-        /** Numbers currently showing as drawn, or null if the board isn't up. */
-        function readDrawn() {
-            var all = tiles(), i;
+        /** number -> signature for every tile, or null if the board isn't up. */
+        function readSignatures() {
+            var all = tiles(), out = {}, i, n;
             if (!all.length) return null;
-            var ctx = null;
-            try { ctx = SITE.prepare(all); } catch (e) {}
-            var out = [];
             for (i = 0; i < all.length; i++) {
-                var hit = false;
-                try { hit = SITE.isDrawn(all[i], ctx); } catch (e) {}
-                if (!hit) continue;
-                var n = SITE.number(all[i], i);
-                if (n) out.push(n);
+                n = SITE.number(all[i], i);
+                if (!n) continue;
+                try { out[n] = String(SITE.signature(all[i])); } catch (e) { out[n] = ''; }
             }
             return out;
         }
+        /** Numbers that look selected: any tile whose signature differs from the
+         *  board's resting one. A ticket is at most 10 of 40, so resting always
+         *  holds the plurality and no colour or class name is needed. */
         function currentPicks() {
-            var all = tiles(), out = [], i;
-            for (i = 0; i < all.length; i++) {
-                var p = false;
-                try { p = SITE.isPicked(all[i]); } catch (e) {}
-                if (!p) continue;
-                var n = SITE.number(all[i], i);
-                if (n) out.push(n);
+            var sig = readSignatures();
+            if (!sig) return [];
+            var freq = {}, best = -1, resting = null, k, out = [];
+            for (k in sig) {
+                if (!Object.prototype.hasOwnProperty.call(sig, k)) continue;
+                freq[sig[k]] = (freq[sig[k]] || 0) + 1;
+                if (freq[sig[k]] > best) { best = freq[sig[k]]; resting = sig[k]; }
+            }
+            for (k in sig) {
+                if (!Object.prototype.hasOwnProperty.call(sig, k)) continue;
+                if (sig[k] !== resting) out.push(+k);
             }
             return out;
         }
 
-        /* Reveal capture. Accumulates the union of everything that looked drawn
-           since the board was last clear, then commits once the expected count
-           lands or the set stops growing. Nuts needs the union because a hit
-           reverts to the picked colour after flashing; Stake and Shuffle need it
-           because tiles reveal one at a time. */
-        var pending = [], stableTicks = 0, recorded = false;
+        var CLICK_GRACE = 1500;   // ms a changed tile is treated as your pick
+        var baseline = null;      // signatures as of before the current reveal
+        var pending = [];         // numbers seen to change during this reveal
+        var recorded = false;     // this reveal is already banked
+        var clickedAt = {};       // number -> when it was last clicked
+
+        /* Both your picks and the tool's own (Pick hottest clicks for real) land
+           here, so neither is ever mistaken for a drawn number. */
+        document.addEventListener('click', function (e) {
+            try {
+                var node = e.target && e.target.closest ? e.target.closest('button') : null;
+                if (!node) return;
+                var all = tiles(), i;
+                for (i = 0; i < all.length; i++) {
+                    if (all[i] === node || all[i].contains(node)) {
+                        clickedAt[SITE.number(all[i], i)] = Date.now();
+                        return;
+                    }
+                }
+            } catch (err) { /* never interfere with the page's own handling */ }
+        }, true);
 
         function commitPending() {
-            if (!pending.length) return;
             var nums = pending.slice().sort(function (a, b) { return a - b; });
-            pending = []; stableTicks = 0; recorded = true;
-            if (nums.length > boardSize()) return;    // never record a nonsense draw
+            pending = []; recorded = true;
+            /* Only a complete reveal is worth keeping. A partial one is not a
+               smaller sample, it is a biased one: the numbers most likely to be
+               missed are the ones you picked, whose flash is shortest. Banking
+               7 of 10 is exactly how the Nuts heatmap ended up wrong. */
+            if (nums.length !== SITE.expect) return;
             recordDraw(nums);
             render();
             paintTiles();
         }
 
-        function pollBoard() {
-            var d = readDrawn();
-            if (d == null) return;
-            if (d.length === 0) {
-                // Board is clear. Flush anything still pending (a reveal cleared
-                // before it settled), then re-arm for the next round.
-                if (!recorded && pending.length) commitPending();
-                pending = []; stableTicks = 0; recorded = false;
+        function sample() {
+            var sig = readSignatures();
+            if (!sig) return;
+            if (!baseline) { baseline = sig; return; }
+
+            var now = Date.now(), changed = [], k;
+            for (k in sig) {
+                if (!Object.prototype.hasOwnProperty.call(sig, k)) continue;
+                if (clickedAt[k] && now - clickedAt[k] < CLICK_GRACE) {
+                    baseline[k] = sig[k];            // yours — keep the baseline current
+                    continue;
+                }
+                if (clickedAt[k]) delete clickedAt[k];
+                if (baseline[k] !== undefined && sig[k] !== baseline[k]) changed.push(+k);
+            }
+
+            if (!changed.length) {
+                // Back at the baseline: the round is over (or never started). Re-arm.
+                pending = []; recorded = false; baseline = sig;
                 return;
             }
-            if (recorded) return;                     // this reveal is already banked
-            var grew = false, i;
-            for (i = 0; i < d.length; i++) {
-                if (pending.indexOf(d[i]) < 0) { pending.push(d[i]); grew = true; }
+            if (recorded) return;
+
+            for (var i = 0; i < changed.length; i++) {
+                if (pending.indexOf(changed[i]) < 0) pending.push(changed[i]);
             }
-            if (grew) stableTicks = 0; else stableTicks++;
-            if (pending.length >= SITE.expect || stableTicks >= STABLE_TICKS) commitPending();
+            if (pending.length >= SITE.expect) commitPending();
+        }
+
+        /* Driven by mutations rather than by the clock: a Nuts hit can flash and
+           revert well inside one 400ms tick, so a poll never sees it. The ticker
+           still calls sample() as a safety net for anything that changes without
+           mutating the subtree. */
+        var mo = null, moRoot = null, sampleQueued = false;
+        function scheduleSample() {
+            if (sampleQueued) return;
+            sampleQueued = true;
+            var run = function () { sampleQueued = false; try { sample(); } catch (e) {} };
+            if (typeof requestAnimationFrame === 'function') requestAnimationFrame(run);
+            else setTimeout(run, 0);
+        }
+        function watchBoard() {
+            var all = tiles();
+            if (!all.length) return;
+            var root = all[0].parentNode;
+            if (!root || root === moRoot) return;      // already watching this board
+            if (mo) mo.disconnect();
+            moRoot = root;
+            mo = new MutationObserver(scheduleSample);
+            mo.observe(root, {
+                subtree: true, childList: true, attributes: true,
+                attributeFilter: ['class', 'style', 'data-game-tile-status']
+            });
         }
 
         /* ---------------------------------------------------------------
@@ -23069,7 +23107,8 @@ function tool_stake_7day_tracker() {
                 if (!slot) return;                      // Keno panel not up yet
                 if (!sect) sect = buildSection();
                 if (sect.parentNode !== slot) { slot.appendChild(sect); render(); }
-                pollBoard();
+                watchBoard();
+                sample();
                 paintTiles();
             } catch (e) { /* never let one tick kill the ticker */ }
         }, POLL_MS);
