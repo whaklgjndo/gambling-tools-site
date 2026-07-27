@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Shuffle Auto-Vault — Mobile
 // @namespace    http://tampermonkey.net/
-// @version      6.02
+// @version      6.03
 // @description  Standalone single-tool mobile build, extracted from the unified mobile bundle.
 // @author       .
 // @match        https://shuffle.com/*
@@ -14,7 +14,7 @@
 (function () {
     'use strict';
 
-    try { console.log('[Shuffle Auto-Vault — Mobile] standalone build v6.02'); } catch (e) {}
+    try { console.log('[Shuffle Auto-Vault — Mobile] standalone build v6.03'); } catch (e) {}
 
 
     try { console.log('[unified-mobile] boot v5.64 — DiceTool.exe replica UI for the dice tool (Calculator / Easy Mode / Strategy Finder / Results / Settings)'); } catch (e) {}

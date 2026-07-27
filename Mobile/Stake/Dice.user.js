@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Stake Dice — Mobile
 // @namespace    http://tampermonkey.net/
-// @version      6.02
+// @version      6.03
 // @description  Standalone single-tool mobile build, extracted from the unified mobile bundle.
 // @author       .
 // @match        https://stake.com/*
@@ -22,7 +22,7 @@
 (function () {
     'use strict';
 
-    try { console.log('[Stake Dice — Mobile] standalone build v6.02'); } catch (e) {}
+    try { console.log('[Stake Dice — Mobile] standalone build v6.03'); } catch (e) {}
 
 
     try { console.log('[unified-mobile] boot v5.64 — DiceTool.exe replica UI for the dice tool (Calculator / Easy Mode / Strategy Finder / Results / Settings)'); } catch (e) {}
@@ -3504,8 +3504,13 @@
             flex: 0 0 auto; min-width: 30px; min-height: 30px; padding: 0 7px;
             font-size: 11px; font-weight: 800; border-radius: 6px;
         }
+        /* Pushed to the RIGHT. Flush left it sat directly under the floating
+           "● Dice" quick enable/disable chip, which is anchored to the bottom-left
+           of the viewport — so the chip covered the one control that has to be
+           tappable. margin-left:auto rather than justify-content on the row, so it
+           stays right-aligned even if buttons are added beside it later. */
         #ratchet-master-container .hud-cmd-bar .cmd-primary > .hud-rapid-btn {
-            flex: 0 0 40%; min-height: 44px; border-radius: 8px;
+            flex: 0 0 40%; margin-left: auto; min-height: 44px; border-radius: 8px;
             font-size: 13px; font-weight: 900; letter-spacing: 0.08em;
         }
         /* Secondary actions may wrap freely — they sit BELOW the primary row, so
