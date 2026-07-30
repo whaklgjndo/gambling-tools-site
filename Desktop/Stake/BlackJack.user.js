@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Stake Blackjack — Desktop
 // @namespace    http://tampermonkey.net/
-// @version      3.33
+// @version      3.34
 // @description  Standalone single-tool build, extracted from the unified bundle.
 // @author       .
 // @match        https://stake.com/*
@@ -14,6 +14,7 @@
 // @match        https://stake.bz/*
 // @match        https://stake.us/*
 // @match        https://stake.pet/*
+// @match        https://stake.jp/*
 // @grant        GM_addStyle
 // @grant        unsafeWindow
 // @run-at       document-start
@@ -23,7 +24,7 @@
 (function () {
     'use strict';
 
-    console.log('%cStake Blackjack — Desktop — standalone build v3.33', 'color:#17c7b8;font-weight:800;font-size:13px');
+    console.log('%cStake Blackjack — Desktop — standalone build v3.34', 'color:#17c7b8;font-weight:800;font-size:13px');
 
     /* =========================================================
        UNIFIED LOADER — STORAGE KEYS & SETTINGS
@@ -36,6 +37,10 @@
     const SETTINGS_KEY    = '__stake_nuts_unified_tools_v1__';
     const PANEL_POS_KEY   = '__stake_nuts_unified_panel_pos_v1__';
     const PANEL_OPEN_KEY  = '__stake_nuts_unified_panel_open_v1__';
+    // Where the user dragged the floating cluster (gear + quick-toggle chips).
+    // Declared up here with the other keys, not down beside the drag code, so
+    // nothing can read it before it exists.
+    const FLOAT_POS_KEY   = '__stake_nuts_unified_float_pos_v1__';
     const VISIBILITY_STYLE_ID = 'unified-tools-visibility-css';
 
     /** Read tool-enable settings from localStorage. */
@@ -289,6 +294,11 @@
                 display: inline-flex;
                 align-items: center;
                 gap: 6px;
+                /* The chip is a drag handle; on a touchscreen, touch-action
+                   manipulation scrolls the page instead of giving us
+                   pointermove. (No backticks in here — this block is inside a
+                   template literal.) */
+                touch-action: none;
             }
             .uts-quick-toggle.on {
                 background: linear-gradient(135deg, #10b981, #059669);
@@ -317,6 +327,112 @@
             }
         `;
         (document.head || document.documentElement).appendChild(style);
+    }
+
+    /* ---- Draggable floating cluster (gear + quick-toggle chips) -------------
+       Both were pinned to the bottom-left corner with no way to move them, and
+       that corner is where the dice tool's own controls sit — the chips landed
+       on top of Build Strategy with nothing the user could do about it. Hold and
+       drag any member now and the WHOLE cluster moves together, so the chips
+       keep their relation to the gear; the position is clamped to the viewport
+       and remembered across loads. A press only becomes a drag once the pointer
+       has travelled CLUSTER_DRAG_SLOP px, and the click the browser fires at the
+       end of a drag is swallowed for a moment — without that, dragging the Dice
+       chip out of the way would toggle the tool off. Until the cluster is dragged
+       for the first time nothing is written inline, so the CSS defaults stand.
+       Kept byte-identical in intent to the mobile bundle so the two behave the
+       same way. */
+    const CLUSTER_GEAR_SIZE  = 38;   // gear diameter, matches PANEL_CSS
+    const CLUSTER_CHIP_GAP   = 44;   // first chip clears the gear
+    const CLUSTER_CHIP_STEP  = 36;   // vertical pitch of the stacked chips
+    const CLUSTER_CHIP_INSET = 48;   // chips sit this far right of the gear's left edge
+    const CLUSTER_DRAG_SLOP  = 6;
+    let clusterDragUntil = 0;        // clicks before this instant are drag artefacts
+
+    function loadFloatPos() {
+        try {
+            const p = JSON.parse(localStorage.getItem(FLOAT_POS_KEY) || 'null');
+            return (p && typeof p.left === 'number' && typeof p.bottom === 'number') ? p : null;
+        } catch { return null; }
+    }
+    function saveFloatPos(left, bottom) {
+        try { localStorage.setItem(FLOAT_POS_KEY, JSON.stringify({ left, bottom })); } catch {}
+    }
+    /** Keep the whole stack on screen — its height grows with the chip count. */
+    function clampFloatPos(left, bottom) {
+        const chips = document.querySelectorAll('.uts-quick-toggle').length;
+        const width = CLUSTER_CHIP_INSET + 130;
+        const height = chips
+            ? CLUSTER_CHIP_GAP + chips * CLUSTER_CHIP_STEP
+            : CLUSTER_GEAR_SIZE;
+        return {
+            left: Math.max(0, Math.min(Math.max(0, window.innerWidth - width), left)),
+            bottom: Math.max(0, Math.min(Math.max(0, window.innerHeight - height), bottom))
+        };
+    }
+    /** Paint the saved position onto the gear and every chip. No-op until the
+     *  cluster has actually been dragged, so the default CSS corner stands. */
+    function applyFloatPos() {
+        const saved = loadFloatPos();
+        if (!saved) return;
+        const pos = clampFloatPos(saved.left, saved.bottom);
+        const gear = document.getElementById(PANEL_TOGGLE_ID);
+        if (gear) {
+            gear.style.left = pos.left + 'px';
+            gear.style.bottom = pos.bottom + 'px';
+        }
+        document.querySelectorAll('.uts-quick-toggle').forEach(chip => {
+            const idx = parseInt(chip.dataset.qtIndex || '0', 10);
+            chip.style.left = (pos.left + CLUSTER_CHIP_INSET) + 'px';
+            chip.style.bottom = (pos.bottom + CLUSTER_CHIP_GAP + idx * CLUSTER_CHIP_STEP) + 'px';
+        });
+    }
+    /** Turn one cluster member into a drag handle for the whole cluster. */
+    function makeClusterDraggable(el) {
+        if (!el || el.dataset.clusterDrag === '1') return;
+        el.dataset.clusterDrag = '1';
+        let pid = null, sx = 0, sy = 0, left0 = 0, bottom0 = 0, moved = false;
+        el.addEventListener('pointerdown', (e) => {
+            if (!e.isPrimary) return;
+            pid = e.pointerId; moved = false;
+            sx = e.clientX; sy = e.clientY;
+            // Measure the GEAR, never the handle: the chips are offset from it,
+            // and dragging a chip must not snap the cluster onto the chip.
+            const anchor = document.getElementById(PANEL_TOGGLE_ID) || el;
+            const r = anchor.getBoundingClientRect();
+            left0 = r.left;
+            bottom0 = window.innerHeight - r.bottom;
+            try { el.setPointerCapture(pid); } catch (err) {}
+        });
+        el.addEventListener('pointermove', (e) => {
+            if (pid === null || e.pointerId !== pid) return;
+            const ddx = e.clientX - sx, ddy = e.clientY - sy;
+            if (!moved && Math.abs(ddx) < CLUSTER_DRAG_SLOP && Math.abs(ddy) < CLUSTER_DRAG_SLOP) return;
+            moved = true;
+            e.preventDefault();
+            const pos = clampFloatPos(left0 + ddx, bottom0 - ddy);   // y is inverted: bottom-anchored
+            saveFloatPos(pos.left, pos.bottom);
+            applyFloatPos();
+        });
+        const endDrag = () => {
+            if (pid === null) return;
+            try { el.releasePointerCapture(pid); } catch (err) {}
+            pid = null;
+            if (moved) clusterDragUntil = Date.now() + 350;
+        };
+        el.addEventListener('pointerup', endDrag);
+        el.addEventListener('pointercancel', endDrag);
+    }
+    /** True while the click being handled is really the tail of a drag. */
+    function swallowedByDrag() {
+        return Date.now() < clusterDragUntil;
+    }
+    let clusterReflowBound = false;
+    function bindClusterReflow() {
+        if (clusterReflowBound) return;
+        clusterReflowBound = true;
+        // Resizing the window can leave a dragged cluster off screen.
+        window.addEventListener('resize', applyFloatPos);
     }
 
     /** Build a short, user-friendly label for the quick-toggle button —
@@ -353,10 +469,16 @@
                 btn.id = btnId;
                 btn.className = 'uts-quick-toggle';
                 btn.innerHTML = '<span class="uts-qt-dot"></span><span class="uts-qt-label"></span>';
-                btn.addEventListener('click', () => quickToggleClick(tool));
+                btn.addEventListener('click', () => {
+                    if (swallowedByDrag()) return;   // this "click" ended a drag
+                    quickToggleClick(tool);
+                });
+                makeClusterDraggable(btn);
                 document.body.appendChild(btn);
             }
             // Stack above the ⚙ control panel button (bottom: 16px, ~38px tall).
+            // applyFloatPos() overrides both edges once the cluster is dragged.
+            btn.dataset.qtIndex = String(idx);
             btn.style.bottom = (16 + 44 + idx * 36) + 'px';
             const enabled = isEnabled(tool);
             btn.classList.toggle('on', enabled);
@@ -369,6 +491,10 @@
         document.querySelectorAll('.uts-quick-toggle').forEach(b => {
             if (!seen.has(b.id)) b.remove();
         });
+        // Re-seat the cluster: the chip count just changed, which changes both
+        // the stack height the clamp works from and every chip's offset.
+        applyFloatPos();
+        bindClusterReflow();
     }
 
     /** Click handler for a quick-toggle button. Mirrors the control-panel
@@ -575,6 +701,11 @@
             return {
                 total: total,
                 soft: aces > 0,
+                // How many aces are still worth 11. The equity engine needs the
+                // COUNT, not just "is it soft": a hand can hold two aces at
+                // once (A,3,A = 11+3+1 = 15, still soft), and a boolean loses
+                // that the second ace can absorb a later bust.
+                aces: aces,
                 pair: pair,
                 pairRank: pair ? cardValue(ranks[0]) : 0,   // 11 for A,A
                 busted: total > 21
@@ -653,34 +784,42 @@
             return d;
         })();
 
+        /* A dealer hand is (total, aces) — the number of aces still worth 11 —
+           NOT a soft/hard boolean. With a boolean, A,A collapses to a "hard" 12
+           and the second ace can never absorb a later bust, so multi-ace dealer
+           hands were counted as busts that do not happen: with an ACE UP the
+           dealer's bust chance came out 13.83% against a true 11.53%, and the
+           win probability shown next to a dealer ace was inflated by that whole
+           2.3-point gap. (Verified against the published infinite-deck table:
+           2 .3536, 3 .3739, 4 .3945, 5 .4164, 6 .4232, 7 .2623, 8 .2447,
+           9 .2284, 10 .2121, A .1153.) Reduce at the top of rec() so the memo
+           key is always the reduced hand. */
         function dealerDist(upRank, h17) {
             var memo = {};
-            function rec(total, soft) {
-                if (total > 21) { if (soft) return rec(total - 10, false); return { bust: 1 }; }
-                var stand = total > 17 || (total === 17 && !(soft && h17));
-                if (total >= 17 && stand) { var s = {}; s[total] = 1; return s; }
-                var key = total + '|' + (soft ? 1 : 0);
+            function rec(total, aces) {
+                while (total > 21 && aces > 0) { total -= 10; aces--; }
+                if (total > 21) return { bust: 1 };
+                var soft17 = total === 17 && aces > 0;
+                if (total >= 17 && !(soft17 && h17)) { var s = {}; s[total] = 1; return s; }
+                var key = total + '|' + aces;
                 if (memo[key]) return memo[key];
                 var dist = {}, i;
                 for (i = 0; i < DRAWS.length; i++) {
-                    var dr = DRAWS[i], nt = total + dr.add, ns = soft || dr.soft;
-                    if (nt > 21 && ns) { nt -= 10; ns = false; }
-                    var sub = rec(nt, ns);
+                    var dr = DRAWS[i];
+                    var sub = rec(total + dr.add, aces + (dr.soft ? 1 : 0));
                     for (var k in sub) dist[k] = (dist[k] || 0) + dr.p * sub[k];
                 }
                 memo[key] = dist;
                 return dist;
             }
-            var up = cardValue(upRank), soft0 = up === 11;
+            var up = cardValue(upRank), aces0 = up === 11 ? 1 : 0;
             var excl = up === 11 ? 10 : (up === 10 ? 11 : null);   // the blackjack hole
             var norm = excl == null ? 1 : 1 - (excl === 10 ? 4 / 13 : 1 / 13);
             var dist = {}, i;
             for (i = 0; i < DRAWS.length; i++) {
                 var dr = DRAWS[i];
                 if (excl != null && dr.add === excl) continue;
-                var nt = up + dr.add, ns = soft0 || dr.soft;
-                if (nt > 21 && ns) { nt -= 10; ns = false; }
-                var sub = rec(nt, ns);
+                var sub = rec(up + dr.add, aces0 + (dr.soft ? 1 : 0));
                 for (var k in sub) dist[k] = (dist[k] || 0) + (dr.p / norm) * sub[k];
             }
             return dist;
@@ -698,18 +837,21 @@
         }
 
         var eqMemo = {};
-        function bestEquity(total, soft, dealerUp, h17) {
+        /* Ace-counted like dealerDist above, and for the same reason: the player
+           can hold two aces at once too (A,3,A is a soft 15), and a boolean threw
+           the spare ace away — understating every multi-ace continuation. */
+        function bestEquity(total, aces, dealerUp, h17) {
+            while (total > 21 && aces > 0) { total -= 10; aces--; }
             if (total > 21) return { win: 0, push: 0, lose: 1 };
             var st = standEquity(total, dealerUp, h17);
             if (total >= 21) return st;
-            var key = total + '|' + (soft ? 1 : 0) + '|' + dealerUp + '|' + (h17 ? 1 : 0);
+            var key = total + '|' + aces + '|' + dealerUp + '|' + (h17 ? 1 : 0);
             if (eqMemo[key]) return eqMemo[key];
             eqMemo[key] = st;                     // break any recursion cycle
             var hw = 0, hp = 0, hl = 0, i;
             for (i = 0; i < DRAWS.length; i++) {
-                var dr = DRAWS[i], nt = total + dr.add, ns = soft || dr.soft;
-                if (nt > 21 && ns) { nt -= 10; ns = false; }
-                var eq = nt > 21 ? { win: 0, push: 0, lose: 1 } : bestEquity(nt, ns, dealerUp, h17);
+                var dr = DRAWS[i];
+                var eq = bestEquity(total + dr.add, aces + (dr.soft ? 1 : 0), dealerUp, h17);
                 hw += dr.p * eq.win; hp += dr.p * eq.push; hl += dr.p * eq.lose;
             }
             var hit = { win: hw, push: hp, lose: hl };
@@ -726,7 +868,7 @@
             var di = dealerIdx(dealerUp);
             if (di < 0 || di > 9) return null;
             eqMemo = {};
-            return bestEquity(info.total, info.soft, dealerUp, h17);
+            return bestEquity(info.total, info.aces, dealerUp, h17);
         }
 
         /* ---------------------------------------------------------------
@@ -750,6 +892,19 @@
                 return m ? (m[1] === 'T' ? '10' : m[1]) : null;
             }
             if (typeof c === 'object') {
+                // A HAND is not a card. Stake sends both sides as
+                // [{value, actions, cards:[...]}], where `value` is the hand
+                // TOTAL — and a total of 2..10 reads as a perfectly valid rank
+                // string, so `c.value` below silently turned a whole hand into
+                // one phantom card of that rank. A two-card hard 10 became a
+                // single "10": cards.length stopped being 2, canDouble went
+                // false, and EVERY hard 9 and hard 10 hit instead of doubling
+                // (10 vs 9, 10 vs 5, 5,5 …). It also swallowed low pairs
+                // (2,2 / 3,3 / 4,4 never split) and collapsed a split's two
+                // hands into one bogus hand, because the same coincidence fires
+                // per hand object. Refuse anything that owns a card list or an
+                // action list: only a real card reaches the rank probe.
+                if (Array.isArray(c.cards) || Array.isArray(c.actions)) return null;
                 var cand = c.rank != null ? c.rank
                          : c.card != null ? c.card
                          : c.name != null ? c.name
@@ -2794,7 +2949,7 @@
             'https://staketr3.com/casino/games/blackjack*',
             'https://staketr4.com/casino/games/blackjack*',
             'https://stake.bz/casino/games/blackjack*',
-            'https://stake.pet/casino/games/blackjack*'
+            'https://stake.pet/casino/games/blackjack*', 'https://stake.jp/casino/games/blackjack*'
         ],
         runAt: 'document-end',
         defaultEnabled: true,
@@ -3048,8 +3203,13 @@
         panel.innerHTML = body;
         document.body.appendChild(panel);
         document.body.appendChild(toggle);
+        // The gear is the cluster's anchor and its main drag handle.
+        makeClusterDraggable(toggle);
+        applyFloatPos();
+        bindClusterReflow();
 
         toggle.onclick = () => {
+            if (swallowedByDrag()) return;   // this "click" ended a drag
             const willShow = panel.classList.contains('hidden');
             panel.classList.toggle('hidden', !willShow);
             try { localStorage.setItem(PANEL_OPEN_KEY, willShow ? '1' : '0'); } catch {}

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Shuffle Keno — Desktop
 // @namespace    http://tampermonkey.net/
-// @version      3.33
+// @version      3.34
 // @description  Standalone single-tool build, extracted from the unified bundle.
 // @author       .
 // @match        https://shuffle.com/*
@@ -15,7 +15,7 @@
 (function () {
     'use strict';
 
-    console.log('%cShuffle Keno — Desktop — standalone build v3.33', 'color:#17c7b8;font-weight:800;font-size:13px');
+    console.log('%cShuffle Keno — Desktop — standalone build v3.34', 'color:#17c7b8;font-weight:800;font-size:13px');
 
     /* =========================================================
        UNIFIED LOADER — STORAGE KEYS & SETTINGS
@@ -28,6 +28,10 @@
     const SETTINGS_KEY    = '__stake_nuts_unified_tools_v1__';
     const PANEL_POS_KEY   = '__stake_nuts_unified_panel_pos_v1__';
     const PANEL_OPEN_KEY  = '__stake_nuts_unified_panel_open_v1__';
+    // Where the user dragged the floating cluster (gear + quick-toggle chips).
+    // Declared up here with the other keys, not down beside the drag code, so
+    // nothing can read it before it exists.
+    const FLOAT_POS_KEY   = '__stake_nuts_unified_float_pos_v1__';
     const VISIBILITY_STYLE_ID = 'unified-tools-visibility-css';
 
     /** Read tool-enable settings from localStorage. */
@@ -281,6 +285,11 @@
                 display: inline-flex;
                 align-items: center;
                 gap: 6px;
+                /* The chip is a drag handle; on a touchscreen, touch-action
+                   manipulation scrolls the page instead of giving us
+                   pointermove. (No backticks in here — this block is inside a
+                   template literal.) */
+                touch-action: none;
             }
             .uts-quick-toggle.on {
                 background: linear-gradient(135deg, #10b981, #059669);
@@ -309,6 +318,112 @@
             }
         `;
         (document.head || document.documentElement).appendChild(style);
+    }
+
+    /* ---- Draggable floating cluster (gear + quick-toggle chips) -------------
+       Both were pinned to the bottom-left corner with no way to move them, and
+       that corner is where the dice tool's own controls sit — the chips landed
+       on top of Build Strategy with nothing the user could do about it. Hold and
+       drag any member now and the WHOLE cluster moves together, so the chips
+       keep their relation to the gear; the position is clamped to the viewport
+       and remembered across loads. A press only becomes a drag once the pointer
+       has travelled CLUSTER_DRAG_SLOP px, and the click the browser fires at the
+       end of a drag is swallowed for a moment — without that, dragging the Dice
+       chip out of the way would toggle the tool off. Until the cluster is dragged
+       for the first time nothing is written inline, so the CSS defaults stand.
+       Kept byte-identical in intent to the mobile bundle so the two behave the
+       same way. */
+    const CLUSTER_GEAR_SIZE  = 38;   // gear diameter, matches PANEL_CSS
+    const CLUSTER_CHIP_GAP   = 44;   // first chip clears the gear
+    const CLUSTER_CHIP_STEP  = 36;   // vertical pitch of the stacked chips
+    const CLUSTER_CHIP_INSET = 48;   // chips sit this far right of the gear's left edge
+    const CLUSTER_DRAG_SLOP  = 6;
+    let clusterDragUntil = 0;        // clicks before this instant are drag artefacts
+
+    function loadFloatPos() {
+        try {
+            const p = JSON.parse(localStorage.getItem(FLOAT_POS_KEY) || 'null');
+            return (p && typeof p.left === 'number' && typeof p.bottom === 'number') ? p : null;
+        } catch { return null; }
+    }
+    function saveFloatPos(left, bottom) {
+        try { localStorage.setItem(FLOAT_POS_KEY, JSON.stringify({ left, bottom })); } catch {}
+    }
+    /** Keep the whole stack on screen — its height grows with the chip count. */
+    function clampFloatPos(left, bottom) {
+        const chips = document.querySelectorAll('.uts-quick-toggle').length;
+        const width = CLUSTER_CHIP_INSET + 130;
+        const height = chips
+            ? CLUSTER_CHIP_GAP + chips * CLUSTER_CHIP_STEP
+            : CLUSTER_GEAR_SIZE;
+        return {
+            left: Math.max(0, Math.min(Math.max(0, window.innerWidth - width), left)),
+            bottom: Math.max(0, Math.min(Math.max(0, window.innerHeight - height), bottom))
+        };
+    }
+    /** Paint the saved position onto the gear and every chip. No-op until the
+     *  cluster has actually been dragged, so the default CSS corner stands. */
+    function applyFloatPos() {
+        const saved = loadFloatPos();
+        if (!saved) return;
+        const pos = clampFloatPos(saved.left, saved.bottom);
+        const gear = document.getElementById(PANEL_TOGGLE_ID);
+        if (gear) {
+            gear.style.left = pos.left + 'px';
+            gear.style.bottom = pos.bottom + 'px';
+        }
+        document.querySelectorAll('.uts-quick-toggle').forEach(chip => {
+            const idx = parseInt(chip.dataset.qtIndex || '0', 10);
+            chip.style.left = (pos.left + CLUSTER_CHIP_INSET) + 'px';
+            chip.style.bottom = (pos.bottom + CLUSTER_CHIP_GAP + idx * CLUSTER_CHIP_STEP) + 'px';
+        });
+    }
+    /** Turn one cluster member into a drag handle for the whole cluster. */
+    function makeClusterDraggable(el) {
+        if (!el || el.dataset.clusterDrag === '1') return;
+        el.dataset.clusterDrag = '1';
+        let pid = null, sx = 0, sy = 0, left0 = 0, bottom0 = 0, moved = false;
+        el.addEventListener('pointerdown', (e) => {
+            if (!e.isPrimary) return;
+            pid = e.pointerId; moved = false;
+            sx = e.clientX; sy = e.clientY;
+            // Measure the GEAR, never the handle: the chips are offset from it,
+            // and dragging a chip must not snap the cluster onto the chip.
+            const anchor = document.getElementById(PANEL_TOGGLE_ID) || el;
+            const r = anchor.getBoundingClientRect();
+            left0 = r.left;
+            bottom0 = window.innerHeight - r.bottom;
+            try { el.setPointerCapture(pid); } catch (err) {}
+        });
+        el.addEventListener('pointermove', (e) => {
+            if (pid === null || e.pointerId !== pid) return;
+            const ddx = e.clientX - sx, ddy = e.clientY - sy;
+            if (!moved && Math.abs(ddx) < CLUSTER_DRAG_SLOP && Math.abs(ddy) < CLUSTER_DRAG_SLOP) return;
+            moved = true;
+            e.preventDefault();
+            const pos = clampFloatPos(left0 + ddx, bottom0 - ddy);   // y is inverted: bottom-anchored
+            saveFloatPos(pos.left, pos.bottom);
+            applyFloatPos();
+        });
+        const endDrag = () => {
+            if (pid === null) return;
+            try { el.releasePointerCapture(pid); } catch (err) {}
+            pid = null;
+            if (moved) clusterDragUntil = Date.now() + 350;
+        };
+        el.addEventListener('pointerup', endDrag);
+        el.addEventListener('pointercancel', endDrag);
+    }
+    /** True while the click being handled is really the tail of a drag. */
+    function swallowedByDrag() {
+        return Date.now() < clusterDragUntil;
+    }
+    let clusterReflowBound = false;
+    function bindClusterReflow() {
+        if (clusterReflowBound) return;
+        clusterReflowBound = true;
+        // Resizing the window can leave a dragged cluster off screen.
+        window.addEventListener('resize', applyFloatPos);
     }
 
     /** Build a short, user-friendly label for the quick-toggle button —
@@ -345,10 +460,16 @@
                 btn.id = btnId;
                 btn.className = 'uts-quick-toggle';
                 btn.innerHTML = '<span class="uts-qt-dot"></span><span class="uts-qt-label"></span>';
-                btn.addEventListener('click', () => quickToggleClick(tool));
+                btn.addEventListener('click', () => {
+                    if (swallowedByDrag()) return;   // this "click" ended a drag
+                    quickToggleClick(tool);
+                });
+                makeClusterDraggable(btn);
                 document.body.appendChild(btn);
             }
             // Stack above the ⚙ control panel button (bottom: 16px, ~38px tall).
+            // applyFloatPos() overrides both edges once the cluster is dragged.
+            btn.dataset.qtIndex = String(idx);
             btn.style.bottom = (16 + 44 + idx * 36) + 'px';
             const enabled = isEnabled(tool);
             btn.classList.toggle('on', enabled);
@@ -361,6 +482,10 @@
         document.querySelectorAll('.uts-quick-toggle').forEach(b => {
             if (!seen.has(b.id)) b.remove();
         });
+        // Re-seat the cluster: the chip count just changed, which changes both
+        // the stack height the clamp works from and every chip's offset.
+        applyFloatPos();
+        bindClusterReflow();
     }
 
     /** Click handler for a quick-toggle button. Mirrors the control-panel
@@ -1501,8 +1626,13 @@
         panel.innerHTML = body;
         document.body.appendChild(panel);
         document.body.appendChild(toggle);
+        // The gear is the cluster's anchor and its main drag handle.
+        makeClusterDraggable(toggle);
+        applyFloatPos();
+        bindClusterReflow();
 
         toggle.onclick = () => {
+            if (swallowedByDrag()) return;   // this "click" ended a drag
             const willShow = panel.classList.contains('hidden');
             panel.classList.toggle('hidden', !willShow);
             try { localStorage.setItem(PANEL_OPEN_KEY, willShow ? '1' : '0'); } catch {}

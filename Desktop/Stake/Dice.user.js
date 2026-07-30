@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Stake Dice — Desktop
 // @namespace    http://tampermonkey.net/
-// @version      3.33
+// @version      3.34
 // @description  Standalone single-tool build, extracted from the unified bundle.
 // @author       .
 // @match        https://stake.com/*
@@ -14,6 +14,7 @@
 // @match        https://stake.bz/*
 // @match        https://stake.us/*
 // @match        https://stake.pet/*
+// @match        https://stake.jp/*
 // @grant        GM_addStyle
 // @grant        unsafeWindow
 // @run-at       document-start
@@ -23,7 +24,7 @@
 (function () {
     'use strict';
 
-    console.log('%cStake Dice — Desktop — standalone build v3.33', 'color:#17c7b8;font-weight:800;font-size:13px');
+    console.log('%cStake Dice — Desktop — standalone build v3.34', 'color:#17c7b8;font-weight:800;font-size:13px');
 
     /* =========================================================
        PRE-STITCH UI HIDER
@@ -234,6 +235,10 @@
     const SETTINGS_KEY    = '__stake_nuts_unified_tools_v1__';
     const PANEL_POS_KEY   = '__stake_nuts_unified_panel_pos_v1__';
     const PANEL_OPEN_KEY  = '__stake_nuts_unified_panel_open_v1__';
+    // Where the user dragged the floating cluster (gear + quick-toggle chips).
+    // Declared up here with the other keys, not down beside the drag code, so
+    // nothing can read it before it exists.
+    const FLOAT_POS_KEY   = '__stake_nuts_unified_float_pos_v1__';
     const VISIBILITY_STYLE_ID = 'unified-tools-visibility-css';
 
     /** Read tool-enable settings from localStorage. */
@@ -487,6 +492,11 @@
                 display: inline-flex;
                 align-items: center;
                 gap: 6px;
+                /* The chip is a drag handle; on a touchscreen, touch-action
+                   manipulation scrolls the page instead of giving us
+                   pointermove. (No backticks in here — this block is inside a
+                   template literal.) */
+                touch-action: none;
             }
             .uts-quick-toggle.on {
                 background: linear-gradient(135deg, #10b981, #059669);
@@ -515,6 +525,112 @@
             }
         `;
         (document.head || document.documentElement).appendChild(style);
+    }
+
+    /* ---- Draggable floating cluster (gear + quick-toggle chips) -------------
+       Both were pinned to the bottom-left corner with no way to move them, and
+       that corner is where the dice tool's own controls sit — the chips landed
+       on top of Build Strategy with nothing the user could do about it. Hold and
+       drag any member now and the WHOLE cluster moves together, so the chips
+       keep their relation to the gear; the position is clamped to the viewport
+       and remembered across loads. A press only becomes a drag once the pointer
+       has travelled CLUSTER_DRAG_SLOP px, and the click the browser fires at the
+       end of a drag is swallowed for a moment — without that, dragging the Dice
+       chip out of the way would toggle the tool off. Until the cluster is dragged
+       for the first time nothing is written inline, so the CSS defaults stand.
+       Kept byte-identical in intent to the mobile bundle so the two behave the
+       same way. */
+    const CLUSTER_GEAR_SIZE  = 38;   // gear diameter, matches PANEL_CSS
+    const CLUSTER_CHIP_GAP   = 44;   // first chip clears the gear
+    const CLUSTER_CHIP_STEP  = 36;   // vertical pitch of the stacked chips
+    const CLUSTER_CHIP_INSET = 48;   // chips sit this far right of the gear's left edge
+    const CLUSTER_DRAG_SLOP  = 6;
+    let clusterDragUntil = 0;        // clicks before this instant are drag artefacts
+
+    function loadFloatPos() {
+        try {
+            const p = JSON.parse(localStorage.getItem(FLOAT_POS_KEY) || 'null');
+            return (p && typeof p.left === 'number' && typeof p.bottom === 'number') ? p : null;
+        } catch { return null; }
+    }
+    function saveFloatPos(left, bottom) {
+        try { localStorage.setItem(FLOAT_POS_KEY, JSON.stringify({ left, bottom })); } catch {}
+    }
+    /** Keep the whole stack on screen — its height grows with the chip count. */
+    function clampFloatPos(left, bottom) {
+        const chips = document.querySelectorAll('.uts-quick-toggle').length;
+        const width = CLUSTER_CHIP_INSET + 130;
+        const height = chips
+            ? CLUSTER_CHIP_GAP + chips * CLUSTER_CHIP_STEP
+            : CLUSTER_GEAR_SIZE;
+        return {
+            left: Math.max(0, Math.min(Math.max(0, window.innerWidth - width), left)),
+            bottom: Math.max(0, Math.min(Math.max(0, window.innerHeight - height), bottom))
+        };
+    }
+    /** Paint the saved position onto the gear and every chip. No-op until the
+     *  cluster has actually been dragged, so the default CSS corner stands. */
+    function applyFloatPos() {
+        const saved = loadFloatPos();
+        if (!saved) return;
+        const pos = clampFloatPos(saved.left, saved.bottom);
+        const gear = document.getElementById(PANEL_TOGGLE_ID);
+        if (gear) {
+            gear.style.left = pos.left + 'px';
+            gear.style.bottom = pos.bottom + 'px';
+        }
+        document.querySelectorAll('.uts-quick-toggle').forEach(chip => {
+            const idx = parseInt(chip.dataset.qtIndex || '0', 10);
+            chip.style.left = (pos.left + CLUSTER_CHIP_INSET) + 'px';
+            chip.style.bottom = (pos.bottom + CLUSTER_CHIP_GAP + idx * CLUSTER_CHIP_STEP) + 'px';
+        });
+    }
+    /** Turn one cluster member into a drag handle for the whole cluster. */
+    function makeClusterDraggable(el) {
+        if (!el || el.dataset.clusterDrag === '1') return;
+        el.dataset.clusterDrag = '1';
+        let pid = null, sx = 0, sy = 0, left0 = 0, bottom0 = 0, moved = false;
+        el.addEventListener('pointerdown', (e) => {
+            if (!e.isPrimary) return;
+            pid = e.pointerId; moved = false;
+            sx = e.clientX; sy = e.clientY;
+            // Measure the GEAR, never the handle: the chips are offset from it,
+            // and dragging a chip must not snap the cluster onto the chip.
+            const anchor = document.getElementById(PANEL_TOGGLE_ID) || el;
+            const r = anchor.getBoundingClientRect();
+            left0 = r.left;
+            bottom0 = window.innerHeight - r.bottom;
+            try { el.setPointerCapture(pid); } catch (err) {}
+        });
+        el.addEventListener('pointermove', (e) => {
+            if (pid === null || e.pointerId !== pid) return;
+            const ddx = e.clientX - sx, ddy = e.clientY - sy;
+            if (!moved && Math.abs(ddx) < CLUSTER_DRAG_SLOP && Math.abs(ddy) < CLUSTER_DRAG_SLOP) return;
+            moved = true;
+            e.preventDefault();
+            const pos = clampFloatPos(left0 + ddx, bottom0 - ddy);   // y is inverted: bottom-anchored
+            saveFloatPos(pos.left, pos.bottom);
+            applyFloatPos();
+        });
+        const endDrag = () => {
+            if (pid === null) return;
+            try { el.releasePointerCapture(pid); } catch (err) {}
+            pid = null;
+            if (moved) clusterDragUntil = Date.now() + 350;
+        };
+        el.addEventListener('pointerup', endDrag);
+        el.addEventListener('pointercancel', endDrag);
+    }
+    /** True while the click being handled is really the tail of a drag. */
+    function swallowedByDrag() {
+        return Date.now() < clusterDragUntil;
+    }
+    let clusterReflowBound = false;
+    function bindClusterReflow() {
+        if (clusterReflowBound) return;
+        clusterReflowBound = true;
+        // Resizing the window can leave a dragged cluster off screen.
+        window.addEventListener('resize', applyFloatPos);
     }
 
     /** Build a short, user-friendly label for the quick-toggle button —
@@ -551,10 +667,16 @@
                 btn.id = btnId;
                 btn.className = 'uts-quick-toggle';
                 btn.innerHTML = '<span class="uts-qt-dot"></span><span class="uts-qt-label"></span>';
-                btn.addEventListener('click', () => quickToggleClick(tool));
+                btn.addEventListener('click', () => {
+                    if (swallowedByDrag()) return;   // this "click" ended a drag
+                    quickToggleClick(tool);
+                });
+                makeClusterDraggable(btn);
                 document.body.appendChild(btn);
             }
             // Stack above the ⚙ control panel button (bottom: 16px, ~38px tall).
+            // applyFloatPos() overrides both edges once the cluster is dragged.
+            btn.dataset.qtIndex = String(idx);
             btn.style.bottom = (16 + 44 + idx * 36) + 'px';
             const enabled = isEnabled(tool);
             btn.classList.toggle('on', enabled);
@@ -567,6 +689,10 @@
         document.querySelectorAll('.uts-quick-toggle').forEach(b => {
             if (!seen.has(b.id)) b.remove();
         });
+        // Re-seat the cluster: the chip count just changed, which changes both
+        // the stack height the clamp works from and every chip's offset.
+        applyFloatPos();
+        bindClusterReflow();
     }
 
     /** Click handler for a quick-toggle button. Mirrors the control-panel
@@ -1462,7 +1588,6 @@ let ACTIVE_MODE = 'smart';
 
     function getUserSetMultiplier() {
         const isDice = window.location.pathname.toLowerCase().includes('/dice');
-        if (ACTIVE_MODE !== 'smart') return 2;
         if (isShuffle()) {
             // Shuffle's DiceGameFooter has two inputs both with id="betInfo"
             // (Multiplier and Chance) inside .InfoBetInput_inputContainer
@@ -2831,6 +2956,34 @@ Bets</span><span id="h-total-bets" class="hud-val">0</span></div>
         ctx.moveTo(0, zeroY); ctx.lineTo(width, zeroY);
         ctx.strokeStyle = 'rgba(255, 255, 255, 0.15)'; ctx.lineWidth = 1; ctx.setLineDash([4, 4]); ctx.stroke(); ctx.setLineDash([]);
     }
+    /* Keep Multiplier Performance honest in EVERY mode.
+       "1 in N" only means something measured against ONE payout, so the samples
+       must reset when the target changes — and the comparison that colours the
+       number needs the CURRENT target. Both used to live inside
+       updateBetAmount(), which returns early unless ACTIVE_MODE is 'smart' AND
+       the loop is running, so in Manual and IOW trackedMultiplier sat at its
+       initial 0 forever: the ratio accumulated across every payout the session
+       had touched, and `ratio <= (trackedMultiplier || 1)` painted the value red
+       however well the multiplier was actually running. Driven off the UI ticker
+       now, so it is mode-agnostic and works while stopped. */
+    const MULT_SETTLE_MS = 1200;
+    let pendingMult = 0, pendingMultSince = 0;
+    function syncTrackedMultiplier() {
+        const m = getUserSetMultiplier();
+        if (!isFinite(m) || m <= 1) return;                  // unreadable payout field
+        if (Math.abs(m - trackedMultiplier) < 1e-9) { pendingMultSince = 0; return; }
+        /* A new target has to hold still before it counts. The payout box is a
+           text input: retyping it passes through blank and half-typed values,
+           and the per-site readers answer those with their OWN default (1.01 on
+           Stake dice, 2 elsewhere) rather than with "unknown" — so resetting on
+           the way past would wipe the session's samples every time the field was
+           touched. Costs ~1.2s before a genuine change takes effect, during
+           which the colour still compares against the previous target. */
+        if (Math.abs(m - pendingMult) > 1e-9) { pendingMult = m; pendingMultSince = Date.now(); return; }
+        if (Date.now() - pendingMultSince < MULT_SETTLE_MS) return;
+        trackedMultiplier = m;
+        multGames = 0; multWins = 0; recentWins = [];
+    }
     /** Populate Multiplier Performance + Best/Worst Streaks for whichever
      *  mode is currently rendering them. Idempotent — silently skips any
      *  element id that's absent from the current HUD layout. */
@@ -2854,6 +3007,7 @@ Bets</span><span id="h-total-bets" class="hud-val">0</span></div>
     }
 
     function updateUI() {
+        syncTrackedMultiplier();
         const balance = getCurrentBalance();
         const profit = balance - initialBalance;
         const startBalEl = document.getElementById('h-start-bal'); if (startBalEl) startBalEl.textContent = initialBalance.toFixed(2);
@@ -2979,9 +3133,7 @@ Bets</span><span id="h-total-bets" class="hud-val">0</span></div>
         if (!input || !balance) return;
         if (initialBalance === 0) initialBalance = balance;
         sessionPeak = Math.max(sessionPeak, balance);
-        const currentMult = getUserSetMultiplier();
-        if (currentMult !== trackedMultiplier) { trackedMultiplier = currentMult; multGames = 0;
-        multWins = 0; recentWins = []; }
+        syncTrackedMultiplier();        // also on the UI ticker; idempotent
         const wins = betHistory.filter(Boolean).length;
         let progress = winsNeeded > 0 ? wins / winsNeeded : 0;
         if (lockAggressionState) {
@@ -4428,7 +4580,10 @@ self.onmessage = async (e) => {
         /* Easy Mode tab */
         #${PANEL_ID} .dt-easy-grid { display: grid; grid-template-columns: auto 1fr; gap: 9px 12px; align-items: center; }
         #${PANEL_ID} .dt-easy-cell { display: flex; align-items: center; gap: 6px; }
-        #${PANEL_ID} .dt-easy-cell .dt-in { width: 86px; }
+        /* Was 86px, sized to leave room for the old "Any" button beside it. With
+           the button gone the field takes that space, which the "e.g. 2.00"
+           placeholder needs to read in full. */
+        #${PANEL_ID} .dt-easy-cell .dt-in { width: 114px; }
         #${PANEL_ID} .dt-easy-meta { display: flex; align-items: center; gap: 10px; margin-top: 11px; flex-wrap: wrap; }
         #${PANEL_ID} .dt-easy-val { font-family: ui-monospace, monospace; color: var(--dt-label-fg); font-weight: 700; }
         #${PANEL_ID} .dt-easy-status { font-size: 11px; font-style: italic; color: color-mix(in srgb, var(--dt-fg) 55%, transparent); }
@@ -4734,9 +4889,10 @@ self.onmessage = async (e) => {
     }
 
     /* ---- Tab: Easy Mode — port of the desktop tool's Easy Mode tab.
-       Pin Multiplier and/or Win Increase % (or leave either on Any) and get
-       every whole-number combo; Loss Reset and Buffer % are outputs, worked
-       out automatically so pinned values are matched exactly. ---- */
+       Enter a Multiplier and get every whole-number combo; Win Increase %,
+       Loss Reset and Buffer % are outputs, worked out automatically so the
+       multiplier is matched exactly. The Multiplier is the tab's ONLY input, so
+       there is no "Any" any more — nothing would be left to sweep against. ---- */
     function buildEasyPanel() {
         return `
           <section class="dt-panel active" id="dt-panel-easy">
@@ -4745,8 +4901,13 @@ self.onmessage = async (e) => {
               <div class="dt-easy-grid">
                 <span class="dt-lbl">Multiplier:${helpBtn('Multiplier')}</span>
                 <span class="dt-easy-cell">
-                  <input type="text" inputmode="decimal" class="dt-in dt-entry" id="dt-easy_mult" value="Any">
-                  <button type="button" class="dt-btn dt-btn-small" id="dt-easy_mult_any" title="Reset this field back to Any">Any</button>
+                  <!-- Starts EMPTY with a prompt, not the word "Any". "Any" made
+                       sense when Win Increase % was pinnable too and either box
+                       could be left open to sweep; with Multiplier the only input
+                       there is nothing left to sweep against, so the search needs
+                       a number and the old value/reset button just advertised an
+                       option that does not exist. -->
+                  <input type="text" inputmode="decimal" class="dt-in dt-entry" id="dt-easy_mult" placeholder="e.g. 2.00">
                 </span>
               </div>
               <div class="dt-easy-meta">
@@ -5036,7 +5197,8 @@ self.onmessage = async (e) => {
     /* ===== EASY MODE ENGINE (port of the desktop tool's easy_tab) =====
        Pin Multiplier and/or Win Increase %; Loss Reset is enumerated up to
        the multiplier (cap 100) and Buffer % is solved so pinned values are
-       matched exactly. Multiplier on Any = reverse-calculator sweeps. */
+       matched exactly. With no Multiplier there is nothing to solve against, so
+       the search returns null and the tab asks for one. */
     const EASY_W_MAX = 500, EASY_L_SWEEP = 10, EASY_L_CAP = 100, EASY_BUF_MAX = 100;
     let easyRows = [], easySelectedIdx = -1, easySortCol = null, easySortAsc = true, easyTimer = null;
     const EASY_COLS = [
@@ -5074,6 +5236,9 @@ self.onmessage = async (e) => {
     }
     function easyParse(id, lo, hi) {
         const el = $(id); const t = el ? el.value.trim() : '';
+        // Empty = nothing pinned, which the caller turns into "enter a
+        // Multiplier to search". A leftover "Any" from a saved state reads the
+        // same way rather than as an error (applyStateToUI clears it too).
         if (!t || /^(any|all)$/i.test(t)) return { ok: true, v: null };
         const v = parseFloat(t);
         if (!Number.isFinite(v) || !(v > lo && v <= hi)) return { ok: false, v: null };
@@ -5092,7 +5257,7 @@ self.onmessage = async (e) => {
         easySelectedIdx = -1;
         if (!pm.ok || !pw.ok) {
             easyRows = []; body.innerHTML = ''; $('easy_count').textContent = '0';
-            $('easy_status').textContent = 'Check inputs - each box needs a number or Any.';
+            $('easy_status').textContent = 'Multiplier must be a number above 1.';
             return;
         }
         const rows = easyFindCombos(pm.v, pw.v);
@@ -6495,6 +6660,10 @@ self.onmessage = async (e) => {
         for (const p of ['opt_betdiv', 'opt_profit', 'opt_w', 'opt_l', 'opt_buf'])
             for (const s of ['from', 'to', 'step', 'values']) ids.push(p + '_' + s);
         for (const k of ids) if ($(k) && state[k] != null) $(k).value = state[k];
+        // Anyone who used the tool before now has "Any" saved for the Multiplier.
+        // Restoring that literal text would put the word straight back into the
+        // box the moment the panel opened, so drop it and let the placeholder show.
+        { const em = $('easy_mult'); if (em && /^(any|all)$/i.test(em.value.trim())) em.value = ''; }
         // Migrate legacy combined range strings ("50-100;step=5" / "25,30,40")
         // into the From/To/Step/Values fields the first time they're seen.
         for (const p of ['opt_betdiv', 'opt_profit', 'opt_w', 'opt_l', 'opt_buf']) {
@@ -6722,7 +6891,6 @@ self.onmessage = async (e) => {
 
         // Easy Mode
         $('easy_mult').addEventListener('input', () => { easySchedule(); saveState(); });
-        $('easy_mult_any').addEventListener('click', () => { $('easy_mult').value = 'Any'; easyRefresh(); saveState(); });
         $('easy_apply').addEventListener('click', easyBuildStrategy);
         document.getElementById('dt-easy_table').addEventListener('click', onEasyTableClick);
         easyRefresh();
@@ -6818,7 +6986,7 @@ self.onmessage = async (e) => {
             'https://staketr3.com/casino/games/dice*',
             'https://staketr4.com/casino/games/dice*',
             'https://stake.bz/casino/games/dice*',
-            'https://stake.pet/casino/games/dice*',
+            'https://stake.pet/casino/games/dice*', 'https://stake.jp/casino/games/dice*',
             'https://stake.com/casino/games/primedice*',
             'https://stake.us/casino/games/primedice*',
             'https://stake.bet/casino/games/primedice*',
@@ -6828,7 +6996,7 @@ self.onmessage = async (e) => {
             'https://staketr3.com/casino/games/primedice*',
             'https://staketr4.com/casino/games/primedice*',
             'https://stake.bz/casino/games/primedice*',
-            'https://stake.pet/casino/games/primedice*'
+            'https://stake.pet/casino/games/primedice*', 'https://stake.jp/casino/games/primedice*'
         ],
         runAt: 'document-start',
         defaultEnabled: true,
@@ -7084,8 +7252,13 @@ self.onmessage = async (e) => {
         panel.innerHTML = body;
         document.body.appendChild(panel);
         document.body.appendChild(toggle);
+        // The gear is the cluster's anchor and its main drag handle.
+        makeClusterDraggable(toggle);
+        applyFloatPos();
+        bindClusterReflow();
 
         toggle.onclick = () => {
+            if (swallowedByDrag()) return;   // this "click" ended a drag
             const willShow = panel.classList.contains('hidden');
             panel.classList.toggle('hidden', !willShow);
             try { localStorage.setItem(PANEL_OPEN_KEY, willShow ? '1' : '0'); } catch {}
@@ -8487,7 +8660,6 @@ ${SHUF} .dt-terms-def, ${SHUF} .dt-terms-text { color: #cfc4f0 !important; }` : 
                 '\n' +
                 'PARAMETERS\n' +
                 'Multiplier – The payout multiplier you want to play at. Every whole-number Win Increase % from 1-500 is searched against it, and Loss Reset and Buffer % are worked out automatically: loss reset runs up to the multiplier value (max 100) and the buffer absorbs the decimals so your multiplier is matched exactly.\n' +
-                'Any (button) – The small button next to the field resets it back to Any.\n' +
                 'Win Chance – The dice win chance implied by the multiplier (99 / multiplier) when it is pinned.\n' +
                 'Combos – How many parameter combinations are currently listed.\n' +
                 '\n' +
@@ -8495,7 +8667,7 @@ ${SHUF} .dt-terms-def, ${SHUF} .dt-terms-text { color: #cfc4f0 !important; }` : 
                 'Multiplier – The payout multiplier that combo produces (always your pinned value when Multiplier is set).\n' +
                 'Win Increase % – The win increase percentage you would enter in the game.\n' +
                 'Loss Reset – The number of losses before the bet resets to base.\n' +
-                'Buffer % – The buffer for that combo (solved to 2 decimals when left on Any).\n' +
+                'Buffer % – The buffer for that combo, solved to 2 decimals so the multiplier you entered is matched exactly.\n' +
                 'Reset Odds % – The chance that any given run of Loss Reset bets are all losses, triggering a bet reset.\n' +
                 '\n' +
                 'BUTTONS\n' +

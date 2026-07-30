@@ -52,6 +52,26 @@
         <!-- ============ Add new releases above this line (newest first) ============ -->
         <article class="release latest" data-reveal>
           <div class="release-head">
+            <span class="ver-badge">v3.34</span>
+            <span class="chip">Desktop</span>
+            <span class="ver-badge">v6.05</span>
+            <span class="chip">Mobile</span>
+            <span class="rel-date">July 29, 2026</span>
+          </div>
+          <h2 class="rel-title">Blackjack doubling, Mult Perf, and draggable buttons</h2>
+          <ul class="changes">
+            <li><span class="tag fixed">Fixed</span><span class="ctxt"><b>Perfect Blackjack</b> auto-play now doubles hard 9 and hard 10, splits 2,2 / 3,3 / 4,4, and plays a split as two hands. A hand's total was being mistaken for a single card, so those hands looked too short to double or split.</span></li>
+            <li><span class="tag fixed">Fixed</span><span class="ctxt"><b>Mult Perf</b> is accurate outside Smart mode. In Manual, IOW and Advanced IOW it had no target to measure against, so it read red and never reset when you changed payout.</span></li>
+            <li><span class="tag fixed">Fixed</span><span class="ctxt"><b>Mult Perf</b> added to the mobile <b>IOW</b> tab, with Streak W|L and Momentum.</span></li>
+            <li><span class="tag fixed">Fixed</span><span class="ctxt"><b>Advanced IOW</b> now reads the same stats on all three sites. On Nuts the tab was missing Streak (W|L), Mult Perf, Balance Target and Profit Stop on mobile, its Streak row never updated on desktop, and <b>Track per: Cycle</b> did nothing on mobile.</span></li>
+            <li><span class="tag fixed">Fixed</span><span class="ctxt"><b>Update</b> and <b>Conditions</b> in Advanced IOW on Nuts mobile were bare words &mdash; their styling was scoped to a container the buttons do not sit in, so none of it applied. Both now carry a background, border and accent colour, matching how desktop paints them.</span></li>
+            <li><span class="tag fixed">Fixed</span><span class="ctxt">Tools now load on <b>stake.jp</b>.</span></li>
+            <li><span class="tag changed">Changed</span><span class="ctxt">The floating &#9881; gear and its chips <b>drag anywhere</b> and stay put &mdash; they no longer sit on top of <b>Build Strategy</b>.</span></li>
+            <li><span class="tag changed">Changed</span><span class="ctxt"><b>Find New Strategy</b>: the Multiplier box no longer says <b>Any</b>. Enter a multiplier to see combos.</span></li>
+          </ul>
+        </article>
+        <article class="release" data-reveal>
+          <div class="release-head">
             <span class="ver-badge">v3.33</span>
             <span class="chip">Desktop</span>
             <span class="ver-badge">v6.04</span>

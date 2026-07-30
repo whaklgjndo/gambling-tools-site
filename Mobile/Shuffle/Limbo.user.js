@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Shuffle Limbo — Mobile
 // @namespace    http://tampermonkey.net/
-// @version      6.04
+// @version      6.05
 // @description  Standalone single-tool mobile build, extracted from the unified mobile bundle.
 // @author       .
 // @match        https://shuffle.com/*
@@ -14,7 +14,7 @@
 (function () {
     'use strict';
 
-    try { console.log('[Shuffle Limbo — Mobile] standalone build v6.04'); } catch (e) {}
+    try { console.log('[Shuffle Limbo — Mobile] standalone build v6.05'); } catch (e) {}
 
 
     try { console.log('[unified-mobile] boot v5.64 — DiceTool.exe replica UI for the dice tool (Calculator / Easy Mode / Strategy Finder / Results / Settings)'); } catch (e) {}
@@ -37,6 +37,10 @@
     const SETTINGS_KEY    = '__stake_nuts_unified_tools_v1__';
     const PANEL_POS_KEY   = '__stake_nuts_unified_panel_pos_v1__';
     const PANEL_OPEN_KEY  = '__stake_nuts_unified_panel_open_v1__';
+    // Where the user dragged the floating cluster (gear + quick-toggle chips).
+    // Declared up here with the other keys, not down beside the drag code, so
+    // nothing can read it before it exists.
+    const FLOAT_POS_KEY   = '__stake_nuts_unified_float_pos_v1__';
 
     function loadSettings() {
         try {
@@ -2126,7 +2130,6 @@
 
     function getUserSetMultiplier() {
         const isDice = isOnDicePage();
-        if (ACTIVE_MODE !== 'smart') return 2;
         if (isNuts()) {
             const inpTarget = document.querySelector('input[aria-label="payout selector"]');
             if (inpTarget) return parseFloat(inpTarget.value) || 2;
@@ -2388,6 +2391,21 @@
                     <div class="hud-stats hud-panel">
                         <div class="hud-statusline" id="h-target">base: 0.01 | W:0 | LS:0</div>
                         ${commonStatsHtml}
+                        <!-- Same three stats the Manual tab carries. IOW had no
+                             Mult Perf row at all, so the one stat this tool is
+                             most often judged on was invisible on mobile in the
+                             mode people actually run. Streaks and Momentum are
+                             tracked for every mode in handleBetResult(), so they
+                             are just as live here as they are under Manual. -->
+                        <div class="hud-stats-grid">
+                            <div class="stats-col-inner">
+                                <div class="hud-row"><span class="hud-label">Streak W|L</span><span id="h-streaks" class="hud-val">0/0|0/0</span></div>
+                                <div class="hud-row"><span class="hud-label">Momentum</span><span id="h-hot" class="hud-val">0/0</span></div>
+                            </div>
+                            <div class="stats-col-inner">
+                                <div class="hud-row"><span class="hud-label">Mult Perf</span><span id="h-mult-perf" class="hud-val">1 in 0.00</span></div>
+                            </div>
+                        </div>
                         ${metaRowHtml}
                     </div>
                     <div class="hud-graph-box"><canvas id="h-custom-graph"></canvas></div>
@@ -3518,14 +3536,25 @@
             -webkit-appearance: none !important; appearance: none !important; margin: 0 !important; display: none !important; }
         #ratchet-master-container #dt-panel-stats .dt-action-bar > button { flex: 1 1 46%; min-width: 96px; min-height: 36px;
             padding: 8px 6px; font-size: 11px; font-weight: 800; letter-spacing: 0.04em; border-radius: 6px; }
-        /* .hud-update-btn only ever had rules inside the Stake/Shuffle bridge CSS,
-           which never loads on Nuts — without this it renders as a bare gray
-           browser button. Accent outline (not a fill) so it reads as secondary to
-           START and needs no per-site ink colour: white-on-violet vs dark-on-cyan
-           would otherwise have to be split per theme. */
-        #ratchet-master-container #dt-panel-stats .dt-action-bar .hud-update-btn { background: transparent;
-            border: 1px solid var(--hud-green); color: var(--hud-green); cursor: pointer; text-transform: uppercase; }
-        #ratchet-master-container #dt-panel-stats .dt-action-bar .hud-update-btn:active { background: var(--hud-border-soft); }
+        /* .hud-update-btn is painted for Stake/Shuffle by the dice-tool bridge CSS,
+           which never loads on Nuts. This rule was meant to cover that — but it
+           was scoped to .dt-action-bar, and on Nuts the button lives in the
+           command bar (.hud-cmd-bar > .cmd-secondary). So it matched NOTHING:
+           .cmd-secondary > button sets geometry only, leaving UPDATE as bare text
+           with no background or border. RESET and O/U escaped that because their
+           paint (.hud-reset-btn / .hud-switch-ou-btn) is scoped to the HUD root
+           and matches wherever they sit — which is what these two now do.
+           Treatment mirrors what the DESKTOP bundle already does for this exact
+           button on this exact site — a tinted accent-a fill with an accent
+           border, so START keeps the solid accent to itself and the two are not
+           mistakable for each other. The tint is stronger than desktop's 8%:
+           that was what made it read as text on a phone. */
+        #ratchet-master-container.nuts-theme #dt-panel-stats .hud-update-btn {
+            background: rgba(25, 243, 255, 0.18); border: 1px solid rgba(25, 243, 255, 0.6);
+            color: var(--hud-green, #19f3ff); cursor: pointer; text-transform: uppercase;
+            box-shadow: 0 0 10px rgba(25, 243, 255, 0.18); }
+        #ratchet-master-container.nuts-theme #dt-panel-stats .hud-update-btn:active {
+            background: rgba(25, 243, 255, 0.34); color: #08121c; }
         #ratchet-master-container .cond-actionbar .btn-group > button { flex: 1 1 0; min-width: 0; min-height: 34px; padding: 7px 6px;
             font-size: 11px; font-weight: 800; letter-spacing: 0.04em; border-radius: 6px; }
         #ratchet-master-container .cond-actionbar .quick-btn { background: #071824; border: 1px solid #2f4553; color: #c9d1d9; border-radius: 3px; box-shadow: none;}
@@ -3659,11 +3688,20 @@
             font-size: 10px !important; font-weight: 800 !important; text-transform: uppercase !important;
             letter-spacing: 0.05em !important; }
         #ratchet-master-container:is(.shuffle-theme, .nuts-theme) .cond-empty { color: #a9b2c9 !important; }
-        /* Opener sits with the run controls and carries the condition count. */
-        #ratchet-master-container #dt-panel-stats .dt-action-bar .cond-open-btn { cursor: pointer;
-            background: rgba(255, 255, 255, 0.05); border: 1px solid var(--hud-border-soft, #2f4553);
-            color: var(--hud-green, #00ff9d); text-transform: uppercase; }
-        #ratchet-master-container #dt-panel-stats .dt-action-bar .cond-open-btn:active { background: var(--hud-border-soft, #2f4553); }
+        /* Opener sits with the run controls and carries the condition count.
+           Panel-scoped, NOT .dt-action-bar-scoped — see .hud-update-btn above:
+           this button lives in .hud-cmd-bar > .cmd-secondary, so the old selector
+           never matched and CONDITIONS rendered as bare text (a 5% white wash over
+           the panel was invisible in any case). Violet accent-b, the same choice
+           the desktop bundle makes for this button, so the three sit apart at a
+           glance: gradient START, cyan UPDATE, violet CONDITIONS. Literal violet
+           because the mobile bundle has no --hud-accent-b token. */
+        #ratchet-master-container #dt-panel-stats .cond-open-btn { cursor: pointer;
+            background: rgba(143, 99, 255, 0.2); border: 1px solid rgba(143, 99, 255, 0.6);
+            color: #c3adff; text-transform: uppercase;
+            box-shadow: 0 0 10px rgba(143, 99, 255, 0.16); }
+        #ratchet-master-container #dt-panel-stats .cond-open-btn:active {
+            background: rgba(143, 99, 255, 0.36); color: #fff; }
     `);
     function condDefaultRuntime() { return { count: 0, streak: 0, armed: true }; }
     function resetCondRuntime() { condRuntime = condBlocks.map(condDefaultRuntime); }
@@ -3898,16 +3936,41 @@
                         <span id="h-profit" class="hud-hero-val">0.00</span>
                         <span class="hud-hero-start">from <b id="h-start-bal">0.00</b></span>
                     </div>
+                    <!-- The SAME stats the Stake/Shuffle Advanced IOW deck shows,
+                         so the tab reads identically whichever site you are on.
+                         Start Bal and Profit/Loss are in the hero above; the rest
+                         of that deck's twelve rows are here, using the labels it
+                         uses ("Streak (W|L)", "Mult Perf", "Balance Target",
+                         "Profit Stop") rather than near-misses.
+
+                         Streak (W|L), Mult Perf, Balance Target and Profit Stop
+                         were missing entirely, and Wins / L streak with them — so
+                         when the status line stopped restating "wins and loss
+                         streak" on the grounds that "the stats deck already shows
+                         them", on Nuts mobile nothing did. updateUI()'s cond branch
+                         writes every id below.
+
+                         Wins / L streak are the PROGRESSION counters (wins since
+                         the bet last reset to base, current loss streak), the same
+                         pair desktop's Advanced IOW carries as a chip; they are
+                         plain rows here because the mobile bundle has no .cond-chip
+                         CSS and the row style is what the rest of this deck uses. -->
                     <div class="hud-stats-grid">
                         <div class="stats-col-inner">
                             <div class="hud-row"><span class="hud-label">Peak Bal</span><span id="h-peak-bal" class="hud-val" style="color:#00ff9d;">0.00</span></div>
                             <div class="hud-row"><span class="hud-label">Peak Profit</span><span id="h-high-profit" class="hud-val" style="color:#00ff9d;">0.00</span></div>
-                            <div class="hud-row"><span class="hud-label">RTP</span><span id="h-rtp" class="hud-val">100.00%</span></div>
+                            <div class="hud-row"><span class="hud-label">Session RTP</span><span id="h-rtp" class="hud-val">100.00%</span></div>
+                            <div class="hud-row"><span class="hud-label">Streak (W|L)</span><span id="h-streaks" class="hud-val">0/0 | 0/0</span></div>
+                            <div class="hud-row"><span class="hud-label">Balance Target</span><span id="h-stats-bal-target" class="hud-val">0.00</span></div>
+                            <div class="hud-row" title="Wins since the bet last reset to base — zeroes when the loss reset fires"><span class="hud-label">Wins</span><span id="h-stats-ctr-w" class="hud-val">0</span></div>
                         </div>
                         <div class="stats-col-inner">
-                            <div class="hud-row"><span class="hud-label">Bets</span><span id="h-total-bets" class="hud-val">0</span></div>
+                            <div class="hud-row"><span class="hud-label">Total Bets</span><span id="h-total-bets" class="hud-val">0</span></div>
                             <div class="hud-row"><span class="hud-label">Wagered</span><span id="h-wagered" class="hud-val">0.00</span></div>
-                            <div class="hud-row"><span class="hud-label">W / L</span><span id="h-wl" class="hud-val">0 / 0</span></div>
+                            <div class="hud-row"><span class="hud-label">Wins / Losses</span><span id="h-wl" class="hud-val">0 / 0</span></div>
+                            <div class="hud-row"><span class="hud-label">Mult Perf</span><span id="h-mult-perf" class="hud-val">1 in 0.00</span></div>
+                            <div class="hud-row"><span class="hud-label">Profit Stop</span><span id="h-stats-profit-stop" class="hud-val">0.00</span></div>
+                            <div class="hud-row" title="Current loss streak"><span class="hud-label">L streak</span><span id="h-stats-ctr-l" class="hud-val">0</span></div>
                         </div>
                     </div>
                     <div class="hud-meta-row">
@@ -4725,6 +4788,41 @@ ${MOB_NU} table.dt-stats td:first-child { color: #aab6c9 !important; }`;
         ctx.setLineDash([]);
     }
 
+    /* Keep Mult Perf honest in EVERY mode — Advanced IOW included.
+       "1 in N" only means something measured against ONE payout, so the samples
+       must reset when the target changes — and the comparison that colours the
+       number needs the CURRENT target. Both used to live inside
+       updateBetAmount(), which returns early unless ACTIVE_MODE is 'smart', the
+       loop is running, AND the HUD is not being driven by Advanced IOW
+       (dataset.toolsActive === '1' bails out by design, so the bet field is left
+       to the strategy editor) — and getUserSetMultiplier() itself hard-returned
+       2 outside Smart. Outside Smart, trackedMultiplier therefore sat at its
+       initial 0 forever: the ratio accumulated across every payout the session
+       had touched, and `ratio <= (trackedMultiplier || 1)` painted the value red
+       however well the multiplier was actually running — reported as "multi perf
+       is inaccurate on adv iow". Driven off the UI ticker now, so it is
+       mode-agnostic, survives toolsActive, and works while stopped. The Advanced
+       IOW stats deck reads the same figure through __iow_smart_publish__ (its
+       'multPerf' row goes red whenever trackedMultiplier is 0), so it is fixed
+       by the same change. */
+    const MULT_SETTLE_MS = 1200;
+    let pendingMult = 0, pendingMultSince = 0;
+    function syncTrackedMultiplier() {
+        const m = getUserSetMultiplier();
+        if (!isFinite(m) || m <= 1) return;                  // unreadable payout field
+        if (Math.abs(m - trackedMultiplier) < 1e-9) { pendingMultSince = 0; return; }
+        /* A new target has to hold still before it counts. The payout box is a
+           text input: retyping it passes through blank and half-typed values,
+           and the per-site readers answer those with their OWN default (1.01 on
+           Stake dice, 2 elsewhere) rather than with "unknown" — so resetting on
+           the way past would wipe the session's samples every time the field was
+           touched. Costs ~1.2s before a genuine change takes effect, during
+           which the colour still compares against the previous target. */
+        if (Math.abs(m - pendingMult) > 1e-9) { pendingMult = m; pendingMultSince = Date.now(); return; }
+        if (Date.now() - pendingMultSince < MULT_SETTLE_MS) return;
+        trackedMultiplier = m;
+        multGames = 0; multWins = 0; recentWins = [];
+    }
     function populateAdvancedStats() {
         const perfEl = document.getElementById('h-mult-perf');
         if (perfEl && multWins > 0) {
@@ -4748,6 +4846,7 @@ ${MOB_NU} table.dt-stats td:first-child { color: #aab6c9 !important; }`;
        UI UPDATER
        ============================================================ */
     function updateUI() {
+        syncTrackedMultiplier();
         const balance = getCurrentBalance();
         const profit = balance - initialBalance;
         const startBalEl = document.getElementById('h-start-bal');
@@ -4786,6 +4885,13 @@ ${MOB_NU} table.dt-stats td:first-child { color: #aab6c9 !important; }`;
         if (ACTIVE_MODE === 'iow') {
             const targetEl = document.getElementById('h-target');
             if (targetEl) targetEl.innerHTML = `base bet: ${formatCurrency(baseBet)} | Wins: <span style="color:#00ff9d">${counter}</span> | LossStreak: <span style="color:#f87171">${lossStreak}</span>`;
+            // Feed the Streak / Momentum rows the IOW tab now carries, exactly as
+            // the Smart and Manual branches do. populateAdvancedStats() below
+            // fills Mult Perf and the Best/Worst chips.
+            const streaksEl = document.getElementById('h-streaks');
+            if (streaksEl) streaksEl.innerHTML = `<span style="color:#00ff9d;">${curWinStreak}/${maxWinStreak}</span> | <span style="color:#f87171;">${curLossStreak}/${maxLossStreak}</span>`;
+            const hotEl = document.getElementById('h-hot');
+            if (hotEl) hotEl.textContent = `${betHistory.filter(Boolean).length}/${betHistory.length}`;
             populateAdvancedStats();
         } else if (ACTIVE_MODE === 'cond') {
             const targetEl = document.getElementById('h-target');
@@ -4806,6 +4912,51 @@ ${MOB_NU} table.dt-stats td:first-child { color: #aab6c9 !important; }`;
                 if (condNotice && Date.now() < condNotice.until) targetEl.innerHTML = condNotice.text;
                 else if (blindFor > 6000) targetEl.innerHTML = '<span style="color:#f87171">No bets detected — conditions are not advancing.</span>';
                 else targetEl.textContent = '';
+            }
+            /* Repaint the stat rows for the selected scope, exactly as the desktop
+               bundle's Advanced IOW does. The ids above were already written with
+               SESSION values at the top of updateUI, so this overwrite is what
+               makes "Track per = Cycle" mean anything — the selector was on the
+               mobile panel but nothing ever read it, so Cycle behaved like
+               Session while desktop and the Stake/Shuffle deck both honoured it. */
+            const sv = condStatsView();
+            const setTxt = (id, text, color) => {
+                const el = document.getElementById(id);
+                if (!el) return;
+                el.textContent = text;
+                if (color) el.style.color = color;
+            };
+            setTxt('h-start-bal', formatCurrency(sv.startBal));
+            setTxt('h-profit', formatCurrency(sv.profit),
+                sv.profit > 0 ? '#00ff9d' : (sv.profit < 0 ? '#f87171' : '#fff'));
+            setTxt('h-peak-bal', formatCurrency(sv.peakBal));
+            setTxt('h-high-profit', formatCurrency(sv.peakProfit));
+            setTxt('h-total-bets', String(sv.bets));
+            setTxt('h-wagered', formatCurrency(sv.wagered));
+            setTxt('h-rtp', sv.rtp.toFixed(2) + '%', sv.rtp >= 100 ? '#00ff9d' : '#f87171');
+            const wlEl2 = document.getElementById('h-wl');
+            if (wlEl2) wlEl2.innerHTML = `<span style="color:#00ff9d;">${sv.wins}</span> / <span style="color:#f87171;">${sv.losses}</span>`;
+            /* Streak (W|L) is session-wide like the other modes, not scoped. */
+            const condStreaks = document.getElementById('h-streaks');
+            if (condStreaks) condStreaks.innerHTML = `<span style="color:#00ff9d;">${curWinStreak}/${maxWinStreak}</span> | <span style="color:#f87171;">${curLossStreak}/${maxLossStreak}</span>`;
+            /* Progression counters: wins since the bet was last reset to base (so
+               it zeroes when the loss reset fires) and the current loss streak.
+               Session/cycle totals are the "W / L" row above. */
+            setTxt('h-stats-ctr-w', String(counter));
+            setTxt('h-stats-ctr-l', String(lossStreak), lossStreak > 0 ? '#f87171' : '#fff');
+            /* Balance Target / Profit Stop mirror the calculator's outputs, so they
+               follow the divisor + profit multiplier (and the live balance after an
+               UPDATE). Same source the Stake/Shuffle deck reads. */
+            const balTargetEl = document.getElementById('h-stats-bal-target');
+            const profStopEl = document.getElementById('h-stats-profit-stop');
+            if (balTargetEl || profStopEl) {
+                const fmtOut = id => {
+                    const el = document.getElementById(id);
+                    const n = el ? parseFloat(el.value) : NaN;
+                    return isFinite(n) ? formatCurrency(n) : '—';
+                };
+                if (balTargetEl) balTargetEl.textContent = fmtOut('dt-out_target');
+                if (profStopEl) profStopEl.textContent = fmtOut('dt-out_profit');
             }
             populateAdvancedStats();
         } else if (ACTIVE_MODE === 'smart') {
@@ -4892,13 +5043,7 @@ ${MOB_NU} table.dt-stats td:first-child { color: #aab6c9 !important; }`;
         if (!input || !balance) return;
         if (initialBalance === 0) initialBalance = balance;
         sessionPeak = Math.max(sessionPeak, balance);
-        const currentMult = getUserSetMultiplier();
-        if (currentMult !== trackedMultiplier) {
-            trackedMultiplier = currentMult;
-            multGames = 0;
-            multWins = 0;
-            recentWins = [];
-        }
+        syncTrackedMultiplier();        // also on the UI ticker; idempotent
         const wins = betHistory.filter(Boolean).length;
         let progress = winsNeeded > 0 ? wins / winsNeeded : 0;
         if (lockAggressionState) {
@@ -5856,7 +6001,10 @@ self.onmessage = async (e) => {
         /* Easy Mode tab */
         #${DT_PANEL_ID} .dt-easy-grid { display: grid; grid-template-columns: auto 1fr; gap: 8px 10px; align-items: center; }
         #${DT_PANEL_ID} .dt-easy-cell { display: flex; align-items: center; gap: 6px; }
-        #${DT_PANEL_ID} .dt-easy-cell .dt-in { width: 76px; }
+        /* Was 76px, sized to leave room for the old "Any" button beside it. With
+           the button gone the field takes that space, which the "e.g. 2.00"
+           placeholder needs to read in full. */
+        #${DT_PANEL_ID} .dt-easy-cell .dt-in { width: 104px; }
         #${DT_PANEL_ID} .dt-easy-meta { display: flex; align-items: center; gap: 9px; margin-top: 9px; flex-wrap: wrap; }
         #${DT_PANEL_ID} .dt-easy-val { font-family: ui-monospace, monospace; color: var(--dt-label-fg); font-weight: 700; }
         #${DT_PANEL_ID} .dt-easy-status { font-size: 10.5px; font-style: italic; color: color-mix(in srgb, var(--dt-fg) 55%, transparent); }
@@ -6098,9 +6246,10 @@ self.onmessage = async (e) => {
     }
 
     /* ---- Tab: Easy Mode — port of the desktop tool's Easy Mode tab.
-       Pin Multiplier and/or Win Increase % (or leave either on Any) and get
-       every whole-number combo; Loss Reset and Buffer % are outputs, worked
-       out automatically so pinned values are matched exactly. ---- */
+       Enter a Multiplier and get every whole-number combo; Win Increase %,
+       Loss Reset and Buffer % are outputs, worked out automatically so the
+       multiplier is matched exactly. The Multiplier is the tab's ONLY input, so
+       there is no "Any" any more — nothing would be left to sweep against. ---- */
     function dt_buildEasyPanel() {
         return `
           <section class="dt-panel active" id="dt-panel-easy">
@@ -6109,8 +6258,13 @@ self.onmessage = async (e) => {
               <div class="dt-easy-grid">
                 <span class="dt-lbl">Multiplier:${dt_helpBtn('Multiplier')}</span>
                 <span class="dt-easy-cell">
-                  <input type="text" inputmode="decimal" class="dt-in dt-entry" id="dt-easy_mult" value="Any">
-                  <button type="button" class="dt-btn dt-btn-small" id="dt-easy_mult_any" title="Reset this field back to Any">Any</button>
+                  <!-- Starts EMPTY with a prompt, not the word "Any". "Any" made
+                       sense when Win Increase % was pinnable too and either box
+                       could be left open to sweep; with Multiplier the only input
+                       there is nothing left to sweep against, so the search needs
+                       a number and the old value/reset button just advertised an
+                       option that does not exist. -->
+                  <input type="text" inputmode="decimal" class="dt-in dt-entry" id="dt-easy_mult" placeholder="e.g. 2.00">
                 </span>
               </div>
               <div class="dt-easy-meta">
@@ -6361,7 +6515,8 @@ self.onmessage = async (e) => {
     /* ===== EASY MODE ENGINE (port of the desktop tool's easy_tab) =====
        Pin Multiplier and/or Win Increase %; Loss Reset is enumerated up to
        the multiplier (cap 100) and Buffer % is solved so pinned values are
-       matched exactly. Multiplier on Any = reverse-calculator sweeps. */
+       matched exactly. With no Multiplier there is nothing to solve against, so
+       the search returns null and the tab asks for one. */
     const DT_EASY_W_MAX = 500, DT_EASY_L_SWEEP = 10, DT_EASY_L_CAP = 100, DT_EASY_BUF_MAX = 100;
     let dt_easyRows = [], dt_easySelectedIdx = -1, dt_easySortCol = null, dt_easySortAsc = true, dt_easyTimer = null;
     const DT_EASY_COLS = [
@@ -6399,6 +6554,9 @@ self.onmessage = async (e) => {
     }
     function dt_easyParse(id, lo, hi) {
         const el = $dt(id); const t = el ? el.value.trim() : '';
+        // Empty = nothing pinned, which the caller turns into "enter a
+        // Multiplier to search". A leftover "Any" from a saved state reads the
+        // same way rather than as an error (dt_applyStateToUI clears it too).
         if (!t || /^(any|all)$/i.test(t)) return { ok: true, v: null };
         const v = parseFloat(t);
         if (!Number.isFinite(v) || !(v > lo && v <= hi)) return { ok: false, v: null };
@@ -6417,7 +6575,7 @@ self.onmessage = async (e) => {
         dt_easySelectedIdx = -1;
         if (!pm.ok || !pw.ok) {
             dt_easyRows = []; body.innerHTML = ''; $dt('easy_count').textContent = '0';
-            $dt('easy_status').textContent = 'Check inputs - each box needs a number or Any.';
+            $dt('easy_status').textContent = 'Multiplier must be a number above 1.';
             return;
         }
         const rows = dt_easyFindCombos(pm.v, pw.v);
@@ -7503,6 +7661,10 @@ self.onmessage = async (e) => {
         for (const p of ['opt_betdiv', 'opt_profit', 'opt_w', 'opt_l', 'opt_buf'])
             for (const s of ['from', 'to', 'step', 'values']) ids.push(p + '_' + s);
         for (const k of ids) if ($dt(k) && dt_state[k] != null) $dt(k).value = dt_state[k];
+        // Anyone who used the tool before now has "Any" saved for the Multiplier.
+        // Restoring that literal text would put the word straight back into the
+        // box the moment the panel opened, so drop it and let the placeholder show.
+        { const em = $dt('easy_mult'); if (em && /^(any|all)$/i.test(em.value.trim())) em.value = ''; }
         // Migrate legacy combined range strings ("50-100;step=5" / "25,30,40")
         // into the From/To/Step/Values fields the first time they're seen.
         for (const p of ['opt_betdiv', 'opt_profit', 'opt_w', 'opt_l', 'opt_buf']) {
@@ -7615,7 +7777,6 @@ self.onmessage = async (e) => {
 
         // Easy Mode
         { const el = $dt('easy_mult'); if (el) el.addEventListener('input', () => { dt_easySchedule(); dt_saveState(); }); }
-        $dt('easy_mult_any').addEventListener('click', () => { $dt('easy_mult').value = 'Any'; dt_easyRefresh(); dt_saveState(); });
         $dt('easy_apply').addEventListener('click', dt_easyBuildStrategy);
         document.getElementById('dt-easy_table').addEventListener('click', dt_onEasyTableClick);
         dt_easyRefresh();
@@ -8738,7 +8899,6 @@ self.onmessage = async (e) => {
                 '\n' +
                 'PARAMETERS\n' +
                 'Multiplier – The payout multiplier you want to play at. Every whole-number Win Increase % from 1-500 is searched against it, and Loss Reset and Buffer % are worked out automatically: loss reset runs up to the multiplier value (max 100) and the buffer absorbs the decimals so your multiplier is matched exactly.\n' +
-                'Any (button) – The small button next to the field resets it back to Any.\n' +
                 'Win Chance – The dice win chance implied by the multiplier (99 / multiplier) when it is pinned.\n' +
                 'Combos – How many parameter combinations are currently listed.\n' +
                 '\n' +
@@ -8746,7 +8906,7 @@ self.onmessage = async (e) => {
                 'Multiplier – The payout multiplier that combo produces (always your pinned value when Multiplier is set).\n' +
                 'Win Increase % – The win increase percentage you would enter in the game.\n' +
                 'Loss Reset – The number of losses before the bet resets to base.\n' +
-                'Buffer % – The buffer for that combo (solved to 2 decimals when left on Any).\n' +
+                'Buffer % – The buffer for that combo, solved to 2 decimals so the multiplier you entered is matched exactly.\n' +
                 'Reset Odds % – The chance that any given run of Loss Reset bets are all losses, triggering a bet reset.\n' +
                 '\n' +
                 'BUTTONS\n' +
@@ -9442,7 +9602,11 @@ self.onmessage = async (e) => {
                 align-items: center;
                 gap: 6px;
                 -webkit-tap-highlight-color: transparent;
-                touch-action: manipulation;
+                /* none, not manipulation: the chip is a drag handle, and with
+                   manipulation a touch drag scrolls the page instead of
+                   delivering pointermove to us. (No backticks in here — this
+                   block is inside a template literal.) */
+                touch-action: none;
             }
             .uts-quick-toggle.on {
                 background: linear-gradient(135deg, #10b981, #059669);
@@ -9468,6 +9632,116 @@ self.onmessage = async (e) => {
             }
         `;
         (document.head || document.documentElement).appendChild(style);
+    }
+
+    /* ---- Draggable floating cluster (gear + quick-toggle chips) -------------
+       Both were pinned to the bottom-left corner with no way to move them, and
+       on mobile that corner is where the dice tool's own controls sit — the
+       chips landed on top of Build Strategy with nothing the user could do
+       about it ("the dice floating icon at bottom i cant like hold and drag
+       around / and it obfuscates the Build Strategy button").
+
+       Hold and drag any member now and the WHOLE cluster moves together, so the
+       chips keep their relation to the gear; the position is clamped to the
+       viewport and remembered across loads. A tap is still a tap: a press only
+       becomes a drag once the pointer has travelled DRAG_SLOP px, and the click
+       the browser fires at the end of a drag is swallowed for a moment — without
+       that, dragging the Dice chip out of the way would toggle the tool off.
+       Until the cluster is dragged for the first time nothing is written inline,
+       so the CSS defaults (including the safe-area insets) still apply. */
+    const CLUSTER_GEAR_SIZE  = 38;   // gear diameter, matches PANEL_CSS
+    const CLUSTER_CHIP_GAP   = 44;   // first chip clears the gear
+    const CLUSTER_CHIP_STEP  = 36;   // vertical pitch of the stacked chips
+    const CLUSTER_CHIP_INSET = 48;   // chips sit this far right of the gear's left edge
+    const CLUSTER_DRAG_SLOP  = 6;
+    let clusterDragUntil = 0;        // clicks before this instant are drag artefacts
+
+    function loadFloatPos() {
+        try {
+            const p = JSON.parse(localStorage.getItem(FLOAT_POS_KEY) || 'null');
+            return (p && typeof p.left === 'number' && typeof p.bottom === 'number') ? p : null;
+        } catch { return null; }
+    }
+    function saveFloatPos(left, bottom) {
+        try { localStorage.setItem(FLOAT_POS_KEY, JSON.stringify({ left, bottom })); } catch {}
+    }
+    /** Keep the whole stack on screen — its height grows with the chip count. */
+    function clampFloatPos(left, bottom) {
+        const chips = document.querySelectorAll('.uts-quick-toggle').length;
+        const width = CLUSTER_CHIP_INSET + 130;
+        const height = chips
+            ? CLUSTER_CHIP_GAP + chips * CLUSTER_CHIP_STEP
+            : CLUSTER_GEAR_SIZE;
+        return {
+            left: Math.max(0, Math.min(Math.max(0, window.innerWidth - width), left)),
+            bottom: Math.max(0, Math.min(Math.max(0, window.innerHeight - height), bottom))
+        };
+    }
+    /** Paint the saved position onto the gear and every chip. No-op until the
+     *  cluster has actually been dragged, so the default CSS keeps its
+     *  safe-area-aware corner placement. */
+    function applyFloatPos() {
+        const saved = loadFloatPos();
+        if (!saved) return;
+        const pos = clampFloatPos(saved.left, saved.bottom);
+        const gear = document.getElementById(PANEL_TOGGLE_ID);
+        if (gear) {
+            gear.style.left = pos.left + 'px';
+            gear.style.bottom = pos.bottom + 'px';
+        }
+        document.querySelectorAll('.uts-quick-toggle').forEach(chip => {
+            const idx = parseInt(chip.dataset.qtIndex || '0', 10);
+            chip.style.left = (pos.left + CLUSTER_CHIP_INSET) + 'px';
+            chip.style.bottom = (pos.bottom + CLUSTER_CHIP_GAP + idx * CLUSTER_CHIP_STEP) + 'px';
+        });
+    }
+    /** Turn one cluster member into a drag handle for the whole cluster. */
+    function makeClusterDraggable(el) {
+        if (!el || el.dataset.clusterDrag === '1') return;
+        el.dataset.clusterDrag = '1';
+        let pid = null, sx = 0, sy = 0, left0 = 0, bottom0 = 0, moved = false;
+        el.addEventListener('pointerdown', (e) => {
+            if (!e.isPrimary) return;
+            pid = e.pointerId; moved = false;
+            sx = e.clientX; sy = e.clientY;
+            // Measure the GEAR, never the handle: the chips are offset from it,
+            // and dragging a chip must not snap the cluster onto the chip.
+            const anchor = document.getElementById(PANEL_TOGGLE_ID) || el;
+            const r = anchor.getBoundingClientRect();
+            left0 = r.left;
+            bottom0 = window.innerHeight - r.bottom;
+            try { el.setPointerCapture(pid); } catch (err) {}
+        });
+        el.addEventListener('pointermove', (e) => {
+            if (pid === null || e.pointerId !== pid) return;
+            const ddx = e.clientX - sx, ddy = e.clientY - sy;
+            if (!moved && Math.abs(ddx) < CLUSTER_DRAG_SLOP && Math.abs(ddy) < CLUSTER_DRAG_SLOP) return;
+            moved = true;
+            e.preventDefault();
+            const pos = clampFloatPos(left0 + ddx, bottom0 - ddy);   // y is inverted: bottom-anchored
+            saveFloatPos(pos.left, pos.bottom);
+            applyFloatPos();
+        });
+        const endDrag = () => {
+            if (pid === null) return;
+            try { el.releasePointerCapture(pid); } catch (err) {}
+            pid = null;
+            if (moved) clusterDragUntil = Date.now() + 350;
+        };
+        el.addEventListener('pointerup', endDrag);
+        el.addEventListener('pointercancel', endDrag);
+    }
+    /** True while the click being handled is really the tail of a drag. */
+    function swallowedByDrag() {
+        return Date.now() < clusterDragUntil;
+    }
+    let clusterReflowBound = false;
+    function bindClusterReflow() {
+        if (clusterReflowBound) return;
+        clusterReflowBound = true;
+        // A rotate or a keyboard opening can leave a dragged cluster off screen.
+        window.addEventListener('resize', applyFloatPos);
+        window.addEventListener('orientationchange', applyFloatPos);
     }
 
     function currentGameQuickLabel() {
@@ -9512,10 +9786,16 @@ self.onmessage = async (e) => {
                 btn.id = btnId;
                 btn.className = 'uts-quick-toggle';
                 btn.innerHTML = '<span class="uts-qt-dot"></span><span class="uts-qt-label"></span>';
-                btn.addEventListener('click', () => quickToggleClick(tool));
+                btn.addEventListener('click', () => {
+                    if (swallowedByDrag()) return;   // this "click" ended a drag
+                    quickToggleClick(tool);
+                });
+                makeClusterDraggable(btn);
                 document.body.appendChild(btn);
             }
-            // Stack above the gear button (bottom: 16px, ~38px tall).
+            // Stack above the gear button (bottom: 16px, ~38px tall). applyFloatPos()
+            // overrides both edges in px once the cluster has been dragged.
+            btn.dataset.qtIndex = String(idx);
             btn.style.bottom = `calc(${16 + 44 + idx * 36}px + env(safe-area-inset-bottom))`;
             const enabled = isEnabled(tool);
             btn.classList.toggle('on', enabled);
@@ -9527,6 +9807,10 @@ self.onmessage = async (e) => {
         document.querySelectorAll('.uts-quick-toggle').forEach(b => {
             if (!seen.has(b.id)) b.remove();
         });
+        // Re-seat the cluster: the chip count just changed, which changes both
+        // the stack height the clamp works from and every chip's offset.
+        applyFloatPos();
+        bindClusterReflow();
     }
 
     function quickToggleClick(tool) {
@@ -9571,7 +9855,7 @@ self.onmessage = async (e) => {
         font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
         user-select: none; -webkit-user-select: none;
         -webkit-tap-highlight-color: transparent;
-        touch-action: manipulation;
+        touch-action: none;      /* drag handle — see .uts-quick-toggle */
         transition: transform 0.15s ease, box-shadow 0.15s ease;
         padding: 0;
     }
@@ -9803,8 +10087,13 @@ self.onmessage = async (e) => {
         panel.innerHTML = body;
         document.body.appendChild(panel);
         document.body.appendChild(toggle);
+        // The gear is the cluster's anchor and its main drag handle.
+        makeClusterDraggable(toggle);
+        applyFloatPos();
+        bindClusterReflow();
 
         toggle.onclick = () => {
+            if (swallowedByDrag()) return;   // this "click" ended a drag
             const willShow = panel.classList.contains('hidden');
             panel.classList.toggle('hidden', !willShow);
             try { localStorage.setItem(PANEL_OPEN_KEY, willShow ? '1' : '0'); } catch {}

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Stake Limbo — Desktop
 // @namespace    http://tampermonkey.net/
-// @version      3.33
+// @version      3.34
 // @description  Standalone single-tool build, extracted from the unified bundle.
 // @author       .
 // @match        https://stake.com/*
@@ -14,6 +14,7 @@
 // @match        https://stake.bz/*
 // @match        https://stake.us/*
 // @match        https://stake.pet/*
+// @match        https://stake.jp/*
 // @grant        GM_addStyle
 // @grant        unsafeWindow
 // @run-at       document-start
@@ -23,7 +24,7 @@
 (function () {
     'use strict';
 
-    console.log('%cStake Limbo — Desktop — standalone build v3.33', 'color:#17c7b8;font-weight:800;font-size:13px');
+    console.log('%cStake Limbo — Desktop — standalone build v3.34', 'color:#17c7b8;font-weight:800;font-size:13px');
 
     /* =========================================================
        IOW/SMART → STATS BRIDGE
@@ -202,6 +203,10 @@
     const SETTINGS_KEY    = '__stake_nuts_unified_tools_v1__';
     const PANEL_POS_KEY   = '__stake_nuts_unified_panel_pos_v1__';
     const PANEL_OPEN_KEY  = '__stake_nuts_unified_panel_open_v1__';
+    // Where the user dragged the floating cluster (gear + quick-toggle chips).
+    // Declared up here with the other keys, not down beside the drag code, so
+    // nothing can read it before it exists.
+    const FLOAT_POS_KEY   = '__stake_nuts_unified_float_pos_v1__';
     const VISIBILITY_STYLE_ID = 'unified-tools-visibility-css';
 
     /** Read tool-enable settings from localStorage. */
@@ -455,6 +460,11 @@
                 display: inline-flex;
                 align-items: center;
                 gap: 6px;
+                /* The chip is a drag handle; on a touchscreen, touch-action
+                   manipulation scrolls the page instead of giving us
+                   pointermove. (No backticks in here — this block is inside a
+                   template literal.) */
+                touch-action: none;
             }
             .uts-quick-toggle.on {
                 background: linear-gradient(135deg, #10b981, #059669);
@@ -483,6 +493,112 @@
             }
         `;
         (document.head || document.documentElement).appendChild(style);
+    }
+
+    /* ---- Draggable floating cluster (gear + quick-toggle chips) -------------
+       Both were pinned to the bottom-left corner with no way to move them, and
+       that corner is where the dice tool's own controls sit — the chips landed
+       on top of Build Strategy with nothing the user could do about it. Hold and
+       drag any member now and the WHOLE cluster moves together, so the chips
+       keep their relation to the gear; the position is clamped to the viewport
+       and remembered across loads. A press only becomes a drag once the pointer
+       has travelled CLUSTER_DRAG_SLOP px, and the click the browser fires at the
+       end of a drag is swallowed for a moment — without that, dragging the Dice
+       chip out of the way would toggle the tool off. Until the cluster is dragged
+       for the first time nothing is written inline, so the CSS defaults stand.
+       Kept byte-identical in intent to the mobile bundle so the two behave the
+       same way. */
+    const CLUSTER_GEAR_SIZE  = 38;   // gear diameter, matches PANEL_CSS
+    const CLUSTER_CHIP_GAP   = 44;   // first chip clears the gear
+    const CLUSTER_CHIP_STEP  = 36;   // vertical pitch of the stacked chips
+    const CLUSTER_CHIP_INSET = 48;   // chips sit this far right of the gear's left edge
+    const CLUSTER_DRAG_SLOP  = 6;
+    let clusterDragUntil = 0;        // clicks before this instant are drag artefacts
+
+    function loadFloatPos() {
+        try {
+            const p = JSON.parse(localStorage.getItem(FLOAT_POS_KEY) || 'null');
+            return (p && typeof p.left === 'number' && typeof p.bottom === 'number') ? p : null;
+        } catch { return null; }
+    }
+    function saveFloatPos(left, bottom) {
+        try { localStorage.setItem(FLOAT_POS_KEY, JSON.stringify({ left, bottom })); } catch {}
+    }
+    /** Keep the whole stack on screen — its height grows with the chip count. */
+    function clampFloatPos(left, bottom) {
+        const chips = document.querySelectorAll('.uts-quick-toggle').length;
+        const width = CLUSTER_CHIP_INSET + 130;
+        const height = chips
+            ? CLUSTER_CHIP_GAP + chips * CLUSTER_CHIP_STEP
+            : CLUSTER_GEAR_SIZE;
+        return {
+            left: Math.max(0, Math.min(Math.max(0, window.innerWidth - width), left)),
+            bottom: Math.max(0, Math.min(Math.max(0, window.innerHeight - height), bottom))
+        };
+    }
+    /** Paint the saved position onto the gear and every chip. No-op until the
+     *  cluster has actually been dragged, so the default CSS corner stands. */
+    function applyFloatPos() {
+        const saved = loadFloatPos();
+        if (!saved) return;
+        const pos = clampFloatPos(saved.left, saved.bottom);
+        const gear = document.getElementById(PANEL_TOGGLE_ID);
+        if (gear) {
+            gear.style.left = pos.left + 'px';
+            gear.style.bottom = pos.bottom + 'px';
+        }
+        document.querySelectorAll('.uts-quick-toggle').forEach(chip => {
+            const idx = parseInt(chip.dataset.qtIndex || '0', 10);
+            chip.style.left = (pos.left + CLUSTER_CHIP_INSET) + 'px';
+            chip.style.bottom = (pos.bottom + CLUSTER_CHIP_GAP + idx * CLUSTER_CHIP_STEP) + 'px';
+        });
+    }
+    /** Turn one cluster member into a drag handle for the whole cluster. */
+    function makeClusterDraggable(el) {
+        if (!el || el.dataset.clusterDrag === '1') return;
+        el.dataset.clusterDrag = '1';
+        let pid = null, sx = 0, sy = 0, left0 = 0, bottom0 = 0, moved = false;
+        el.addEventListener('pointerdown', (e) => {
+            if (!e.isPrimary) return;
+            pid = e.pointerId; moved = false;
+            sx = e.clientX; sy = e.clientY;
+            // Measure the GEAR, never the handle: the chips are offset from it,
+            // and dragging a chip must not snap the cluster onto the chip.
+            const anchor = document.getElementById(PANEL_TOGGLE_ID) || el;
+            const r = anchor.getBoundingClientRect();
+            left0 = r.left;
+            bottom0 = window.innerHeight - r.bottom;
+            try { el.setPointerCapture(pid); } catch (err) {}
+        });
+        el.addEventListener('pointermove', (e) => {
+            if (pid === null || e.pointerId !== pid) return;
+            const ddx = e.clientX - sx, ddy = e.clientY - sy;
+            if (!moved && Math.abs(ddx) < CLUSTER_DRAG_SLOP && Math.abs(ddy) < CLUSTER_DRAG_SLOP) return;
+            moved = true;
+            e.preventDefault();
+            const pos = clampFloatPos(left0 + ddx, bottom0 - ddy);   // y is inverted: bottom-anchored
+            saveFloatPos(pos.left, pos.bottom);
+            applyFloatPos();
+        });
+        const endDrag = () => {
+            if (pid === null) return;
+            try { el.releasePointerCapture(pid); } catch (err) {}
+            pid = null;
+            if (moved) clusterDragUntil = Date.now() + 350;
+        };
+        el.addEventListener('pointerup', endDrag);
+        el.addEventListener('pointercancel', endDrag);
+    }
+    /** True while the click being handled is really the tail of a drag. */
+    function swallowedByDrag() {
+        return Date.now() < clusterDragUntil;
+    }
+    let clusterReflowBound = false;
+    function bindClusterReflow() {
+        if (clusterReflowBound) return;
+        clusterReflowBound = true;
+        // Resizing the window can leave a dragged cluster off screen.
+        window.addEventListener('resize', applyFloatPos);
     }
 
     /** Build a short, user-friendly label for the quick-toggle button —
@@ -519,10 +635,16 @@
                 btn.id = btnId;
                 btn.className = 'uts-quick-toggle';
                 btn.innerHTML = '<span class="uts-qt-dot"></span><span class="uts-qt-label"></span>';
-                btn.addEventListener('click', () => quickToggleClick(tool));
+                btn.addEventListener('click', () => {
+                    if (swallowedByDrag()) return;   // this "click" ended a drag
+                    quickToggleClick(tool);
+                });
+                makeClusterDraggable(btn);
                 document.body.appendChild(btn);
             }
             // Stack above the ⚙ control panel button (bottom: 16px, ~38px tall).
+            // applyFloatPos() overrides both edges once the cluster is dragged.
+            btn.dataset.qtIndex = String(idx);
             btn.style.bottom = (16 + 44 + idx * 36) + 'px';
             const enabled = isEnabled(tool);
             btn.classList.toggle('on', enabled);
@@ -535,6 +657,10 @@
         document.querySelectorAll('.uts-quick-toggle').forEach(b => {
             if (!seen.has(b.id)) b.remove();
         });
+        // Re-seat the cluster: the chip count just changed, which changes both
+        // the stack height the clamp works from and every chip's offset.
+        applyFloatPos();
+        bindClusterReflow();
     }
 
     /** Click handler for a quick-toggle button. Mirrors the control-panel
@@ -1430,7 +1556,6 @@ let ACTIVE_MODE = 'smart';
 
     function getUserSetMultiplier() {
         const isDice = window.location.pathname.toLowerCase().includes('/dice');
-        if (ACTIVE_MODE !== 'smart') return 2;
         if (isShuffle()) {
             // Shuffle's DiceGameFooter has two inputs both with id="betInfo"
             // (Multiplier and Chance) inside .InfoBetInput_inputContainer
@@ -2799,6 +2924,34 @@ Bets</span><span id="h-total-bets" class="hud-val">0</span></div>
         ctx.moveTo(0, zeroY); ctx.lineTo(width, zeroY);
         ctx.strokeStyle = 'rgba(255, 255, 255, 0.15)'; ctx.lineWidth = 1; ctx.setLineDash([4, 4]); ctx.stroke(); ctx.setLineDash([]);
     }
+    /* Keep Multiplier Performance honest in EVERY mode.
+       "1 in N" only means something measured against ONE payout, so the samples
+       must reset when the target changes — and the comparison that colours the
+       number needs the CURRENT target. Both used to live inside
+       updateBetAmount(), which returns early unless ACTIVE_MODE is 'smart' AND
+       the loop is running, so in Manual and IOW trackedMultiplier sat at its
+       initial 0 forever: the ratio accumulated across every payout the session
+       had touched, and `ratio <= (trackedMultiplier || 1)` painted the value red
+       however well the multiplier was actually running. Driven off the UI ticker
+       now, so it is mode-agnostic and works while stopped. */
+    const MULT_SETTLE_MS = 1200;
+    let pendingMult = 0, pendingMultSince = 0;
+    function syncTrackedMultiplier() {
+        const m = getUserSetMultiplier();
+        if (!isFinite(m) || m <= 1) return;                  // unreadable payout field
+        if (Math.abs(m - trackedMultiplier) < 1e-9) { pendingMultSince = 0; return; }
+        /* A new target has to hold still before it counts. The payout box is a
+           text input: retyping it passes through blank and half-typed values,
+           and the per-site readers answer those with their OWN default (1.01 on
+           Stake dice, 2 elsewhere) rather than with "unknown" — so resetting on
+           the way past would wipe the session's samples every time the field was
+           touched. Costs ~1.2s before a genuine change takes effect, during
+           which the colour still compares against the previous target. */
+        if (Math.abs(m - pendingMult) > 1e-9) { pendingMult = m; pendingMultSince = Date.now(); return; }
+        if (Date.now() - pendingMultSince < MULT_SETTLE_MS) return;
+        trackedMultiplier = m;
+        multGames = 0; multWins = 0; recentWins = [];
+    }
     /** Populate Multiplier Performance + Best/Worst Streaks for whichever
      *  mode is currently rendering them. Idempotent — silently skips any
      *  element id that's absent from the current HUD layout. */
@@ -2822,6 +2975,7 @@ Bets</span><span id="h-total-bets" class="hud-val">0</span></div>
     }
 
     function updateUI() {
+        syncTrackedMultiplier();
         const balance = getCurrentBalance();
         const profit = balance - initialBalance;
         const startBalEl = document.getElementById('h-start-bal'); if (startBalEl) startBalEl.textContent = initialBalance.toFixed(2);
@@ -2947,9 +3101,7 @@ Bets</span><span id="h-total-bets" class="hud-val">0</span></div>
         if (!input || !balance) return;
         if (initialBalance === 0) initialBalance = balance;
         sessionPeak = Math.max(sessionPeak, balance);
-        const currentMult = getUserSetMultiplier();
-        if (currentMult !== trackedMultiplier) { trackedMultiplier = currentMult; multGames = 0;
-        multWins = 0; recentWins = []; }
+        syncTrackedMultiplier();        // also on the UI ticker; idempotent
         const wins = betHistory.filter(Boolean).length;
         let progress = winsNeeded > 0 ? wins / winsNeeded : 0;
         if (lockAggressionState) {
@@ -3410,8 +3562,13 @@ Bets</span><span id="h-total-bets" class="hud-val">0</span></div>
         panel.innerHTML = body;
         document.body.appendChild(panel);
         document.body.appendChild(toggle);
+        // The gear is the cluster's anchor and its main drag handle.
+        makeClusterDraggable(toggle);
+        applyFloatPos();
+        bindClusterReflow();
 
         toggle.onclick = () => {
+            if (swallowedByDrag()) return;   // this "click" ended a drag
             const willShow = panel.classList.contains('hidden');
             panel.classList.toggle('hidden', !willShow);
             try { localStorage.setItem(PANEL_OPEN_KEY, willShow ? '1' : '0'); } catch {}
@@ -4813,7 +4970,6 @@ ${SHUF} .dt-terms-def, ${SHUF} .dt-terms-text { color: #cfc4f0 !important; }` : 
                 '\n' +
                 'PARAMETERS\n' +
                 'Multiplier – The payout multiplier you want to play at. Every whole-number Win Increase % from 1-500 is searched against it, and Loss Reset and Buffer % are worked out automatically: loss reset runs up to the multiplier value (max 100) and the buffer absorbs the decimals so your multiplier is matched exactly.\n' +
-                'Any (button) – The small button next to the field resets it back to Any.\n' +
                 'Win Chance – The dice win chance implied by the multiplier (99 / multiplier) when it is pinned.\n' +
                 'Combos – How many parameter combinations are currently listed.\n' +
                 '\n' +
@@ -4821,7 +4977,7 @@ ${SHUF} .dt-terms-def, ${SHUF} .dt-terms-text { color: #cfc4f0 !important; }` : 
                 'Multiplier – The payout multiplier that combo produces (always your pinned value when Multiplier is set).\n' +
                 'Win Increase % – The win increase percentage you would enter in the game.\n' +
                 'Loss Reset – The number of losses before the bet resets to base.\n' +
-                'Buffer % – The buffer for that combo (solved to 2 decimals when left on Any).\n' +
+                'Buffer % – The buffer for that combo, solved to 2 decimals so the multiplier you entered is matched exactly.\n' +
                 'Reset Odds % – The chance that any given run of Loss Reset bets are all losses, triggering a bet reset.\n' +
                 '\n' +
                 'BUTTONS\n' +
