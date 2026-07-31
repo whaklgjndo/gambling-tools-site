@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mobile
 // @namespace    https://whaklgjndo.github.io/gambling-tools/
-// @version      6.05
+// @version      6.06
 // @description  .
 // @author       .
 // @match        https://stake.com/*
@@ -830,7 +830,82 @@
     const MAX_GRAPH_POINTS = 5000;
     const RAPID_BLOCKED_STOP_MS = 1500;
     const RAPID_STALL_STOP_MS = 4000;
+    /* Nuts needs a longer stall window than Stake/Shuffle. It is the one site
+       with no bet feed on mobile, so a bet is only "seen" via the socket frame
+       or a balance move; over cellular, with the roll animation in front of it,
+       4s is routinely just a slow round rather than a freeze. The guard is a
+       safety net for a genuinely dead loop, not a pace-keeper. */
+    const RAPID_STALL_STOP_MS_NUTS = 12000;
+    function stallStopMs() { return isNuts() ? RAPID_STALL_STOP_MS_NUTS : RAPID_STALL_STOP_MS; }
+    /* When the page last became visible again — see monitorRapidFireHealth. */
+    let rapidVisibleAgainAt = 0;
     const RAPID_CLICK_INTERVAL_MS = 180;
+
+    /* ============================================================
+       GAME SPEED (Nuts dice)
+       ------------------------------------------------------------
+       What actually paces autoplay is not our click loop — that already
+       fires the instant the site re-enables PLAY — it is the site's own roll
+       animation and settle delay, which run off setTimeout / setInterval /
+       requestAnimationFrame. Dividing those delays shortens the round.
+       This changes NOTHING about the wager, the odds or the result: the
+       outcome is decided server-side and merely displayed faster.
+
+       Two things make this safe to embed rather than run as a separate script:
+
+       1. The natives are captured HERE, at module scope, before any patch can
+          exist — and our own loops use the captured ones. Otherwise the patch
+          would also divide our click poll (180ms -> 18ms at 10x) and the HUD
+          ticker, burning phone battery for no gain and changing timing the
+          watchdogs were tuned against.
+       2. The wrapper is installed ONCE and reads the multiplier through a
+          variable, so changing speed never re-wraps an already-wrapped
+          function (which is how these hooks usually end up nested).
+       ============================================================ */
+    const NATIVE_SET_INTERVAL   = window.setInterval.bind(window);
+    const NATIVE_CLEAR_INTERVAL = window.clearInterval.bind(window);
+    const GAME_SPEED = 10;            // fixed; no setting, by design
+    let speedNatives = null;          // the originals, once the hook is installed
+    let speedActive = false;          // true ONLY while on Nuts dice
+
+    /** Nuts dice and nothing else. */
+    function speedSupported() { return isNuts() && isOnDicePage(); }
+
+    function installSpeedHook() {
+        if (speedNatives) return;
+        speedNatives = {
+            setTimeout: window.setTimeout,
+            setInterval: window.setInterval,
+            requestAnimationFrame: window.requestAnimationFrame
+        };
+        /* The divisor is read through speedActive on every call rather than
+           baked in. A hook can be installed but never safely REMOVED — the page
+           has already handed our wrapper to its own code — so "dice only" has to
+           mean "divides only while on dice". Navigating to another Nuts game
+           leaves the wrapper in place but back at 1:1. */
+        const div = () => (speedActive ? GAME_SPEED : 1);
+        window.setTimeout = function (fn, delay) {
+            const rest = Array.prototype.slice.call(arguments, 2);
+            return speedNatives.setTimeout.apply(window, [fn, (delay || 0) / div()].concat(rest));
+        };
+        window.setInterval = function (fn, delay) {
+            const rest = Array.prototype.slice.call(arguments, 2);
+            return speedNatives.setInterval.apply(window, [fn, (delay || 0) / div()].concat(rest));
+        };
+        /* Timestamp-driven animations advance by the clock they are handed, so
+           scaling the timestamp speeds those up the same way the delay divisor
+           speeds up timer-driven ones. */
+        window.requestAnimationFrame = function (cb) {
+            return speedNatives.requestAnimationFrame.call(window, function (ts) { cb(ts * div()); });
+        };
+    }
+    /** Called from the 600ms ticker, which runs on every page — buildHUD() does
+     *  not, so it cannot be the thing that turns the speed-up back off when you
+     *  navigate from dice to another Nuts game. */
+    function refreshGameSpeed() {
+        speedActive = speedSupported();
+        if (speedActive) installSpeedHook();
+    }
     let aggressionLevel = 1.0;
     let historyWindow = 30;
     let safeDivisor = 300;
@@ -3486,7 +3561,11 @@
     let condSyncing = false;   // re-entry guard for the deck ↔ calculator binding
     let condAudioCtx = null;
     function condPlayWinSound() {
-        if (ACTIVE_MODE !== 'cond') return;
+        /* ACTIVE_MODE is not persisted, but nuts.gg is an SPA: navigating from
+           dice to another game keeps the same JS context, so the mode stayed
+           'cond' and every win in the NEXT game beeped with the dice tool's
+           sound. Bind the beep to actually being on the dice page. */
+        if (ACTIVE_MODE !== 'cond' || !isOnDicePage()) return;
         const vol = condVolume / 100;
         if (!vol) return;
         try {
@@ -4635,7 +4714,11 @@ ${MOB_NU} table.dt-stats td:first-child { color: #aab6c9 !important; }`;
         const pct = parseFloat(b.value);
         if (b.action === 'increaseBet') { if (isFinite(pct)) condSetBet(condCurBet * (1 + pct / 100)); }
         else if (b.action === 'decreaseBet') { if (isFinite(pct)) condSetBet(condCurBet * Math.max(0, 1 - pct / 100)); }
-        else if (b.action === 'resetBet') condSetBet(condBaseBet);
+        /* The Wins counter means "wins since the bet last reset to base" — the
+           label and tooltip both say so — so the action that returns the bet to
+           base has to zero it. Without this it only ever counted up, for the
+           whole session, and never reset no matter what the strategy did. */
+        else if (b.action === 'resetBet') { condSetBet(condBaseBet); counter = 0; }
         else if (b.action === 'setBet') {
             const amt = parseCurrencyInput(b.value, NaN);
             if (isFinite(amt) && amt > 0) condSetBet(amt);
@@ -4799,6 +4882,10 @@ ${MOB_NU} table.dt-stats td:first-child { color: #aab6c9 !important; }`;
                 const nativeBet = getCurrentBet();
                 if (isFinite(nativeBet) && nativeBet >= minBaseBet) condBaseBet = nativeBet;
             }
+            /* A new run starts the progression from scratch, so the Wins /
+               L streak counters start at 0 rather than carrying the previous
+               run's values into the deck. */
+            counter = 0; lossStreak = 0;
             resetCondRuntime(); condStartCycle(); condCurBet = condBaseBet; setBet(condBaseBet);
         }
         if (ACTIVE_MODE === 'manual') setBet(manualBet);
@@ -4807,7 +4894,7 @@ ${MOB_NU} table.dt-stats td:first-child { color: #aab6c9 !important; }`;
         // Mobile has no spacebar. Poll the play button for both Stake and
         // Shuffle — the button disables itself while a bet is in flight, so
         // the poll naturally rate-limits to the round cadence.
-        if (clickInterval) { clearInterval(clickInterval); clickInterval = null; }
+        if (clickInterval) { NATIVE_CLEAR_INTERVAL(clickInterval); clickInterval = null; }
         const tick = () => {
             if (!isRapidFiring) return;
             const btn = getPlayButton();
@@ -4815,7 +4902,11 @@ ${MOB_NU} table.dt-stats td:first-child { color: #aab6c9 !important; }`;
                 try { btn.click(); } catch (e) {}
             }
         };
-        clickInterval = setInterval(tick, RAPID_CLICK_INTERVAL_MS);
+        /* Native timer on purpose: the game-speed hook divides page delays, and
+           this poll must keep its own 180ms cadence. It is gated on the button
+           being enabled, so a faster game already means faster betting — a
+           faster POLL would only spin the CPU. */
+        clickInterval = NATIVE_SET_INTERVAL(tick, RAPID_CLICK_INTERVAL_MS);
         tick();
     }
 
@@ -4824,7 +4915,7 @@ ${MOB_NU} table.dt-stats td:first-child { color: #aab6c9 !important; }`;
         rapidBlockedSince = 0;
         rapidFireStartedAt = 0;
         lastObservedBetTime = 0;
-        if (clickInterval) { clearInterval(clickInterval); clickInterval = null; }
+        if (clickInterval) { NATIVE_CLEAR_INTERVAL(clickInterval); clickInterval = null; }
         updateUI();
     }
 
@@ -4857,6 +4948,23 @@ ${MOB_NU} table.dt-stats td:first-child { color: #aab6c9 !important; }`;
         if (!isRapidFiring) return;
         noteBalanceHeartbeat();
         const now = Date.now();
+        /* A backgrounded tab is not a stalled run. iOS throttles (and often
+           suspends) timers the moment you switch apps or lock the phone, so no
+           bet is observed while you are away and the stall check below would
+           stop the run the instant you came back — the most common flavour of
+           "it stops at random". Skip the check while hidden, and give the page a
+           full stall window to produce a bet again after it returns. */
+        if (document.hidden) { rapidVisibleAgainAt = 0; return; }
+        if (!rapidVisibleAgainAt) rapidVisibleAgainAt = now;
+        if (now - rapidVisibleAgainAt < stallStopMs()) return;
+        /* Advanced IOW is a dice-page mode. On an SPA navigation to another game
+           the run would otherwise keep going and the conditions engine would
+           size bets for a game it was never configured against. */
+        if (ACTIVE_MODE === 'cond' && !isOnDicePage()) {
+            stopRapidFire();
+            condNotice = { text: 'Stopped: left the dice page.', until: Date.now() + 5000 };
+            return;
+        }
         if (isShuffle() || isNuts()) {
             /* Stall-only safety on Shuffle AND Nuts. Both are driven by the
                click-poll, where the play button disables itself while a bet is in
@@ -4871,7 +4979,11 @@ ${MOB_NU} table.dt-stats td:first-child { color: #aab6c9 !important; }`;
                genuine freeze, because processNewBet() refreshes
                lastObservedBetTime on every observed bet. */
             const lastSeenBetTime = Math.max(lastObservedBetTime || rapidFireStartedAt, lastBalanceChangeAt);
-            if (lastSeenBetTime && now - lastSeenBetTime >= RAPID_STALL_STOP_MS) stopRapidFire();
+            if (lastSeenBetTime && now - lastSeenBetTime >= stallStopMs()) {
+                stopRapidFire();
+                if (ACTIVE_MODE === 'cond')
+                    condNotice = { text: 'Stopped: no bet seen for ' + Math.round(stallStopMs() / 1000) + 's.', until: Date.now() + 6000 };
+            }
             return;
         }
         const betBtn = getPlayButton();
@@ -4882,7 +4994,7 @@ ${MOB_NU} table.dt-stats td:first-child { color: #aab6c9 !important; }`;
         }
         rapidBlockedSince = 0;
         const lastSeenBetTime = Math.max(lastObservedBetTime || rapidFireStartedAt, lastBalanceChangeAt);
-        if (lastSeenBetTime && now - lastSeenBetTime >= RAPID_STALL_STOP_MS) stopRapidFire();
+        if (lastSeenBetTime && now - lastSeenBetTime >= stallStopMs()) stopRapidFire();
     }
 
     /* ============================================================
@@ -10702,14 +10814,24 @@ self.onmessage = async (e) => {
                 text-transform: uppercase; letter-spacing: 0.5px;
                 color: var(--kp-accent);
             }
-            #keno-preset-gui .kp-close {
+            /* Minimise + close share one styling rule and sit in a flex group,
+               so the header stays "title on the left, buttons on the right"
+               instead of space-between spreading three children apart. */
+            #keno-preset-gui .kp-actions { display: flex; align-items: center; gap: 2px; flex: 0 0 auto; }
+            #keno-preset-gui .kp-close,
+            #keno-preset-gui .kp-min {
                 background: none; border: none; color: #94a3b8;
                 cursor: pointer; padding: 4px 10px; font-size: 20px;
                 line-height: 1; border-radius: 6px; min-height: 32px;
                 -webkit-tap-highlight-color: transparent;
                 touch-action: manipulation;
             }
-            #keno-preset-gui .kp-close:active { color: #fff; background: rgba(255, 255, 255, 0.08); }
+            #keno-preset-gui .kp-close:active,
+            #keno-preset-gui .kp-min:active { color: #fff; background: rgba(255, 255, 255, 0.08); }
+            /* Minimised: the header alone remains, still draggable, so the panel
+               parks as a title bar instead of covering the board. */
+            #keno-preset-gui.kp-collapsed .kp-content { display: none; }
+            #keno-preset-gui.kp-collapsed .kp-header { border-bottom: none; border-radius: 12px; }
             #keno-preset-gui .kp-content {
                 padding: 12px; display: flex; flex-direction: column; gap: 10px;
             }
@@ -10774,7 +10896,10 @@ self.onmessage = async (e) => {
         gui.innerHTML = `
             <div class="kp-header">
                 <span class="kp-title">${TITLE}</span>
-                <button class="kp-close" id="kp-close" title="Close">×</button>
+                <span class="kp-actions">
+                    <button class="kp-min" id="kp-min" title="Minimise">−</button>
+                    <button class="kp-close" id="kp-close" title="Close">×</button>
+                </span>
             </div>
             <div class="kp-content">
                 <div class="kp-current" id="kp-current">Loading…</div>
@@ -10794,7 +10919,27 @@ self.onmessage = async (e) => {
         const saveBtn = gui.querySelector('#kp-save');
         const deleteBtn = gui.querySelector('#kp-delete');
         const closeBtn = gui.querySelector('#kp-close');
+        const minBtn = gui.querySelector('#kp-min');
         const header = gui.querySelector('.kp-header');
+
+        /* Minimise. Remembered across loads and SPA navigations: on a phone the
+           reason to collapse a panel is that it is sitting on top of the board,
+           and having it spring back open on the next hand defeats the point. */
+        const KP_MIN_KEY = 'keno-preset-minimised';
+        function applyKpCollapsed(on) {
+            gui.classList.toggle('kp-collapsed', on);
+            minBtn.textContent = on ? '+' : '−';
+            minBtn.title = on ? 'Restore' : 'Minimise';
+        }
+        let kpCollapsed = false;
+        try { kpCollapsed = localStorage.getItem(KP_MIN_KEY) === '1'; } catch (e) {}
+        applyKpCollapsed(kpCollapsed);
+        minBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            kpCollapsed = !kpCollapsed;
+            applyKpCollapsed(kpCollapsed);
+            try { localStorage.setItem(KP_MIN_KEY, kpCollapsed ? '1' : '0'); } catch (err) {}
+        });
 
         function renderPresets() {
             const list = loadPresets();
@@ -10899,7 +11044,7 @@ self.onmessage = async (e) => {
         /* ---- Pointer Events drag (touch + mouse, single code path) ---- */
         let dragging = false, dx = 0, dy = 0, pointerId = null;
         header.addEventListener('pointerdown', (e) => {
-            if (e.target.closest('.kp-close')) return;
+            if (e.target.closest('.kp-actions')) return;   // minimise / close, not a drag
             dragging = true;
             pointerId = e.pointerId;
             const rect = gui.getBoundingClientRect();
@@ -11074,7 +11219,17 @@ self.onmessage = async (e) => {
                    means what is deliberately NOT encoded here — only that the
                    colour changing is what matters. */
                 signature: function (b) {
-                    var cover = b.children && b.children[1];
+                    /* Count the SITE's own children only. Our heat tint is
+                       appended into the tile, so on a tile with a single real
+                       child index 1 landed on OUR span — the signature then
+                       tracked the colour we had just painted, and every repaint
+                       looked like the board changing by itself. */
+                    var kids = [], i, ch = b.children || [];
+                    for (i = 0; i < ch.length; i++) {
+                        if (ch[i].classList && ch[i].classList.contains('keno-hot-tint')) continue;
+                        kids.push(ch[i]);
+                    }
+                    var cover = kids[1];
                     var c = cover && rgb(cover);
                     return c ? c.join(',') : '';
                 },
@@ -11227,11 +11382,33 @@ self.onmessage = async (e) => {
             return out;
         }
 
-        var CLICK_GRACE = 1500;   // ms a changed tile is treated as your pick
+        /* A clicked tile is folded back into the baseline so your own picks are
+           never mistaken for a draw — but only for CLICK_GRACE after the click.
+           Reproduced against v6.05: once that window lapses, a tile you picked
+           whose signature changes afterwards is counted as part of a reveal, and
+           ten of them bank your own ticket as a draw. That is why the numbers
+           you chose came out hot: the heatmap was being fed your picks.
+
+           A pick can land outside the window in several ways — the site updating
+           the tile lazily or in a batched re-render, Pick hottest clicking ten
+           tiles in a row, a busy page delaying the sample, or (on Nuts, where the
+           signature is the cover's COMPUTED COLOUR) a CSS transition still moving
+           with no DOM mutation to schedule another sample.
+
+           Two defences rather than a longer timeout, because a timeout only ever
+           moves the edge:
+             · grace ends on STABILITY — keep folding while the signature is
+               still moving, stop only once it has held still past the window;
+             · a reveal made up entirely of tiles you clicked is refused outright
+               (see commitPending), which covers every route to this bug. */
+        var CLICK_GRACE = 1500;       // ms a changed tile is treated as your pick
+        var CLICK_GRACE_MAX = 8000;   // absolute cap, so a stuck tile cannot grace forever
         var baseline = null;      // signatures as of before the current reveal
         var pending = [];         // numbers seen to change during this reveal
         var recorded = false;     // this reveal is already banked
         var clickedAt = {};       // number -> when it was last clicked
+        var clickSig = {};        // number -> its signature at the previous sample
+        var clickedSinceArm = {}; // number -> clicked since the board last rested
 
         /* Both your picks and the tool's own (Pick hottest clicks for real) land
            here, so neither is ever mistaken for a drawn number. */
@@ -11242,7 +11419,10 @@ self.onmessage = async (e) => {
                 var all = tiles(), i;
                 for (i = 0; i < all.length; i++) {
                     if (all[i] === node || all[i].contains(node)) {
-                        clickedAt[SITE.number(all[i], i)] = Date.now();
+                        var num = SITE.number(all[i], i);
+                        clickedAt[num] = Date.now();
+                        clickedSinceArm[num] = true;
+                        delete clickSig[num];
                         return;
                     }
                 }
@@ -11257,6 +11437,18 @@ self.onmessage = async (e) => {
                missed are the ones you picked, whose flash is shortest. Banking
                7 of 10 is exactly how the Nuts heatmap ended up wrong. */
             if (nums.length !== SITE.expect) return;
+            /* Refuse a "draw" made up entirely of tiles you clicked. The game
+               generates the draw; the chance that all ten drawn numbers are
+               exactly the ten you picked is about one in 850 million, so this
+               costs nothing real and catches the whole family of bugs where a
+               selection is mistaken for a reveal — including any future one.
+               Not banked, and not marked recorded, so the genuine reveal that
+               follows is still captured. */
+            var allMine = true;
+            for (var mi = 0; mi < nums.length; mi++) {
+                if (!clickedSinceArm[nums[mi]]) { allMine = false; break; }
+            }
+            if (allMine) { recorded = false; return; }
             recordDraw(nums);
             render();
             paintTiles();
@@ -11270,17 +11462,28 @@ self.onmessage = async (e) => {
             var now = Date.now(), changed = [], k;
             for (k in sig) {
                 if (!Object.prototype.hasOwnProperty.call(sig, k)) continue;
-                if (clickedAt[k] && now - clickedAt[k] < CLICK_GRACE) {
-                    baseline[k] = sig[k];            // yours — keep the baseline current
-                    continue;
+                if (clickedAt[k]) {
+                    var age = now - clickedAt[k];
+                    /* Still moving? Keep folding. A signature that differs from
+                       the one read at the previous sample has not settled yet —
+                       a CSS transition mid-flight — and dropping grace here is
+                       exactly what turned a pick into a phantom draw. */
+                    var settled = clickSig[k] === sig[k];
+                    if (age < CLICK_GRACE || (!settled && age < CLICK_GRACE_MAX)) {
+                        baseline[k] = sig[k];        // yours — keep the baseline current
+                        clickSig[k] = sig[k];
+                        continue;
+                    }
+                    delete clickedAt[k];
+                    delete clickSig[k];
                 }
-                if (clickedAt[k]) delete clickedAt[k];
                 if (baseline[k] !== undefined && sig[k] !== baseline[k]) changed.push(+k);
             }
 
             if (!changed.length) {
                 // Back at the baseline: the round is over (or never started). Re-arm.
                 pending = []; recorded = false; baseline = sig;
+                clickedSinceArm = {};
                 return;
             }
             if (recorded) return;
@@ -11370,9 +11573,22 @@ self.onmessage = async (e) => {
                 ? 'rgba(255,' + Math.round(150 - 110 * a) + ',60,' + (0.16 + 0.42 * a).toFixed(3) + ')'
                 : 'rgba(60,' + Math.round(150 + 60 * a) + ',255,' + (0.14 + 0.34 * a).toFixed(3) + ')';
         }
+        /* Anything WE draw on the board has to be invisible to the capture. The
+           tint is a child of the tile and the observer watches the subtree, so
+           our own repaint fires a sample and can shift a signature. Re-read the
+           baseline immediately afterwards and nothing we did can read as a
+           reveal. "Reset draws" was the loud version of this: clearing forty
+           tints at once changed forty signatures in one go, and the next sample
+           banked a phantom draw straight after you cleared the history. */
+        function rearmCapture() {
+            pending = [];
+            recorded = false;
+            baseline = readSignatures();
+        }
         function clearTints() {
             var old = document.querySelectorAll('.keno-hot-tint'), i;
             for (i = 0; i < old.length; i++) old[i].remove();
+            rearmCapture();
         }
         function paintTiles() {
             if (!showHeat) { clearTints(); return; }
@@ -11395,6 +11611,7 @@ self.onmessage = async (e) => {
                 tint.style.background = col;
                 tint.textContent = showCounts ? String(heat.counts[n]) : '';
             }
+            rearmCapture();
         }
 
         /* ---------------------------------------------------------------
@@ -12043,13 +12260,23 @@ self.onmessage = async (e) => {
                 text-transform: uppercase; letter-spacing: 0.5px;
                 color: var(--mn-accent);
             }
-            #mines-auto-gui .mn-close {
+            /* Minimise + close share one styling rule and sit in a flex group,
+               so the header stays "title on the left, buttons on the right"
+               instead of space-between spreading three children apart. */
+            #mines-auto-gui .mn-actions { display: flex; align-items: center; gap: 2px; flex: 0 0 auto; }
+            #mines-auto-gui .mn-close,
+            #mines-auto-gui .mn-minbtn {
                 background: none; border: none; color: #94a3b8;
                 cursor: pointer; padding: 4px 10px; font-size: 20px;
                 line-height: 1; border-radius: 6px; min-height: 32px;
                 -webkit-tap-highlight-color: transparent; touch-action: manipulation;
             }
-            #mines-auto-gui .mn-close:active { color: #fff; background: rgba(255, 255, 255, 0.08); }
+            #mines-auto-gui .mn-close:active,
+            #mines-auto-gui .mn-minbtn:active { color: #fff; background: rgba(255, 255, 255, 0.08); }
+            /* Minimised: the header alone remains, still draggable, so the panel
+               parks as a title bar instead of covering the board. */
+            #mines-auto-gui.mn-collapsed .mn-content { display: none; }
+            #mines-auto-gui.mn-collapsed .mn-header { border-bottom: none; border-radius: 12px; }
             #mines-auto-gui .mn-content { padding: 12px; display: flex; flex-direction: column; gap: 8px; }
             #mines-auto-gui .mn-row { display: flex; gap: 6px; align-items: center; }
             #mines-auto-gui label {
@@ -12138,7 +12365,13 @@ self.onmessage = async (e) => {
         gui.innerHTML = `
             <div class="mn-header">
                 <span class="mn-title">${TITLE}</span>
-                <button class="mn-close" id="mn-close" title="Close">×</button>
+                <!-- id is mn-minimise, NOT mn-min: #mn-min is already the
+                     "Min picks" input, and a duplicate id would hand
+                     getElementById the button instead of the field. -->
+                <span class="mn-actions">
+                    <button class="mn-minbtn" id="mn-minimise" title="Minimise">−</button>
+                    <button class="mn-close" id="mn-close" title="Close">×</button>
+                </span>
             </div>
             <div class="mn-content">
                 <div class="mn-row">
@@ -12170,6 +12403,27 @@ self.onmessage = async (e) => {
         document.body.appendChild(gui);
 
         const header = gui.querySelector('.mn-header');
+
+        /* Minimise. Remembered across loads and SPA navigations: on a phone the
+           reason to collapse a panel is that it is sitting on top of the board,
+           and having it spring back open on the next round defeats the point. */
+        const MN_MIN_KEY = 'mines-auto-minimised';
+        const minimiseBtn = gui.querySelector('#mn-minimise');
+        function applyMnCollapsed(on) {
+            gui.classList.toggle('mn-collapsed', on);
+            minimiseBtn.textContent = on ? '+' : '−';
+            minimiseBtn.title = on ? 'Restore' : 'Minimise';
+        }
+        let mnCollapsed = false;
+        try { mnCollapsed = localStorage.getItem(MN_MIN_KEY) === '1'; } catch (e) {}
+        applyMnCollapsed(mnCollapsed);
+        minimiseBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            mnCollapsed = !mnCollapsed;
+            applyMnCollapsed(mnCollapsed);
+            try { localStorage.setItem(MN_MIN_KEY, mnCollapsed ? '1' : '0'); } catch (err) {}
+        });
+
         const minInp = gui.querySelector('#mn-min');
         const maxInp = gui.querySelector('#mn-max');
         const toggleBtn = gui.querySelector('#mn-toggle');
@@ -12312,7 +12566,7 @@ self.onmessage = async (e) => {
         /* ---- Pointer Events drag ---- */
         let dragging = false, dx = 0, dy = 0, pointerId = null;
         header.addEventListener('pointerdown', (e) => {
-            if (e.target.closest('.mn-close')) return;
+            if (e.target.closest('.mn-actions')) return;   // minimise / close, not a drag
             dragging = true;
             pointerId = e.pointerId;
             const rect = gui.getBoundingClientRect();
@@ -15421,9 +15675,27 @@ function tool_stake_7day_tracker() {
             return { st: st, hand: hand, info: info, up: up, dec: d, eq: eq };
         }
 
+        /* Identifies "the decision we last acted on", so autoplay presses once
+           per state rather than once per tick.
+
+           The cards alone are not enough. Split a pair and the two hands can end
+           up IDENTICAL — 9,A and 9,A against the same upcard — at which point
+           hand 2 hashed exactly like hand 1, the gate in autoTick read it as a
+           state already handled, and autoplay stopped dead on the second hand.
+           Reported from stake.us with precisely that pair.
+
+           So the hash also carries WHICH hand is being asked about, and how many
+           actions each hand has taken: standing on hand 1 advances its action
+           list, which makes the whole state provably different even where every
+           card matches. */
         function stateHash(st, hand) {
+            var idx = st.hands.indexOf(hand);
             return st.dealer.join(',') + '|' +
-                   st.hands.map(function (h) { return h.cards.join(''); }).join('/') + '|' +
+                   st.hands.map(function (h) {
+                       var acts = (h.raw && h.raw.actions) ? h.raw.actions.length : 0;
+                       return h.cards.join('') + ':' + acts;
+                   }).join('/') + '|' +
+                   idx + '|' +
                    hand.cards.join('');
         }
 
@@ -20519,6 +20791,9 @@ function tool_stake_7day_tracker() {
         // syncs native bet panel + game footer slots, paints stats + graph,
         // monitors rapid-fire health, runs Smart bet sizing.
         setInterval(() => {
+            /* Before the supported-page bail-out: this is what switches the
+               Nuts dice speed-up back off when you navigate to another game. */
+            try { refreshGameSpeed(); } catch (e) {}
             if (!isOnSupportedGamePage()) {
                 const existing = document.getElementById('ratchet-master-container');
                 if (existing) existing.remove();

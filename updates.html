@@ -52,6 +52,24 @@
         <!-- ============ Add new releases above this line (newest first) ============ -->
         <article class="release latest" data-reveal>
           <div class="release-head">
+            <span class="ver-badge">v3.35</span>
+            <span class="chip">Desktop</span>
+            <span class="ver-badge">v6.06</span>
+            <span class="chip">Mobile</span>
+            <span class="rel-date">July 29, 2026</span>
+          </div>
+          <h2 class="rel-title">Keno Hotspot fix, minimise buttons, and three Nuts dice fixes</h2>
+          <ul class="changes">
+            <li><span class="tag fixed">Fixed</span><span class="ctxt">The <b>Wins</b> counter in Advanced IOW never reset. It counts wins since the bet last went back to base, but nothing zeroed it &mdash; so it just climbed all session. It resets when the strategy returns the bet to base, and starts fresh on START.</span></li>
+            <li><span class="tag fixed">Fixed</span><span class="ctxt">The Advanced IOW <b>win beep followed you into other games</b>. Nuts is a single-page app, so leaving dice kept the mode alive and every win elsewhere played the dice tool's sound. The run now also stops when you leave the dice page, instead of sizing bets for a game it was not set up for.</span></li>
+            <li><span class="tag fixed">Fixed</span><span class="ctxt"><b>Nuts dice stopping at random.</b> Switching apps or locking the phone freezes the page's timers, so no bet could be seen and the safety check stopped the run the moment you came back. It now ignores time spent in the background, allows 12s rather than 4s on Nuts (which has no bet feed on mobile), and says why it stopped instead of going quiet.</span></li>
+            <li><span class="tag fixed">Fixed</span><span class="ctxt"><b>Perfect Blackjack</b> auto-play stalled on the second half of a split when both hands came out <b>identical</b> &mdash; split nines, both draw an ace, and it stands on the first then sits there. It presses once per game state, and two matching hands against the same upcard looked like the same state, so the second one read as already played. The state it tracks now includes which hand it is being asked about.</span></li>
+            <li><span class="tag fixed">Fixed</span><span class="ctxt"><b>Keno Hotspot</b> was counting the numbers <b>you picked</b> as numbers that had been drawn, so your own selection always came out hot &mdash; and <b>Pick hottest</b> fed on it, picking those same numbers again. Your picks are meant to be excluded, but only for a moment after you tap them; anything that made a tile update later than that got banked as a draw. A reveal made up entirely of tiles you tapped is now refused outright. <b>Reset draws</b> was caught up in the same fault from the other side: clearing the history repaints the board, and the tool was reading its own repaint as a draw. History recorded before this update still carries the error, so clear it to start clean.</span></li>
+            <li><span class="tag added">Added</span><span class="ctxt"><b>Keno</b> and <b>Mines</b> panels now have a <b>minimise</b> button beside the close button. Tap it and the panel folds down to its title bar &mdash; still draggable, still there &mdash; instead of sitting on the board. It stays minimised across page loads, and tapping it again brings it back. (Perfect Blackjack already had one.)</span></li>
+          </ul>
+        </article>
+        <article class="release" data-reveal>
+          <div class="release-head">
             <span class="ver-badge">v3.34</span>
             <span class="chip">Desktop</span>
             <span class="ver-badge">v6.05</span>

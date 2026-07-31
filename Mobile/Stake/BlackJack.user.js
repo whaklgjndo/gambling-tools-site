@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Stake Blackjack — Mobile
 // @namespace    http://tampermonkey.net/
-// @version      6.05
+// @version      6.06
 // @description  Standalone single-tool mobile build, extracted from the unified mobile bundle.
 // @author       .
 // @match        https://stake.com/*
@@ -23,7 +23,7 @@
 (function () {
     'use strict';
 
-    try { console.log('[Stake Blackjack — Mobile] standalone build v6.05'); } catch (e) {}
+    try { console.log('[Stake Blackjack — Mobile] standalone build v6.06'); } catch (e) {}
 
 
     try { console.log('[unified-mobile] boot v5.64 — DiceTool.exe replica UI for the dice tool (Calculator / Easy Mode / Strategy Finder / Results / Settings)'); } catch (e) {}
@@ -2386,9 +2386,27 @@
             return { st: st, hand: hand, info: info, up: up, dec: d, eq: eq };
         }
 
+        /* Identifies "the decision we last acted on", so autoplay presses once
+           per state rather than once per tick.
+
+           The cards alone are not enough. Split a pair and the two hands can end
+           up IDENTICAL — 9,A and 9,A against the same upcard — at which point
+           hand 2 hashed exactly like hand 1, the gate in autoTick read it as a
+           state already handled, and autoplay stopped dead on the second hand.
+           Reported from stake.us with precisely that pair.
+
+           So the hash also carries WHICH hand is being asked about, and how many
+           actions each hand has taken: standing on hand 1 advances its action
+           list, which makes the whole state provably different even where every
+           card matches. */
         function stateHash(st, hand) {
+            var idx = st.hands.indexOf(hand);
             return st.dealer.join(',') + '|' +
-                   st.hands.map(function (h) { return h.cards.join(''); }).join('/') + '|' +
+                   st.hands.map(function (h) {
+                       var acts = (h.raw && h.raw.actions) ? h.raw.actions.length : 0;
+                       return h.cards.join('') + ':' + acts;
+                   }).join('/') + '|' +
+                   idx + '|' +
                    hand.cards.join('');
         }
 
@@ -3894,6 +3912,9 @@
         // syncs native bet panel + game footer slots, paints stats + graph,
         // monitors rapid-fire health, runs Smart bet sizing.
         setInterval(() => {
+            /* Before the supported-page bail-out: this is what switches the
+               Nuts dice speed-up back off when you navigate to another game. */
+            try { refreshGameSpeed(); } catch (e) {}
             if (!isOnSupportedGamePage()) {
                 const existing = document.getElementById('ratchet-master-container');
                 if (existing) existing.remove();
@@ -4006,6 +4027,7 @@
     function startObserver() {}
     function dt_init() {}
     function initNutsDiceBridge() {}
+    function refreshGameSpeed() {}
     function setupIowDiceIntegration() {}
     function buildHUD() {}
     function syncNativeHudElements() {}

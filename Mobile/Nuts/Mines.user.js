@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Nuts Mines — Mobile
 // @namespace    http://tampermonkey.net/
-// @version      6.05
+// @version      6.06
 // @description  Standalone single-tool mobile build, extracted from the unified mobile bundle.
 // @author       .
 // @match        https://nuts.gg/*
@@ -14,7 +14,7 @@
 (function () {
     'use strict';
 
-    try { console.log('[Nuts Mines — Mobile] standalone build v6.05'); } catch (e) {}
+    try { console.log('[Nuts Mines — Mobile] standalone build v6.06'); } catch (e) {}
 
 
     try { console.log('[unified-mobile] boot v5.64 — DiceTool.exe replica UI for the dice tool (Calculator / Easy Mode / Strategy Finder / Results / Settings)'); } catch (e) {}
@@ -1854,13 +1854,23 @@
                 text-transform: uppercase; letter-spacing: 0.5px;
                 color: var(--mn-accent);
             }
-            #mines-auto-gui .mn-close {
+            /* Minimise + close share one styling rule and sit in a flex group,
+               so the header stays "title on the left, buttons on the right"
+               instead of space-between spreading three children apart. */
+            #mines-auto-gui .mn-actions { display: flex; align-items: center; gap: 2px; flex: 0 0 auto; }
+            #mines-auto-gui .mn-close,
+            #mines-auto-gui .mn-minbtn {
                 background: none; border: none; color: #94a3b8;
                 cursor: pointer; padding: 4px 10px; font-size: 20px;
                 line-height: 1; border-radius: 6px; min-height: 32px;
                 -webkit-tap-highlight-color: transparent; touch-action: manipulation;
             }
-            #mines-auto-gui .mn-close:active { color: #fff; background: rgba(255, 255, 255, 0.08); }
+            #mines-auto-gui .mn-close:active,
+            #mines-auto-gui .mn-minbtn:active { color: #fff; background: rgba(255, 255, 255, 0.08); }
+            /* Minimised: the header alone remains, still draggable, so the panel
+               parks as a title bar instead of covering the board. */
+            #mines-auto-gui.mn-collapsed .mn-content { display: none; }
+            #mines-auto-gui.mn-collapsed .mn-header { border-bottom: none; border-radius: 12px; }
             #mines-auto-gui .mn-content { padding: 12px; display: flex; flex-direction: column; gap: 8px; }
             #mines-auto-gui .mn-row { display: flex; gap: 6px; align-items: center; }
             #mines-auto-gui label {
@@ -1949,7 +1959,13 @@
         gui.innerHTML = `
             <div class="mn-header">
                 <span class="mn-title">${TITLE}</span>
-                <button class="mn-close" id="mn-close" title="Close">×</button>
+                <!-- id is mn-minimise, NOT mn-min: #mn-min is already the
+                     "Min picks" input, and a duplicate id would hand
+                     getElementById the button instead of the field. -->
+                <span class="mn-actions">
+                    <button class="mn-minbtn" id="mn-minimise" title="Minimise">−</button>
+                    <button class="mn-close" id="mn-close" title="Close">×</button>
+                </span>
             </div>
             <div class="mn-content">
                 <div class="mn-row">
@@ -1981,6 +1997,27 @@
         document.body.appendChild(gui);
 
         const header = gui.querySelector('.mn-header');
+
+        /* Minimise. Remembered across loads and SPA navigations: on a phone the
+           reason to collapse a panel is that it is sitting on top of the board,
+           and having it spring back open on the next round defeats the point. */
+        const MN_MIN_KEY = 'mines-auto-minimised';
+        const minimiseBtn = gui.querySelector('#mn-minimise');
+        function applyMnCollapsed(on) {
+            gui.classList.toggle('mn-collapsed', on);
+            minimiseBtn.textContent = on ? '+' : '−';
+            minimiseBtn.title = on ? 'Restore' : 'Minimise';
+        }
+        let mnCollapsed = false;
+        try { mnCollapsed = localStorage.getItem(MN_MIN_KEY) === '1'; } catch (e) {}
+        applyMnCollapsed(mnCollapsed);
+        minimiseBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            mnCollapsed = !mnCollapsed;
+            applyMnCollapsed(mnCollapsed);
+            try { localStorage.setItem(MN_MIN_KEY, mnCollapsed ? '1' : '0'); } catch (err) {}
+        });
+
         const minInp = gui.querySelector('#mn-min');
         const maxInp = gui.querySelector('#mn-max');
         const toggleBtn = gui.querySelector('#mn-toggle');
@@ -2123,7 +2160,7 @@
         /* ---- Pointer Events drag ---- */
         let dragging = false, dx = 0, dy = 0, pointerId = null;
         header.addEventListener('pointerdown', (e) => {
-            if (e.target.closest('.mn-close')) return;
+            if (e.target.closest('.mn-actions')) return;   // minimise / close, not a drag
             dragging = true;
             pointerId = e.pointerId;
             const rect = gui.getBoundingClientRect();
@@ -2261,6 +2298,9 @@
         // syncs native bet panel + game footer slots, paints stats + graph,
         // monitors rapid-fire health, runs Smart bet sizing.
         setInterval(() => {
+            /* Before the supported-page bail-out: this is what switches the
+               Nuts dice speed-up back off when you navigate to another game. */
+            try { refreshGameSpeed(); } catch (e) {}
             if (!isOnSupportedGamePage()) {
                 const existing = document.getElementById('ratchet-master-container');
                 if (existing) existing.remove();
@@ -2373,6 +2413,7 @@
     function startObserver() {}
     function dt_init() {}
     function initNutsDiceBridge() {}
+    function refreshGameSpeed() {}
     function setupIowDiceIntegration() {}
     function buildHUD() {}
     function syncNativeHudElements() {}

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Shuffle Blackjack — Desktop
 // @namespace    http://tampermonkey.net/
-// @version      3.34
+// @version      3.35
 // @description  Standalone single-tool build, extracted from the unified bundle.
 // @author       .
 // @match        https://shuffle.com/*
@@ -15,7 +15,7 @@
 (function () {
     'use strict';
 
-    console.log('%cShuffle Blackjack — Desktop — standalone build v3.34', 'color:#17c7b8;font-weight:800;font-size:13px');
+    console.log('%cShuffle Blackjack — Desktop — standalone build v3.35', 'color:#17c7b8;font-weight:800;font-size:13px');
 
     /* =========================================================
        UNIFIED LOADER — STORAGE KEYS & SETTINGS
@@ -1521,9 +1521,27 @@
             return { st: st, hand: hand, info: info, up: up, dec: d, eq: eq };
         }
 
+        /* Identifies "the decision we last acted on", so autoplay presses once
+           per state rather than once per tick.
+
+           The cards alone are not enough. Split a pair and the two hands can end
+           up IDENTICAL — 9,A and 9,A against the same upcard — at which point
+           hand 2 hashed exactly like hand 1, the gate in autoTick read it as a
+           state already handled, and autoplay stopped dead on the second hand.
+           Reported from stake.us with precisely that pair.
+
+           So the hash also carries WHICH hand is being asked about, and how many
+           actions each hand has taken: standing on hand 1 advances its action
+           list, which makes the whole state provably different even where every
+           card matches. */
         function stateHash(st, hand) {
+            var idx = st.hands.indexOf(hand);
             return st.dealer.join(',') + '|' +
-                   st.hands.map(function (h) { return h.cards.join(''); }).join('/') + '|' +
+                   st.hands.map(function (h) {
+                       var acts = (h.raw && h.raw.actions) ? h.raw.actions.length : 0;
+                       return h.cards.join('') + ':' + acts;
+                   }).join('/') + '|' +
+                   idx + '|' +
                    hand.cards.join('');
         }
 

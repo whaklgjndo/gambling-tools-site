@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Shuffle Dice — Mobile
 // @namespace    http://tampermonkey.net/
-// @version      6.05
+// @version      6.06
 // @description  Standalone single-tool mobile build, extracted from the unified mobile bundle.
 // @author       .
 // @match        https://shuffle.com/*
@@ -14,7 +14,7 @@
 (function () {
     'use strict';
 
-    try { console.log('[Shuffle Dice — Mobile] standalone build v6.05'); } catch (e) {}
+    try { console.log('[Shuffle Dice — Mobile] standalone build v6.06'); } catch (e) {}
 
 
     try { console.log('[unified-mobile] boot v5.64 — DiceTool.exe replica UI for the dice tool (Calculator / Easy Mode / Strategy Finder / Results / Settings)'); } catch (e) {}
@@ -672,7 +672,82 @@
     const MAX_GRAPH_POINTS = 5000;
     const RAPID_BLOCKED_STOP_MS = 1500;
     const RAPID_STALL_STOP_MS = 4000;
+    /* Nuts needs a longer stall window than Stake/Shuffle. It is the one site
+       with no bet feed on mobile, so a bet is only "seen" via the socket frame
+       or a balance move; over cellular, with the roll animation in front of it,
+       4s is routinely just a slow round rather than a freeze. The guard is a
+       safety net for a genuinely dead loop, not a pace-keeper. */
+    const RAPID_STALL_STOP_MS_NUTS = 12000;
+    function stallStopMs() { return isNuts() ? RAPID_STALL_STOP_MS_NUTS : RAPID_STALL_STOP_MS; }
+    /* When the page last became visible again — see monitorRapidFireHealth. */
+    let rapidVisibleAgainAt = 0;
     const RAPID_CLICK_INTERVAL_MS = 180;
+
+    /* ============================================================
+       GAME SPEED (Nuts dice)
+       ------------------------------------------------------------
+       What actually paces autoplay is not our click loop — that already
+       fires the instant the site re-enables PLAY — it is the site's own roll
+       animation and settle delay, which run off setTimeout / setInterval /
+       requestAnimationFrame. Dividing those delays shortens the round.
+       This changes NOTHING about the wager, the odds or the result: the
+       outcome is decided server-side and merely displayed faster.
+
+       Two things make this safe to embed rather than run as a separate script:
+
+       1. The natives are captured HERE, at module scope, before any patch can
+          exist — and our own loops use the captured ones. Otherwise the patch
+          would also divide our click poll (180ms -> 18ms at 10x) and the HUD
+          ticker, burning phone battery for no gain and changing timing the
+          watchdogs were tuned against.
+       2. The wrapper is installed ONCE and reads the multiplier through a
+          variable, so changing speed never re-wraps an already-wrapped
+          function (which is how these hooks usually end up nested).
+       ============================================================ */
+    const NATIVE_SET_INTERVAL   = window.setInterval.bind(window);
+    const NATIVE_CLEAR_INTERVAL = window.clearInterval.bind(window);
+    const GAME_SPEED = 10;            // fixed; no setting, by design
+    let speedNatives = null;          // the originals, once the hook is installed
+    let speedActive = false;          // true ONLY while on Nuts dice
+
+    /** Nuts dice and nothing else. */
+    function speedSupported() { return isNuts() && isOnDicePage(); }
+
+    function installSpeedHook() {
+        if (speedNatives) return;
+        speedNatives = {
+            setTimeout: window.setTimeout,
+            setInterval: window.setInterval,
+            requestAnimationFrame: window.requestAnimationFrame
+        };
+        /* The divisor is read through speedActive on every call rather than
+           baked in. A hook can be installed but never safely REMOVED — the page
+           has already handed our wrapper to its own code — so "dice only" has to
+           mean "divides only while on dice". Navigating to another Nuts game
+           leaves the wrapper in place but back at 1:1. */
+        const div = () => (speedActive ? GAME_SPEED : 1);
+        window.setTimeout = function (fn, delay) {
+            const rest = Array.prototype.slice.call(arguments, 2);
+            return speedNatives.setTimeout.apply(window, [fn, (delay || 0) / div()].concat(rest));
+        };
+        window.setInterval = function (fn, delay) {
+            const rest = Array.prototype.slice.call(arguments, 2);
+            return speedNatives.setInterval.apply(window, [fn, (delay || 0) / div()].concat(rest));
+        };
+        /* Timestamp-driven animations advance by the clock they are handed, so
+           scaling the timestamp speeds those up the same way the delay divisor
+           speeds up timer-driven ones. */
+        window.requestAnimationFrame = function (cb) {
+            return speedNatives.requestAnimationFrame.call(window, function (ts) { cb(ts * div()); });
+        };
+    }
+    /** Called from the 600ms ticker, which runs on every page — buildHUD() does
+     *  not, so it cannot be the thing that turns the speed-up back off when you
+     *  navigate from dice to another Nuts game. */
+    function refreshGameSpeed() {
+        speedActive = speedSupported();
+        if (speedActive) installSpeedHook();
+    }
     let aggressionLevel = 1.0;
     let historyWindow = 30;
     let safeDivisor = 300;
@@ -3328,7 +3403,11 @@
     let condSyncing = false;   // re-entry guard for the deck ↔ calculator binding
     let condAudioCtx = null;
     function condPlayWinSound() {
-        if (ACTIVE_MODE !== 'cond') return;
+        /* ACTIVE_MODE is not persisted, but nuts.gg is an SPA: navigating from
+           dice to another game keeps the same JS context, so the mode stayed
+           'cond' and every win in the NEXT game beeped with the dice tool's
+           sound. Bind the beep to actually being on the dice page. */
+        if (ACTIVE_MODE !== 'cond' || !isOnDicePage()) return;
         const vol = condVolume / 100;
         if (!vol) return;
         try {
@@ -4477,7 +4556,11 @@ ${MOB_NU} table.dt-stats td:first-child { color: #aab6c9 !important; }`;
         const pct = parseFloat(b.value);
         if (b.action === 'increaseBet') { if (isFinite(pct)) condSetBet(condCurBet * (1 + pct / 100)); }
         else if (b.action === 'decreaseBet') { if (isFinite(pct)) condSetBet(condCurBet * Math.max(0, 1 - pct / 100)); }
-        else if (b.action === 'resetBet') condSetBet(condBaseBet);
+        /* The Wins counter means "wins since the bet last reset to base" — the
+           label and tooltip both say so — so the action that returns the bet to
+           base has to zero it. Without this it only ever counted up, for the
+           whole session, and never reset no matter what the strategy did. */
+        else if (b.action === 'resetBet') { condSetBet(condBaseBet); counter = 0; }
         else if (b.action === 'setBet') {
             const amt = parseCurrencyInput(b.value, NaN);
             if (isFinite(amt) && amt > 0) condSetBet(amt);
@@ -4641,6 +4724,10 @@ ${MOB_NU} table.dt-stats td:first-child { color: #aab6c9 !important; }`;
                 const nativeBet = getCurrentBet();
                 if (isFinite(nativeBet) && nativeBet >= minBaseBet) condBaseBet = nativeBet;
             }
+            /* A new run starts the progression from scratch, so the Wins /
+               L streak counters start at 0 rather than carrying the previous
+               run's values into the deck. */
+            counter = 0; lossStreak = 0;
             resetCondRuntime(); condStartCycle(); condCurBet = condBaseBet; setBet(condBaseBet);
         }
         if (ACTIVE_MODE === 'manual') setBet(manualBet);
@@ -4649,7 +4736,7 @@ ${MOB_NU} table.dt-stats td:first-child { color: #aab6c9 !important; }`;
         // Mobile has no spacebar. Poll the play button for both Stake and
         // Shuffle — the button disables itself while a bet is in flight, so
         // the poll naturally rate-limits to the round cadence.
-        if (clickInterval) { clearInterval(clickInterval); clickInterval = null; }
+        if (clickInterval) { NATIVE_CLEAR_INTERVAL(clickInterval); clickInterval = null; }
         const tick = () => {
             if (!isRapidFiring) return;
             const btn = getPlayButton();
@@ -4657,7 +4744,11 @@ ${MOB_NU} table.dt-stats td:first-child { color: #aab6c9 !important; }`;
                 try { btn.click(); } catch (e) {}
             }
         };
-        clickInterval = setInterval(tick, RAPID_CLICK_INTERVAL_MS);
+        /* Native timer on purpose: the game-speed hook divides page delays, and
+           this poll must keep its own 180ms cadence. It is gated on the button
+           being enabled, so a faster game already means faster betting — a
+           faster POLL would only spin the CPU. */
+        clickInterval = NATIVE_SET_INTERVAL(tick, RAPID_CLICK_INTERVAL_MS);
         tick();
     }
 
@@ -4666,7 +4757,7 @@ ${MOB_NU} table.dt-stats td:first-child { color: #aab6c9 !important; }`;
         rapidBlockedSince = 0;
         rapidFireStartedAt = 0;
         lastObservedBetTime = 0;
-        if (clickInterval) { clearInterval(clickInterval); clickInterval = null; }
+        if (clickInterval) { NATIVE_CLEAR_INTERVAL(clickInterval); clickInterval = null; }
         updateUI();
     }
 
@@ -4699,6 +4790,23 @@ ${MOB_NU} table.dt-stats td:first-child { color: #aab6c9 !important; }`;
         if (!isRapidFiring) return;
         noteBalanceHeartbeat();
         const now = Date.now();
+        /* A backgrounded tab is not a stalled run. iOS throttles (and often
+           suspends) timers the moment you switch apps or lock the phone, so no
+           bet is observed while you are away and the stall check below would
+           stop the run the instant you came back — the most common flavour of
+           "it stops at random". Skip the check while hidden, and give the page a
+           full stall window to produce a bet again after it returns. */
+        if (document.hidden) { rapidVisibleAgainAt = 0; return; }
+        if (!rapidVisibleAgainAt) rapidVisibleAgainAt = now;
+        if (now - rapidVisibleAgainAt < stallStopMs()) return;
+        /* Advanced IOW is a dice-page mode. On an SPA navigation to another game
+           the run would otherwise keep going and the conditions engine would
+           size bets for a game it was never configured against. */
+        if (ACTIVE_MODE === 'cond' && !isOnDicePage()) {
+            stopRapidFire();
+            condNotice = { text: 'Stopped: left the dice page.', until: Date.now() + 5000 };
+            return;
+        }
         if (isShuffle() || isNuts()) {
             /* Stall-only safety on Shuffle AND Nuts. Both are driven by the
                click-poll, where the play button disables itself while a bet is in
@@ -4713,7 +4821,11 @@ ${MOB_NU} table.dt-stats td:first-child { color: #aab6c9 !important; }`;
                genuine freeze, because processNewBet() refreshes
                lastObservedBetTime on every observed bet. */
             const lastSeenBetTime = Math.max(lastObservedBetTime || rapidFireStartedAt, lastBalanceChangeAt);
-            if (lastSeenBetTime && now - lastSeenBetTime >= RAPID_STALL_STOP_MS) stopRapidFire();
+            if (lastSeenBetTime && now - lastSeenBetTime >= stallStopMs()) {
+                stopRapidFire();
+                if (ACTIVE_MODE === 'cond')
+                    condNotice = { text: 'Stopped: no bet seen for ' + Math.round(stallStopMs() / 1000) + 's.', until: Date.now() + 6000 };
+            }
             return;
         }
         const betBtn = getPlayButton();
@@ -4724,7 +4836,7 @@ ${MOB_NU} table.dt-stats td:first-child { color: #aab6c9 !important; }`;
         }
         rapidBlockedSince = 0;
         const lastSeenBetTime = Math.max(lastObservedBetTime || rapidFireStartedAt, lastBalanceChangeAt);
-        if (lastSeenBetTime && now - lastSeenBetTime >= RAPID_STALL_STOP_MS) stopRapidFire();
+        if (lastSeenBetTime && now - lastSeenBetTime >= stallStopMs()) stopRapidFire();
     }
 
     /* ============================================================
@@ -10345,6 +10457,9 @@ self.onmessage = async (e) => {
         // syncs native bet panel + game footer slots, paints stats + graph,
         // monitors rapid-fire health, runs Smart bet sizing.
         setInterval(() => {
+            /* Before the supported-page bail-out: this is what switches the
+               Nuts dice speed-up back off when you navigate to another game. */
+            try { refreshGameSpeed(); } catch (e) {}
             if (!isOnSupportedGamePage()) {
                 const existing = document.getElementById('ratchet-master-container');
                 if (existing) existing.remove();

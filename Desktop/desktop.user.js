@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Desktop
 // @namespace    http://tampermonkey.net/
-// @version      3.34
+// @version      3.35
 // @description  .
 // @author       .
 // @match        https://nuts.gg/*
@@ -18028,9 +18028,27 @@ function tool_stake_7day_tracker() {
             return { st: st, hand: hand, info: info, up: up, dec: d, eq: eq };
         }
 
+        /* Identifies "the decision we last acted on", so autoplay presses once
+           per state rather than once per tick.
+
+           The cards alone are not enough. Split a pair and the two hands can end
+           up IDENTICAL — 9,A and 9,A against the same upcard — at which point
+           hand 2 hashed exactly like hand 1, the gate in autoTick read it as a
+           state already handled, and autoplay stopped dead on the second hand.
+           Reported from stake.us with precisely that pair.
+
+           So the hash also carries WHICH hand is being asked about, and how many
+           actions each hand has taken: standing on hand 1 advances its action
+           list, which makes the whole state provably different even where every
+           card matches. */
         function stateHash(st, hand) {
+            var idx = st.hands.indexOf(hand);
             return st.dealer.join(',') + '|' +
-                   st.hands.map(function (h) { return h.cards.join(''); }).join('/') + '|' +
+                   st.hands.map(function (h) {
+                       var acts = (h.raw && h.raw.actions) ? h.raw.actions.length : 0;
+                       return h.cards.join('') + ':' + acts;
+                   }).join('/') + '|' +
+                   idx + '|' +
                    hand.cards.join('');
         }
 
@@ -22869,7 +22887,17 @@ function tool_stake_7day_tracker() {
                    means what is deliberately NOT encoded here — only that the
                    colour changing is what matters. */
                 signature: function (b) {
-                    var cover = b.children && b.children[1];
+                    /* Count the SITE's own children only. Our heat tint is
+                       appended into the tile, so on a tile with a single real
+                       child index 1 landed on OUR span — the signature then
+                       tracked the colour we had just painted, and every repaint
+                       looked like the board changing by itself. */
+                    var kids = [], i, ch = b.children || [];
+                    for (i = 0; i < ch.length; i++) {
+                        if (ch[i].classList && ch[i].classList.contains('keno-hot-tint')) continue;
+                        kids.push(ch[i]);
+                    }
+                    var cover = kids[1];
                     var c = cover && rgb(cover);
                     return c ? c.join(',') : '';
                 },
@@ -23022,11 +23050,33 @@ function tool_stake_7day_tracker() {
             return out;
         }
 
-        var CLICK_GRACE = 1500;   // ms a changed tile is treated as your pick
+        /* A clicked tile is folded back into the baseline so your own picks are
+           never mistaken for a draw — but only for CLICK_GRACE after the click.
+           Reproduced against v3.34: once that window lapses, a tile you picked
+           whose signature changes afterwards is counted as part of a reveal, and
+           ten of them bank your own ticket as a draw. That is why the numbers
+           you chose came out hot: the heatmap was being fed your picks.
+
+           A pick can land outside the window in several ways — the site updating
+           the tile lazily or in a batched re-render, Pick hottest clicking ten
+           tiles in a row, a busy page delaying the sample, or (on Nuts, where the
+           signature is the cover's COMPUTED COLOUR) a CSS transition still moving
+           with no DOM mutation to schedule another sample.
+
+           Two defences rather than a longer timeout, because a timeout only ever
+           moves the edge:
+             · grace ends on STABILITY — keep folding while the signature is
+               still moving, stop only once it has held still past the window;
+             · a reveal made up entirely of tiles you clicked is refused outright
+               (see commitPending), which covers every route to this bug. */
+        var CLICK_GRACE = 1500;       // ms a changed tile is treated as your pick
+        var CLICK_GRACE_MAX = 8000;   // absolute cap, so a stuck tile cannot grace forever
         var baseline = null;      // signatures as of before the current reveal
         var pending = [];         // numbers seen to change during this reveal
         var recorded = false;     // this reveal is already banked
         var clickedAt = {};       // number -> when it was last clicked
+        var clickSig = {};        // number -> its signature at the previous sample
+        var clickedSinceArm = {}; // number -> clicked since the board last rested
 
         /* Both your picks and the tool's own (Pick hottest clicks for real) land
            here, so neither is ever mistaken for a drawn number. */
@@ -23037,7 +23087,10 @@ function tool_stake_7day_tracker() {
                 var all = tiles(), i;
                 for (i = 0; i < all.length; i++) {
                     if (all[i] === node || all[i].contains(node)) {
-                        clickedAt[SITE.number(all[i], i)] = Date.now();
+                        var num = SITE.number(all[i], i);
+                        clickedAt[num] = Date.now();
+                        clickedSinceArm[num] = true;
+                        delete clickSig[num];
                         return;
                     }
                 }
@@ -23052,6 +23105,18 @@ function tool_stake_7day_tracker() {
                missed are the ones you picked, whose flash is shortest. Banking
                7 of 10 is exactly how the Nuts heatmap ended up wrong. */
             if (nums.length !== SITE.expect) return;
+            /* Refuse a "draw" made up entirely of tiles you clicked. The game
+               generates the draw; the chance that all ten drawn numbers are
+               exactly the ten you picked is about one in 850 million, so this
+               costs nothing real and catches the whole family of bugs where a
+               selection is mistaken for a reveal — including any future one.
+               Not banked, and not marked recorded, so the genuine reveal that
+               follows is still captured. */
+            var allMine = true;
+            for (var mi = 0; mi < nums.length; mi++) {
+                if (!clickedSinceArm[nums[mi]]) { allMine = false; break; }
+            }
+            if (allMine) { recorded = false; return; }
             recordDraw(nums);
             render();
             paintTiles();
@@ -23065,17 +23130,28 @@ function tool_stake_7day_tracker() {
             var now = Date.now(), changed = [], k;
             for (k in sig) {
                 if (!Object.prototype.hasOwnProperty.call(sig, k)) continue;
-                if (clickedAt[k] && now - clickedAt[k] < CLICK_GRACE) {
-                    baseline[k] = sig[k];            // yours — keep the baseline current
-                    continue;
+                if (clickedAt[k]) {
+                    var age = now - clickedAt[k];
+                    /* Still moving? Keep folding. A signature that differs from
+                       the one read at the previous sample has not settled yet —
+                       a CSS transition mid-flight — and dropping grace here is
+                       exactly what turned a pick into a phantom draw. */
+                    var settled = clickSig[k] === sig[k];
+                    if (age < CLICK_GRACE || (!settled && age < CLICK_GRACE_MAX)) {
+                        baseline[k] = sig[k];        // yours — keep the baseline current
+                        clickSig[k] = sig[k];
+                        continue;
+                    }
+                    delete clickedAt[k];
+                    delete clickSig[k];
                 }
-                if (clickedAt[k]) delete clickedAt[k];
                 if (baseline[k] !== undefined && sig[k] !== baseline[k]) changed.push(+k);
             }
 
             if (!changed.length) {
                 // Back at the baseline: the round is over (or never started). Re-arm.
                 pending = []; recorded = false; baseline = sig;
+                clickedSinceArm = {};
                 return;
             }
             if (recorded) return;
@@ -23165,9 +23241,22 @@ function tool_stake_7day_tracker() {
                 ? 'rgba(255,' + Math.round(150 - 110 * a) + ',60,' + (0.16 + 0.42 * a).toFixed(3) + ')'
                 : 'rgba(60,' + Math.round(150 + 60 * a) + ',255,' + (0.14 + 0.34 * a).toFixed(3) + ')';
         }
+        /* Anything WE draw on the board has to be invisible to the capture. The
+           tint is a child of the tile and the observer watches the subtree, so
+           our own repaint fires a sample and can shift a signature. Re-read the
+           baseline immediately afterwards and nothing we did can read as a
+           reveal. "Reset draws" was the loud version of this: clearing forty
+           tints at once changed forty signatures in one go, and the next sample
+           banked a phantom draw straight after you cleared the history. */
+        function rearmCapture() {
+            pending = [];
+            recorded = false;
+            baseline = readSignatures();
+        }
         function clearTints() {
             var old = document.querySelectorAll('.keno-hot-tint'), i;
             for (i = 0; i < old.length; i++) old[i].remove();
+            rearmCapture();
         }
         function paintTiles() {
             if (!showHeat) { clearTints(); return; }
@@ -23190,6 +23279,7 @@ function tool_stake_7day_tracker() {
                 tint.style.background = col;
                 tint.textContent = showCounts ? String(heat.counts[n]) : '';
             }
+            rearmCapture();
         }
 
         /* ---------------------------------------------------------------

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Shuffle Auto-Vault — Mobile
 // @namespace    http://tampermonkey.net/
-// @version      6.05
+// @version      6.06
 // @description  Standalone single-tool mobile build, extracted from the unified mobile bundle.
 // @author       .
 // @match        https://shuffle.com/*
@@ -14,7 +14,7 @@
 (function () {
     'use strict';
 
-    try { console.log('[Shuffle Auto-Vault — Mobile] standalone build v6.05'); } catch (e) {}
+    try { console.log('[Shuffle Auto-Vault — Mobile] standalone build v6.06'); } catch (e) {}
 
 
     try { console.log('[unified-mobile] boot v5.64 — DiceTool.exe replica UI for the dice tool (Calculator / Easy Mode / Strategy Finder / Results / Settings)'); } catch (e) {}
@@ -669,7 +669,82 @@
     const MAX_GRAPH_POINTS = 5000;
     const RAPID_BLOCKED_STOP_MS = 1500;
     const RAPID_STALL_STOP_MS = 4000;
+    /* Nuts needs a longer stall window than Stake/Shuffle. It is the one site
+       with no bet feed on mobile, so a bet is only "seen" via the socket frame
+       or a balance move; over cellular, with the roll animation in front of it,
+       4s is routinely just a slow round rather than a freeze. The guard is a
+       safety net for a genuinely dead loop, not a pace-keeper. */
+    const RAPID_STALL_STOP_MS_NUTS = 12000;
+    function stallStopMs() { return isNuts() ? RAPID_STALL_STOP_MS_NUTS : RAPID_STALL_STOP_MS; }
+    /* When the page last became visible again — see monitorRapidFireHealth. */
+    let rapidVisibleAgainAt = 0;
     const RAPID_CLICK_INTERVAL_MS = 180;
+
+    /* ============================================================
+       GAME SPEED (Nuts dice)
+       ------------------------------------------------------------
+       What actually paces autoplay is not our click loop — that already
+       fires the instant the site re-enables PLAY — it is the site's own roll
+       animation and settle delay, which run off setTimeout / setInterval /
+       requestAnimationFrame. Dividing those delays shortens the round.
+       This changes NOTHING about the wager, the odds or the result: the
+       outcome is decided server-side and merely displayed faster.
+
+       Two things make this safe to embed rather than run as a separate script:
+
+       1. The natives are captured HERE, at module scope, before any patch can
+          exist — and our own loops use the captured ones. Otherwise the patch
+          would also divide our click poll (180ms -> 18ms at 10x) and the HUD
+          ticker, burning phone battery for no gain and changing timing the
+          watchdogs were tuned against.
+       2. The wrapper is installed ONCE and reads the multiplier through a
+          variable, so changing speed never re-wraps an already-wrapped
+          function (which is how these hooks usually end up nested).
+       ============================================================ */
+    const NATIVE_SET_INTERVAL   = window.setInterval.bind(window);
+    const NATIVE_CLEAR_INTERVAL = window.clearInterval.bind(window);
+    const GAME_SPEED = 10;            // fixed; no setting, by design
+    let speedNatives = null;          // the originals, once the hook is installed
+    let speedActive = false;          // true ONLY while on Nuts dice
+
+    /** Nuts dice and nothing else. */
+    function speedSupported() { return isNuts() && isOnDicePage(); }
+
+    function installSpeedHook() {
+        if (speedNatives) return;
+        speedNatives = {
+            setTimeout: window.setTimeout,
+            setInterval: window.setInterval,
+            requestAnimationFrame: window.requestAnimationFrame
+        };
+        /* The divisor is read through speedActive on every call rather than
+           baked in. A hook can be installed but never safely REMOVED — the page
+           has already handed our wrapper to its own code — so "dice only" has to
+           mean "divides only while on dice". Navigating to another Nuts game
+           leaves the wrapper in place but back at 1:1. */
+        const div = () => (speedActive ? GAME_SPEED : 1);
+        window.setTimeout = function (fn, delay) {
+            const rest = Array.prototype.slice.call(arguments, 2);
+            return speedNatives.setTimeout.apply(window, [fn, (delay || 0) / div()].concat(rest));
+        };
+        window.setInterval = function (fn, delay) {
+            const rest = Array.prototype.slice.call(arguments, 2);
+            return speedNatives.setInterval.apply(window, [fn, (delay || 0) / div()].concat(rest));
+        };
+        /* Timestamp-driven animations advance by the clock they are handed, so
+           scaling the timestamp speeds those up the same way the delay divisor
+           speeds up timer-driven ones. */
+        window.requestAnimationFrame = function (cb) {
+            return speedNatives.requestAnimationFrame.call(window, function (ts) { cb(ts * div()); });
+        };
+    }
+    /** Called from the 600ms ticker, which runs on every page — buildHUD() does
+     *  not, so it cannot be the thing that turns the speed-up back off when you
+     *  navigate from dice to another Nuts game. */
+    function refreshGameSpeed() {
+        speedActive = speedSupported();
+        if (speedActive) installSpeedHook();
+    }
     let aggressionLevel = 1.0;
     let historyWindow = 30;
     let safeDivisor = 300;
@@ -3738,6 +3813,9 @@
         // syncs native bet panel + game footer slots, paints stats + graph,
         // monitors rapid-fire health, runs Smart bet sizing.
         setInterval(() => {
+            /* Before the supported-page bail-out: this is what switches the
+               Nuts dice speed-up back off when you navigate to another game. */
+            try { refreshGameSpeed(); } catch (e) {}
             if (!isOnSupportedGamePage()) {
                 const existing = document.getElementById('ratchet-master-container');
                 if (existing) existing.remove();
