@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Nuts Auto-Vault — Mobile
 // @namespace    http://tampermonkey.net/
-// @version      6.06
+// @version      6.07
 // @description  Standalone single-tool mobile build, extracted from the unified mobile bundle.
 // @author       .
 // @match        https://nuts.gg/*
@@ -14,7 +14,7 @@
 (function () {
     'use strict';
 
-    try { console.log('[Nuts Auto-Vault — Mobile] standalone build v6.06'); } catch (e) {}
+    try { console.log('[Nuts Auto-Vault — Mobile] standalone build v6.07'); } catch (e) {}
 
 
     try { console.log('[unified-mobile] boot v5.64 — DiceTool.exe replica UI for the dice tool (Calculator / Easy Mode / Strategy Finder / Results / Settings)'); } catch (e) {}

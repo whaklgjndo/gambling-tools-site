@@ -52,6 +52,20 @@
         <!-- ============ Add new releases above this line (newest first) ============ -->
         <article class="release latest" data-reveal>
           <div class="release-head">
+            <span class="ver-badge">v3.36</span>
+            <span class="chip">Desktop</span>
+            <span class="ver-badge">v6.07</span>
+            <span class="chip">Mobile</span>
+            <span class="rel-date">July 29, 2026</span>
+          </div>
+          <h2 class="rel-title">Keno Hotspot was counting each draw many times over</h2>
+          <ul class="changes">
+            <li><span class="tag fixed">Fixed</span><span class="ctxt"><b>Keno Hotspot recorded the same draw over and over</b>, which is the real reason the board looked hot where you were playing. A draw is spotted by noticing tiles change, and that check has no sense of direction &mdash; so when the round ended and the tiles changed <i>back</i>, it counted the same ten numbers again, once per frame. One real store had <b>1309 recorded draws but only 1005 real ones</b>: 303 duplicates, some sets counted 35 times. A set counted 35 times swamps the heatmap. The same ten numbers can no longer be banked twice in a row.</span></li>
+            <li><span class="tag fixed">Fixed</span><span class="ctxt">The previous release's repaint fix cleared the &ldquo;already recorded this round&rdquo; flag as a side effect, which re-opened a round the moment it had been banked. It leaves that flag alone now.</span></li>
+          </ul>
+        </article>
+        <article class="release" data-reveal>
+          <div class="release-head">
             <span class="ver-badge">v3.35</span>
             <span class="chip">Desktop</span>
             <span class="ver-badge">v6.06</span>

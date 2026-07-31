@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mobile
 // @namespace    https://whaklgjndo.github.io/gambling-tools/
-// @version      6.06
+// @version      6.07
 // @description  .
 // @author       .
 // @match        https://stake.com/*
@@ -11409,6 +11409,9 @@ self.onmessage = async (e) => {
         var clickedAt = {};       // number -> when it was last clicked
         var clickSig = {};        // number -> its signature at the previous sample
         var clickedSinceArm = {}; // number -> clicked since the board last rested
+        var lastBankedSig = '';   // the last set banked, to reject the revert as a re-reveal
+        var lastBankedAt = 0;
+        var DUPE_WINDOW_MS = 15000;
 
         /* Both your picks and the tool's own (Pick hottest clicks for real) land
            here, so neither is ever mistaken for a drawn number. */
@@ -11449,6 +11452,25 @@ self.onmessage = async (e) => {
                 if (!clickedSinceArm[nums[mi]]) { allMine = false; break; }
             }
             if (allMine) { recorded = false; return; }
+            /* Never bank the same ten numbers twice in a row.
+
+               A change is detected by comparing against a baseline, and that
+               comparison has no DIRECTION: when the round ends and the board
+               reverts, the same ten tiles change BACK, which reads as a second
+               reveal of the identical set. Measured in a live store: 1309
+               recorded draws, 1005 distinct — 303 consecutive duplicates, some
+               sets banked 35 times, all within the same millisecond. A set
+               counted 35 times dominates the heatmap, which is what made the
+               numbers on screen look hot.
+
+               Two identical consecutive keno draws are a 1-in-847-million
+               event, so refusing them costs nothing and ends the whole family.
+               Refused WITHOUT clearing `recorded`, so the revert does not
+               re-open the round either. */
+            var sig10 = nums.join(',');
+            if (sig10 === lastBankedSig && Date.now() - lastBankedAt < DUPE_WINDOW_MS) return;
+            lastBankedSig = sig10;
+            lastBankedAt = Date.now();
             recordDraw(nums);
             render();
             paintTiles();
@@ -11581,8 +11603,11 @@ self.onmessage = async (e) => {
            tints at once changed forty signatures in one go, and the next sample
            banked a phantom draw straight after you cleared the history. */
         function rearmCapture() {
+            /* Deliberately does NOT clear `recorded`. That latch is what stops a
+               round being banked twice, and clearing it here — right after
+               commitPending() calls paintTiles() — re-opened the round the
+               instant it had been banked. */
             pending = [];
-            recorded = false;
             baseline = readSignatures();
         }
         function clearTints() {
