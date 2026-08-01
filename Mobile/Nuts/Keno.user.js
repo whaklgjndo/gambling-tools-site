@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Nuts Keno — Mobile
 // @namespace    http://tampermonkey.net/
-// @version      6.07
+// @version      6.08
 // @description  Standalone single-tool mobile build, extracted from the unified mobile bundle.
 // @author       .
 // @match        https://nuts.gg/*
@@ -9,12 +9,14 @@
 // @grant        none
 // @run-at       document-start
 // @noframes
+// @updateURL    https://whaklgjndo.github.io/gambling-tools-site/Mobile/Nuts/Keno.user.js
+// @downloadURL  https://whaklgjndo.github.io/gambling-tools-site/Mobile/Nuts/Keno.user.js
 // ==/UserScript==
 
 (function () {
     'use strict';
 
-    try { console.log('[Nuts Keno — Mobile] standalone build v6.07'); } catch (e) {}
+    try { console.log('[Nuts Keno — Mobile] standalone build v6.08'); } catch (e) {}
 
 
     try { console.log('[unified-mobile] boot v5.64 — DiceTool.exe replica UI for the dice tool (Calculator / Easy Mode / Strategy Finder / Results / Settings)'); } catch (e) {}

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mobile
 // @namespace    https://whaklgjndo.github.io/gambling-tools/
-// @version      6.07
+// @version      6.08
 // @description  .
 // @author       .
 // @match        https://stake.com/*
@@ -22,6 +22,8 @@
 // @grant        none
 // @run-at       document-start
 // @noframes
+// @updateURL    https://whaklgjndo.github.io/gambling-tools-site/Mobile/mobile.user.js
+// @downloadURL  https://whaklgjndo.github.io/gambling-tools-site/Mobile/mobile.user.js
 // ==/UserScript==
 
 (function () {

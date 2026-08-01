@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Desktop
 // @namespace    http://tampermonkey.net/
-// @version      3.36
+// @version      3.37
 // @description  .
 // @author       .
 // @match        https://nuts.gg/*
@@ -24,6 +24,8 @@
 // @grant        unsafeWindow
 // @run-at       document-start
 // @noframes
+// @updateURL    https://whaklgjndo.github.io/gambling-tools-site/Desktop/desktop.user.js
+// @downloadURL  https://whaklgjndo.github.io/gambling-tools-site/Desktop/desktop.user.js
 // ==/UserScript==
 
 (function () {

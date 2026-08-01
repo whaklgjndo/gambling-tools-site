@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Nuts Limbo (Target) — Desktop
 // @namespace    http://tampermonkey.net/
-// @version      3.36
+// @version      3.37
 // @description  Standalone single-tool build, extracted from the unified bundle.
 // @author       .
 // @match        https://nuts.gg/*
@@ -10,12 +10,14 @@
 // @grant        unsafeWindow
 // @run-at       document-start
 // @noframes
+// @updateURL    https://whaklgjndo.github.io/gambling-tools-site/Desktop/Nuts/Limbo.user.js
+// @downloadURL  https://whaklgjndo.github.io/gambling-tools-site/Desktop/Nuts/Limbo.user.js
 // ==/UserScript==
 
 (function () {
     'use strict';
 
-    console.log('%cNuts Limbo (Target) — Desktop — standalone build v3.36', 'color:#17c7b8;font-weight:800;font-size:13px');
+    console.log('%cNuts Limbo (Target) — Desktop — standalone build v3.37', 'color:#17c7b8;font-weight:800;font-size:13px');
 
     /* =========================================================
        UNIFIED LOADER — STORAGE KEYS & SETTINGS
