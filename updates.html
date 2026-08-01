@@ -52,6 +52,28 @@
         <!-- ============ Add new releases above this line (newest first) ============ -->
         <article class="release latest" data-reveal>
           <div class="release-head">
+            <span class="ver-badge">v3.38</span>
+            <span class="chip">Desktop</span>
+            <span class="ver-badge">v6.09</span>
+            <span class="chip">Mobile</span>
+            <span class="rel-date">August 1, 2026</span>
+          </div>
+          <h2 class="rel-title">Keno Hotspot reads the board properly now</h2>
+          <ul class="changes">
+            <li><span class="tag fixed">Fixed</span><span class="ctxt"><b>Your picks were still being recorded as drawn numbers, and real draws were being thrown away.</b> The tool decided what had happened by counting how many tiles changed &mdash; which cannot work, because your ticket and the draw are both up to ten tiles. Measured on a live board, one round with two picks: 29 resting, 9 drawn, 1 drawn-and-picked, 1 picked-and-missed. That is eleven changed tiles, so the whole reveal was discarded; when the numbers happened to line up instead, it banked the first ten to move and mixed your picks in. It now works out what each tile <i>state</i> means rather than counting them.</span></li>
+            <li><span class="tag fixed">Fixed</span><span class="ctxt">The site's own <b>Auto pick</b> was recorded as a draw. Ten tiles become selected at once and the tool only notices tiles you tap yourself, so an auto-pick was indistinguishable from a reveal. Same for <b>Clear table</b>.</span></li>
+            <li><span class="tag changed">Changed</span><span class="ctxt"><b>One click to calibrate, per site.</b> The tool learns what a selected tile looks like from the first number you click, then remembers it. Until you have clicked one, it records nothing and says so in the panel &mdash; rather than guessing and quietly filling your history with rubbish, which is what it did before. Colours are never hardcoded: Nuts' drawn colour was guessed twice here and wrong both times.</span></li>
+            <li><span class="tag fixed">Fixed</span><span class="ctxt">Nuts fades between tile colours, and every frame of that fade counted as a change. A single click passed through four intermediate colours on the way to its final one. Only settled colours count now.</span></li>
+            <li><span class="tag changed">Changed</span><span class="ctxt"><b>History recorded before this update is contaminated</b> and worth clearing with <b>Reset draws</b> &mdash; on all three sites.</span></li>
+            <li><span class="tag added">Added</span><span class="ctxt"><b>Repeat groups.</b> A new <b>Scan</b> button in the Hotspot section lists the number combinations that have landed together in the same draw most often &mdash; the top pairs, trios and quads in your window. Each row shows how many times the group actually landed against how many times it should have, so you can see at a glance whether it means anything: a pair shares a draw 5.8% of the time, so over 200 rounds the average pair repeats about twelve times on its own. A repeat that plain chance really cannot account for is <b>highlighted</b>, and that is rare. Scanned on demand, not every round, because checking every pair, trio and quad is too much work to repeat on each bet.</span></li>
+            <li><span class="tag changed">Changed</span><span class="ctxt"><b>More depth in the heat colours.</b> Instead of one continuous fade there are now four distinct steps either way &mdash; pale yellow, gold, orange, red for hot, and light blue through to deep blue for cold. A slight lean and a real outlier used to be two oranges you could not tell apart. The thresholds are relative, so they mean the same thing at 50 draws or 500.</span></li>
+            <li><span class="tag changed">Changed</span><span class="ctxt"><b>Your picked tiles now stand out.</b> Selected numbers get a white ring with a glow in that site's own colour &mdash; purple on Shuffle, neon on Nuts, green on Stake. The ring is drawn on the same overlay as the heat tint, so highlighting a pick can never be mistaken for the board changing.</span></li>
+            <li><span class="tag added">Added</span><span class="ctxt">A <b>legend</b> under the Heatmap toggle, using the actual tints rather than describing them, with the draw count each colour covers &mdash; &ldquo;&le;14&rdquo; through &ldquo;36+&rdquo;. The ranges follow your window, so switching from last 100 to last 500 updates them.</span></li>
+            <li><span class="tag changed">Changed</span><span class="ctxt">The small <b>count on each tile</b> moved to the bottom of the tile. It was sitting on top of the tile's own number and neither was readable.</span></li>
+          </ul>
+        </article>
+        <article class="release" data-reveal>
+          <div class="release-head">
             <span class="ver-badge">v3.36</span>
             <span class="chip">Desktop</span>
             <span class="ver-badge">v6.07</span>

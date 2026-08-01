@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mobile
 // @namespace    https://whaklgjndo.github.io/gambling-tools/
-// @version      6.08
+// @version      6.09
 // @description  .
 // @author       .
 // @match        https://stake.com/*
@@ -11128,14 +11128,14 @@ self.onmessage = async (e) => {
      * The tool never decides which signature means "drawn". A reveal is the set
      * of tiles whose signature differs from what it was just before the reveal
      * started. That is deliberate: Nuts' drawn colour is documented nowhere and
-     * was guessed wrong twice, and a hit there flashes green then reverts to the
-     * picked colour, so no single frame — first, last or settled — contains the
-     * whole draw. Baseline comparison needs neither the palette nor a lucky
-     * frame. Mutations drive the sampling, because a flash can begin and end
-     * well inside one polling tick.
+     * was guessed wrong twice. Instead the tool learns, from a tile you tap, what
+     * SELECTED looks like on this site, and reads every other settled state as
+     * part of the reveal. Mutations drive the sampling, because a flash can begin
+     * and end well inside one polling tick.
      *
-     * Your own picks move a signature too, so clicks are tracked and a clicked
-     * tile is folded back into the baseline instead of counted.
+     * Only settled signatures count — identical to the previous sample. Nuts
+     * fades between colours and every frame of that fade is "not resting", so
+     * without this the animation itself reads as a draw.
      *
      * A reveal is banked only when it reaches exactly the expected count. A
      * partial reveal is not a smaller sample but a biased one — the numbers
@@ -11261,12 +11261,16 @@ self.onmessage = async (e) => {
            localStorage is per-origin anyway, but the explicit key keeps a
            multi-brand origin from ever mixing two boards.
            --------------------------------------------------------------- */
-        var store = { draws: [], window: 100 };
+        /* `selSigs` is what this site's tiles look like once YOU have tapped
+           them. Learned, never hardcoded, and remembered across sessions — see
+           the BOARD READING notes. */
+        var store = { draws: [], window: 100, selSigs: [] };
         try {
             var raw = JSON.parse(localStorage.getItem(SITE.key) || 'null');
             if (raw && Array.isArray(raw.draws)) {
                 store.draws = raw.draws;
                 if (raw.window != null) store.window = raw.window;
+                if (Array.isArray(raw.selSigs)) store.selSigs = raw.selSigs;
             }
         } catch (e) {}
         var storeDirty = false;
@@ -11319,6 +11323,120 @@ self.onmessage = async (e) => {
             return { counts: counts, z: z, rounds: rounds, mean: mean, sd: sd, spots: spots, total: total };
         }
 
+        /* ---------------------------------------------------------------
+           REPEAT GROUPS
+           Which COMBINATIONS have come up together in the same draw more than
+           once. Raw repeat counts alone are misleading: with ten spots drawn
+           from forty, any given PAIR shares a draw 5.8% of the time, so over 200
+           rounds the average pair repeats about twelve times and a pair seen
+           twice means nothing at all. A specific trio shares a draw 1.2% of the
+           time and a specific quad 0.23%, so those carry real weight quickly.
+
+           This exists because people want to SEE which numbers keep landing
+           together, so it always lists the top repeats rather than hiding them.
+           An earlier cut gated the list behind a multiple-comparison correction
+           and was statistically right and practically useless: on real keno it
+           printed "nothing beyond what chance produces" every single time. The
+           correction is still computed — it just labels a row instead of
+           suppressing it, so a repeat that IS unusual is marked and the rest are
+           shown with what chance predicts beside them.
+
+           Sizes 2-4 are enumerated directly; a recurring group of five or more
+           surfaces as several of its quads.
+
+           Same caveat as the heatmap: draws are independent. A group that has
+           repeated is not a group that is due.
+           --------------------------------------------------------------- */
+        /** P(a specific k-number group all appear in one draw). */
+        function comboProb(k, picks, spots) {
+            var p = 1, i;
+            for (i = 0; i < k; i++) p *= (picks - i) / (spots - i);
+            return p;
+        }
+        /** P(a group appears at least `c` times), Poisson with mean `mean`. */
+        function poissonTail(c, mean) {
+            if (c <= 0) return 1;
+            var term = Math.exp(-mean), cum = term, i;
+            for (i = 1; i < c; i++) { term *= mean / i; cum += term; }
+            return Math.max(0, 1 - cum);
+        }
+        function nCk(n, k) {
+            var r = 1, i;
+            for (i = 0; i < k; i++) r = r * (n - i) / (i + 1);
+            return r;
+        }
+        function computeCombos(draws, spots, maxGroups) {
+            spots = spots || 40;
+            var rounds = draws.length;
+            if (rounds < 2) return [];
+            var counts = {}, i, a, b, c, d, key, nums;
+            for (i = 0; i < rounds; i++) {
+                nums = draws[i].n.slice().sort(function (x, y) { return x - y; });
+                for (a = 0; a < nums.length; a++)
+                    for (b = a + 1; b < nums.length; b++) {
+                        key = nums[a] + ',' + nums[b];
+                        counts[key] = (counts[key] || 0) + 1;
+                        for (c = b + 1; c < nums.length; c++) {
+                            key = nums[a] + ',' + nums[b] + ',' + nums[c];
+                            counts[key] = (counts[key] || 0) + 1;
+                            for (d = c + 1; d < nums.length; d++) {
+                                key = nums[a] + ',' + nums[b] + ',' + nums[c] + ',' + nums[d];
+                                counts[key] = (counts[key] || 0) + 1;
+                            }
+                        }
+                    }
+            }
+            var picksPerDraw = rounds ? Math.round(draws.reduce(function (s, x) { return s + x.n.length; }, 0) / rounds) : 10;
+            /* Correct for how many combinations were examined. There are 780
+               possible pairs, 9,880 trios and 91,390 quads, and we report the
+               most extreme of them — so the winner looks impressive by
+               construction. Measured on 400 RANDOM draws the top group scored
+               7.4 standard deviations, which ranked by sigma alone would have
+               been presented as a real pattern. `expectedByChance` is how many
+               groups this extreme random data would throw up: below 0.05 it is
+               worth showing, above it we are just admiring noise. */
+            var pByK = {}, cByK = {}, bySize = { 2: [], 3: [], 4: [] };
+            for (key in counts) {
+                if (!Object.prototype.hasOwnProperty.call(counts, key)) continue;
+                var cnt = counts[key];
+                if (cnt < 2) continue;                       // "more than once" only
+                var k = key.split(',').length;
+                if (pByK[k] === undefined) {
+                    pByK[k] = comboProb(k, picksPerDraw, spots);
+                    cByK[k] = nCk(spots, k);
+                }
+                var mean = rounds * pByK[k];
+                /* How many groups this size chance alone would push this far.
+                   Below 1 the repeat is genuinely unusual; above it, the only
+                   reason this group stands out is that 91,390 quads were
+                   examined and one of them had to come top. Kept as a LABEL,
+                   not a filter — see the note above.
+
+                   The bar is 0.01, not the usual 0.05. Highlighting is the one
+                   claim this panel makes that has to hold up, and it is checked
+                   for three group sizes on every scan: at 0.05 roughly one scan
+                   in seven of pure noise would light something up. */
+                var expectedByChance = poissonTail(cnt, mean) * cByK[k];
+                bySize[k].push({
+                    nums: key, size: k, count: cnt, expected: mean,
+                    chance: expectedByChance, notable: expectedByChance < 0.01
+                });
+            }
+            /* Ranked WITHIN each size and quota'd across them. Ranking the whole
+               pool together only ever returns pairs — they repeat far more often
+               than trios or quads, so eight near-identical pair rows would crowd
+               out the quad that is actually interesting to look at. Within one
+               size every group has the same expectation, so "most repeats" and
+               "most unusual" are the same ordering. */
+            var quota = { 2: 3, 3: 3, 4: 2 }, out = [], k2;
+            for (k2 = 2; k2 <= 4; k2++) {
+                bySize[k2].sort(function (x, y) { return y.count - x.count || (x.nums < y.nums ? -1 : 1); });
+                out = out.concat(bySize[k2].slice(0, quota[k2]));
+            }
+            out.sort(function (x, y) { return y.size - x.size || y.count - x.count; });
+            return out.slice(0, maxGroups || 8);
+        }
+
         /** Numbers ranked hottest-first (or coldest-first). Ties break by number
          *  so the ordering is stable and reproducible. */
         function ranked(heat, coldest) {
@@ -11336,20 +11454,19 @@ self.onmessage = async (e) => {
 
            A tile's "signature" is however the site renders its state: an
            attribute on Stake, a class on Shuffle, a colour on Nuts. The tool
-           deliberately does NOT know which signature means "drawn". A reveal is
-           just the set of tiles whose signature changed from what it was
-           immediately before that reveal began.
+           still does NOT know which signature means "drawn" — it works out which
+           means SELECTED, by watching what a tile becomes when you tap it, and
+           treats every other settled state as part of the reveal.
 
-           That is what makes Nuts work. Its hits flash green and then revert to
-           the picked colour, and its drawn colour is documented nowhere — it was
-           guessed twice here and wrong both times. Comparing against a baseline
-           needs neither fact, and it retires the last hardcoded state names on
-           Stake and Shuffle too.
+           That is what makes Nuts work. Its drawn colour is documented nowhere
+           and was guessed twice here, wrong both times; one tap teaches the tool
+           the only fact it needs, and the same mechanism retires the hardcoded
+           state names on Stake and Shuffle too.
 
-           Your own picks change a signature as well, and would otherwise read as
-           part of a draw. Clicks are watched to exclude them: a tile you (or
-           Pick hottest) click is folded straight back into the baseline; a tile
-           the game reveals is not.
+           What it replaced: comparing every tile against a baseline. That has no
+           notion of WHY a tile changed, so your ticket and the draw were the same
+           event to it, and the site's own Auto pick — ten tiles changing at once
+           with no click to notice — was banked as a draw outright.
            --------------------------------------------------------------- */
         function tiles() { try { return SITE.tiles() || []; } catch (e) { return []; } }
         function boardSize() { var n = tiles().length; return n || 40; }
@@ -11365,58 +11482,86 @@ self.onmessage = async (e) => {
             }
             return out;
         }
-        /** Numbers that look selected: any tile whose signature differs from the
-         *  board's resting one. A ticket is at most 10 of 40, so resting always
-         *  holds the plurality and no colour or class name is needed. */
-        function currentPicks() {
-            var sig = readSignatures();
-            if (!sig) return [];
-            var freq = {}, best = -1, resting = null, k, out = [];
+        /** The signature the majority of tiles are showing: the board at rest.
+         *  A ticket is at most 10 of 40 and a draw is 10 of 40, so resting always
+         *  holds the plurality and no colour or class name has to be known. */
+        function restingSig(sig) {
+            var freq = {}, best = -1, rest = null, k;
             for (k in sig) {
                 if (!Object.prototype.hasOwnProperty.call(sig, k)) continue;
                 freq[sig[k]] = (freq[sig[k]] || 0) + 1;
-                if (freq[sig[k]] > best) { best = freq[sig[k]]; resting = sig[k]; }
+                if (freq[sig[k]] > best) { best = freq[sig[k]]; rest = sig[k]; }
             }
+            return best > 0 ? rest : null;
+        }
+        /** Your live selection: tiles wearing a signature learned from tiles YOU
+         *  tapped. Measured on nuts.gg: reading this as "anything not resting"
+         *  returned 17 numbers on a settled board — your 1 remaining pick plus
+         *  all 10 drawn tiles plus fade frames. */
+        function currentPicks() {
+            var sig = readSignatures();
+            if (!sig) return [];
+            var out = [], k;
             for (k in sig) {
                 if (!Object.prototype.hasOwnProperty.call(sig, k)) continue;
-                if (sig[k] !== resting) out.push(+k);
+                if (store.selSigs.indexOf(sig[k]) >= 0) out.push(+k);
             }
             return out;
         }
 
-        /* A clicked tile is folded back into the baseline so your own picks are
-           never mistaken for a draw — but only for CLICK_GRACE after the click.
-           Reproduced against v6.05: once that window lapses, a tile you picked
-           whose signature changes afterwards is counted as part of a reveal, and
-           ten of them bank your own ticket as a draw. That is why the numbers
-           you chose came out hot: the heatmap was being fed your picks.
+        /* Every earlier version asked "how many tiles changed?" and guessed from
+           the count. It cannot work, because a ticket and a draw are both up to
+           ten tiles. Measured on a live nuts.gg board, one round, two picks:
 
-           A pick can land outside the window in several ways — the site updating
-           the tile lazily or in a batched re-render, Pick hottest clicking ten
-           tiles in a row, a busy page delaying the sample, or (on Nuts, where the
-           signature is the cover's COMPUTED COLOUR) a CSS transition still moving
-           with no DOM mutation to schedule another sample.
+               29 resting · 9 green · 1 transparent · 1 purple
 
-           Two defences rather than a longer timeout, because a timeout only ever
-           moves the edge:
-             · grace ends on STABILITY — keep folding while the signature is
-               still moving, stop only once it has held still past the window;
-             · a reveal made up entirely of tiles you clicked is refused outright
-               (see commitPending), which covers every route to this bug. */
-        var CLICK_GRACE = 1500;       // ms a changed tile is treated as your pick
-        var CLICK_GRACE_MAX = 8000;   // absolute cap, so a stuck tile cannot grace forever
-        var baseline = null;      // signatures as of before the current reveal
-        var pending = [];         // numbers seen to change during this reveal
-        var recorded = false;     // this reveal is already banked
-        var clickedAt = {};       // number -> when it was last clicked
-        var clickSig = {};        // number -> its signature at the previous sample
-        var clickedSinceArm = {}; // number -> clicked since the board last rested
-        var lastBankedSig = '';   // the last set banked, to reject the revert as a re-reveal
+           Clicking a tile settles it to purple, so purple is SELECTED. Green and
+           transparent together are exactly ten — the draw, split into "you had
+           it" and "you didn't". The tool saw eleven changed tiles and threw the
+           whole reveal away; when the counts happened to line up it banked the
+           first ten to move, mixing picks into the draw. Both reported bugs, one
+           cause. The site's own Auto pick is the same fault from the other side:
+           ten tiles enter the selected state with no click for the tool to
+           notice, which is indistinguishable from a reveal under a count rule.
+
+           So classify by STATE, and learn the states rather than hardcoding
+           them (Nuts' drawn colour was guessed twice here and wrong twice):
+
+             · resting  — the plurality signature
+             · selected — what a tile becomes when YOU tap it, learned on first
+                          tap and remembered per site
+             · drawn    — any other settled signature
+
+           Two supporting rules make it hold up:
+
+           SETTLED ONLY. A signature must be identical to the previous sample's
+           to count. Nuts fades between colours, and one click walked through
+           REST > 64,73,93 > 92,64,147 > 141,49,238 > PURPLE. Every one of those
+           frames is "not resting and not selected", so without this the fade
+           itself reads as a draw.
+
+           NOTHING UNTIL A TAP. With no learned selected signature the tool
+           cannot tell your ticket from a reveal, so it records nothing and says
+           so. One tap per site, once, and it is calibrated for good. */
+        var MAX_SEL_SIGS = 6;     // room for hit/selected variants; bounded so a
+                                  // theme change cannot grow the list forever
+        var CLICK_LEARN_MS = 6000; // how long a tap waits for its tile to settle
+        var prevSig = null;       // the previous sample, for the settled test
+        var revealed = false;     // this reveal is already banked
+        var pendingClick = {};    // number -> when it was tapped, awaiting settle
+        var lastBankedSig = '';   // the last set banked, to reject a re-read
         var lastBankedAt = 0;
         var DUPE_WINDOW_MS = 15000;
 
-        /* Both your picks and the tool's own (Pick hottest clicks for real) land
-           here, so neither is ever mistaken for a drawn number. */
+        function learnSelected(sig) {
+            if (!sig || store.selSigs.indexOf(sig) >= 0) return;
+            store.selSigs.push(sig);
+            while (store.selSigs.length > MAX_SEL_SIGS) store.selSigs.shift();
+            saveStore();
+        }
+
+        /* Both your taps and the tool's own (Pick hottest clicks for real) land
+           here, so the selected signature is learned either way. */
         document.addEventListener('click', function (e) {
             try {
                 var node = e.target && e.target.closest ? e.target.closest('button') : null;
@@ -11424,98 +11569,82 @@ self.onmessage = async (e) => {
                 var all = tiles(), i;
                 for (i = 0; i < all.length; i++) {
                     if (all[i] === node || all[i].contains(node)) {
-                        var num = SITE.number(all[i], i);
-                        clickedAt[num] = Date.now();
-                        clickedSinceArm[num] = true;
-                        delete clickSig[num];
+                        pendingClick[SITE.number(all[i], i)] = Date.now();
                         return;
                     }
                 }
             } catch (err) { /* never interfere with the page's own handling */ }
         }, true);
 
-        function commitPending() {
-            var nums = pending.slice().sort(function (a, b) { return a - b; });
-            pending = []; recorded = true;
-            /* Only a complete reveal is worth keeping. A partial one is not a
-               smaller sample, it is a biased one: the numbers most likely to be
-               missed are the ones you picked, whose flash is shortest. Banking
-               7 of 10 is exactly how the Nuts heatmap ended up wrong. */
-            if (nums.length !== SITE.expect) return;
-            /* Refuse a "draw" made up entirely of tiles you clicked. The game
-               generates the draw; the chance that all ten drawn numbers are
-               exactly the ten you picked is about one in 850 million, so this
-               costs nothing real and catches the whole family of bugs where a
-               selection is mistaken for a reveal — including any future one.
-               Not banked, and not marked recorded, so the genuine reveal that
-               follows is still captured. */
-            var allMine = true;
-            for (var mi = 0; mi < nums.length; mi++) {
-                if (!clickedSinceArm[nums[mi]]) { allMine = false; break; }
-            }
-            if (allMine) { recorded = false; return; }
-            /* Never bank the same ten numbers twice in a row.
-
-               A change is detected by comparing against a baseline, and that
-               comparison has no DIRECTION: when the round ends and the board
-               reverts, the same ten tiles change BACK, which reads as a second
-               reveal of the identical set. Measured in a live store: 1309
-               recorded draws, 1005 distinct — 303 consecutive duplicates, some
-               sets banked 35 times, all within the same millisecond. A set
-               counted 35 times dominates the heatmap, which is what made the
-               numbers on screen look hot.
-
-               Two identical consecutive keno draws are a 1-in-847-million
-               event, so refusing them costs nothing and ends the whole family.
-               Refused WITHOUT clearing `recorded`, so the revert does not
-               re-open the round either. */
-            var sig10 = nums.join(',');
-            if (sig10 === lastBankedSig && Date.now() - lastBankedAt < DUPE_WINDOW_MS) return;
-            lastBankedSig = sig10;
-            lastBankedAt = Date.now();
-            recordDraw(nums);
-            render();
-            paintTiles();
-        }
+        /** True once this site's selected signature is known. Until then the tool
+         *  cannot separate your ticket from a reveal, so it refuses to guess. */
+        function calibrated() { return store.selSigs.length > 0; }
 
         function sample() {
             var sig = readSignatures();
             if (!sig) return;
-            if (!baseline) { baseline = sig; return; }
+            var prev = prevSig;
+            prevSig = sig;
+            if (!prev) return;
 
-            var now = Date.now(), changed = [], k;
+            /* Settled only — a signature has to match the previous sample. This
+               is what keeps a CSS fade from reading as a reveal. */
+            var settled = {}, k, now = Date.now();
             for (k in sig) {
                 if (!Object.prototype.hasOwnProperty.call(sig, k)) continue;
-                if (clickedAt[k]) {
-                    var age = now - clickedAt[k];
-                    /* Still moving? Keep folding. A signature that differs from
-                       the one read at the previous sample has not settled yet —
-                       a CSS transition mid-flight — and dropping grace here is
-                       exactly what turned a pick into a phantom draw. */
-                    var settled = clickSig[k] === sig[k];
-                    if (age < CLICK_GRACE || (!settled && age < CLICK_GRACE_MAX)) {
-                        baseline[k] = sig[k];        // yours — keep the baseline current
-                        clickSig[k] = sig[k];
-                        continue;
-                    }
-                    delete clickedAt[k];
-                    delete clickSig[k];
+                if (sig[k] === prev[k]) settled[k] = sig[k];
+            }
+            var rest = restingSig(settled);
+            if (rest === null) return;
+
+            /* Learn what "selected" looks like from a tile you just tapped, once
+               it has stopped moving. A tap that only DESELECTS lands back on the
+               resting signature and teaches nothing, which is correct. */
+            for (k in pendingClick) {
+                if (!Object.prototype.hasOwnProperty.call(pendingClick, k)) continue;
+                if (settled[k] !== undefined && settled[k] !== rest) {
+                    learnSelected(settled[k]);
+                    delete pendingClick[k];
+                } else if (now - pendingClick[k] > CLICK_LEARN_MS) {
+                    delete pendingClick[k];
                 }
-                if (baseline[k] !== undefined && sig[k] !== baseline[k]) changed.push(+k);
+            }
+            if (!calibrated()) return;
+
+            /* Drawn = settled, not resting, not one of the selected states. On
+               the measured Nuts board that is the 9 green plus the 1 transparent
+               — exactly ten — while the purple pick is correctly left out. */
+            var drawn = [];
+            for (k in settled) {
+                if (!Object.prototype.hasOwnProperty.call(settled, k)) continue;
+                if (settled[k] === rest) continue;
+                if (store.selSigs.indexOf(settled[k]) >= 0) continue;
+                drawn.push(+k);
             }
 
-            if (!changed.length) {
-                // Back at the baseline: the round is over (or never started). Re-arm.
-                pending = []; recorded = false; baseline = sig;
-                clickedSinceArm = {};
-                return;
-            }
-            if (recorded) return;
+            /* The result stays on screen until the next round, so the latch is
+               released by the board going clear rather than by a timer. */
+            if (!drawn.length) { revealed = false; return; }
+            if (revealed) return;
+            /* Only a complete reveal. A partial one is not a smaller sample, it
+               is a biased one — the tiles most likely to be missed are the ones
+               you picked, whose flash is shortest. */
+            if (drawn.length !== SITE.expect) return;
 
-            for (var i = 0; i < changed.length; i++) {
-                if (pending.indexOf(changed[i]) < 0) pending.push(changed[i]);
-            }
-            if (pending.length >= SITE.expect) commitPending();
+            drawn.sort(function (a, b) { return a - b; });
+            /* Belt and braces on top of the latch: never the same ten twice in a
+               row. A live store once held 1309 draws of which only 1005 were
+               distinct — 303 consecutive duplicates, some sets banked 35 times,
+               which on its own made the board look hot. Two identical
+               consecutive keno draws are a 1-in-847-million event. */
+            var sig10 = drawn.join(',');
+            if (sig10 === lastBankedSig && now - lastBankedAt < DUPE_WINDOW_MS) return;
+            revealed = true;
+            lastBankedSig = sig10;
+            lastBankedAt = now;
+            recordDraw(drawn);
+            render();
+            paintTiles();
         }
 
         /* Driven by mutations rather than by the clock: a Nuts hit can flash and
@@ -11590,12 +11719,40 @@ self.onmessage = async (e) => {
            TILE TINTING — an absolutely-positioned, pointer-events:none child,
            so the tile stays clickable and the site's own colours read through.
            --------------------------------------------------------------- */
+        /* Banded rather than one continuous ramp. A smooth gradient makes
+           "slightly above expectation" and "well above" two similar oranges you
+           cannot tell apart on a phone; discrete steps give each degree its own
+           colour, so a mild lean reads as pale yellow and only a genuine outlier
+           reaches red. Thresholds are in standard deviations, so they mean the
+           same thing at 50 draws or 500. */
+        var HEAT_BANDS = [
+            { z: 2.50, hot: '244,63,54',   cold: '37,99,235',   a: 0.60, name: 'very hot',  cname: 'very cold' },
+            { z: 1.75, hot: '251,113,36',  cold: '59,130,246',  a: 0.50, name: 'hot',       cname: 'cold' },
+            { z: 1.00, hot: '250,176,46',  cold: '96,165,250',  a: 0.38, name: 'warm',      cname: 'cool' },
+            /* The mildest band is deliberately PALER and slightly stronger than
+               a linear ramp would make it. On these near-black boards a faint
+               wash of any colour just reads as muddy olive/grey; lifting the
+               luminance is what makes "barely above expectation" look light
+               rather than dark. Checked on a live Shuffle board. */
+            { z: 0.45, hot: '255,238,160', cold: '190,225,255', a: 0.34, name: 'mild',      cname: 'mild' }
+        ];
         function tintFor(z) {
-            var a = Math.min(1, Math.abs(z) / 2.5);           // |z| >= 2.5 saturates
-            if (a < 0.08) return null;                        // near-expected: leave clean
-            return z > 0
-                ? 'rgba(255,' + Math.round(150 - 110 * a) + ',60,' + (0.16 + 0.42 * a).toFixed(3) + ')'
-                : 'rgba(60,' + Math.round(150 + 60 * a) + ',255,' + (0.14 + 0.34 * a).toFixed(3) + ')';
+            var az = Math.abs(z), i;
+            for (i = 0; i < HEAT_BANDS.length; i++) {
+                if (az >= HEAT_BANDS[i].z)
+                    return 'rgba(' + (z > 0 ? HEAT_BANDS[i].hot : HEAT_BANDS[i].cold) + ',' + HEAT_BANDS[i].a + ')';
+            }
+            return null;                                      // near expectation: leave clean
+        }
+        /** The GLOW colour only — the ring itself stays white. Tried the accent
+         *  for both on a live Shuffle board and the pick vanished: Shuffle already
+         *  paints a selected tile solid #6c47ff, so a #6c47ff ring on it is
+         *  invisible. White reads against every one of the three brand colours
+         *  (purple, neon green, slate) and the accent glow keeps it themed. */
+        function pickRingColour() {
+            return SITE === SITES.shuffle ? '#6c47ff'
+                 : SITE === SITES.nuts    ? '#19f3ff'
+                 : '#00ff9d';
         }
         /* Anything WE draw on the board has to be invisible to the capture. The
            tint is a child of the tile and the observer watches the subtree, so
@@ -11605,12 +11762,12 @@ self.onmessage = async (e) => {
            tints at once changed forty signatures in one go, and the next sample
            banked a phantom draw straight after you cleared the history. */
         function rearmCapture() {
-            /* Deliberately does NOT clear `recorded`. That latch is what stops a
+            /* Deliberately does NOT clear `revealed`. That latch is what stops a
                round being banked twice, and clearing it here — right after
-               commitPending() calls paintTiles() — re-opened the round the
-               instant it had been banked. */
-            pending = [];
-            baseline = readSignatures();
+               sample() calls paintTiles() — re-opened the round the instant it
+               had been banked. Re-reading prevSig only costs the next sample its
+               settled test, which the following one recovers. */
+            prevSig = readSignatures();
         }
         function clearTints() {
             var old = document.querySelectorAll('.keno-hot-tint'), i;
@@ -11623,19 +11780,35 @@ self.onmessage = async (e) => {
             if (!all.length) return;
             var heat = computeHeat(windowDraws(), all.length);
             if (!heat.rounds) { clearTints(); return; }
+            /* Your picks get an accent ring. It is drawn on the SAME overlay span
+               as the heat tint on purpose: that span is already excluded from the
+               tile signature, so outlining a pick cannot be mistaken for the board
+               changing. Putting a class or an outline on the tile BUTTON would
+               change the signature on Shuffle, where the signature is the button's
+               class list — the tool would then read its own highlight as a draw. */
+            var ring = pickRingColour(), picked = {}, pk = currentPicks(), pi;
+            for (pi = 0; pi < pk.length; pi++) picked[pk[pi]] = true;
+
             for (var i = 0; i < all.length; i++) {
                 var btn = all[i], n = SITE.number(btn, i);
                 if (!n) continue;
                 var col = tintFor(heat.z[n]);
+                var isPick = !!picked[n];
                 var tint = btn.querySelector('.keno-hot-tint');
-                if (!col) { if (tint) tint.remove(); continue; }
+                /* With Counts on, EVERY tile carries its number — a tile sitting
+                   at expectation has no tint, and leaving it blank made the count
+                   look like it only existed for hot numbers. The figure is
+                   recomputed from the window on each repaint, so it falls as
+                   draws age out of the last-50/100/250 as well as rising. */
+                if (!col && !isPick && !showCounts) { if (tint) tint.remove(); continue; }
                 if (!tint) {
                     if (getComputedStyle(btn).position === 'static') btn.style.position = 'relative';
                     tint = document.createElement('span');
                     tint.className = 'keno-hot-tint';
                     btn.appendChild(tint);
                 }
-                tint.style.background = col;
+                tint.style.background = col || 'transparent';
+                tint.style.boxShadow = isPick ? 'inset 0 0 0 2px rgba(255,255,255,.95), 0 0 9px 1px ' + ring : '';
                 tint.textContent = showCounts ? String(heat.counts[n]) : '';
             }
             rearmCapture();
@@ -11670,8 +11843,31 @@ self.onmessage = async (e) => {
             '#keno-preset-gui .kh-list b{font-variant-numeric:tabular-nums}' +
             '#keno-preset-gui .kh-hot b{color:#f87171}' +
             '#keno-preset-gui .kh-cold b{color:#60a5fa}' +
+            '#keno-preset-gui .kh-rep b{color:var(--kp-accent,#10b981)}' +
+            '#keno-preset-gui .kh-rep i{opacity:.55;font-style:normal;font-size:9px}' +
+            '#keno-preset-gui .kh-rep-row{display:block;line-height:1.5}' +
+            /* A repeat that chance alone does not account for. Rare by design —
+               most rows are ordinary, and marking the odd one keeps the list
+               honest without hiding anything. */
+            '#keno-preset-gui .kh-rep-hot b{color:#fbbf24}' +
+            '#keno-preset-gui .kh-rep-hot i{opacity:.85;color:#fbbf24}' +
+            '#keno-preset-gui .kh-scan{margin-left:6px;background:rgba(255,255,255,.09);' +
+              'border:1px solid rgba(255,255,255,.16);color:inherit;border-radius:4px;' +
+              'font-size:9px;padding:1px 6px;cursor:pointer;text-transform:none;letter-spacing:0}' +
+            '#keno-preset-gui .kh-scan:active{background:rgba(255,255,255,.2)}' +
             '#keno-preset-gui .kh-k{display:block;opacity:.5;text-transform:uppercase;font-size:9px;' +
             'letter-spacing:.5px;margin-bottom:2px}' +
+            /* Legend. The swatch is the tint composited over a tile-dark base, so
+               it is the colour that lands on the board rather than a description
+               of it. Wraps, because the label widths move with the window size. */
+            '#keno-preset-gui .kh-legend{display:flex;flex-direction:column;gap:3px}' +
+            '#keno-preset-gui .kh-lgrow{display:flex;flex-wrap:wrap;gap:3px 7px;' +
+              'font-size:9px;opacity:.75;font-variant-numeric:tabular-nums}' +
+            '#keno-preset-gui .kh-lg{display:inline-flex;align-items:center;gap:3px;white-space:nowrap}' +
+            '#keno-preset-gui .kh-lg i{width:11px;height:11px;border-radius:3px;flex:0 0 auto;' +
+              'box-shadow:inset 0 0 0 1px rgba(255,255,255,.10)}' +
+            '#keno-preset-gui .kh-lg i.kh-lg-pick{background:#181c25;' +
+              'box-shadow:inset 0 0 0 2px rgba(255,255,255,.95)}' +
             '#keno-preset-gui .kh-btns{display:flex;gap:6px}' +
             '#keno-preset-gui .kh-btn{flex:1;background:rgba(255,255,255,.06);color:inherit;' +
             'border:1px solid rgba(255,255,255,.14);border-radius:5px;padding:5px 8px;font-size:11px;' +
@@ -11686,10 +11882,14 @@ self.onmessage = async (e) => {
             'color:inherit;border-radius:4px;padding:2px 8px;font-size:10px;cursor:pointer;' +
             'font-family:inherit;opacity:.8}' +
             '#keno-preset-gui .kh-reset:hover{color:#f87171;border-color:#f87171;opacity:1}' +
+            /* The count sits at the FOOT of the tile, not its centre — centred it
+               landed straight on top of the tile's own number and you could not
+               read either. Smaller and dimmer too: the big digit is the number
+               you are picking, this is a footnote about it. */
             '.keno-hot-tint{position:absolute;inset:0;border-radius:inherit;pointer-events:none;' +
-            'display:flex;align-items:center;justify-content:center;' +
-            "font:800 10px/1 ui-monospace,SFMono-Regular,Menlo,monospace;color:rgba(255,255,255,.85);" +
-            'text-shadow:0 1px 2px rgba(0,0,0,.7)}';
+            'display:flex;align-items:flex-end;justify-content:center;padding-bottom:2px;' +
+            "font:800 9px/1 ui-monospace,SFMono-Regular,Menlo,monospace;color:rgba(255,255,255,.72);" +
+            'text-shadow:0 1px 2px rgba(0,0,0,.85)}';
 
         function injectCss() {
             if (document.getElementById('keno-hot-css')) return;
@@ -11701,7 +11901,8 @@ self.onmessage = async (e) => {
             (document.head || document.documentElement).appendChild(marker);
         }
 
-        var sect = null, elHot = null, elCold = null, elStat = null, elSpots = null, elCount = null;
+        var sect = null, elHot = null, elCold = null, elStat = null, elSpots = null, elCount = null, elRep = null;
+        var elLegend = null;
         var showHeat = true, showCounts = true;
         function setStatus(t) { if (elStat) elStat.textContent = t || ''; }
 
@@ -11726,6 +11927,12 @@ self.onmessage = async (e) => {
                   '</select></div>' +
                 '<div class="kh-list kh-hot"><span class="kh-k">Hottest</span><span data-kh="hot">—</span></div>' +
                 '<div class="kh-list kh-cold"><span class="kh-k">Coldest</span><span data-kh="cold">—</span></div>' +
+                /* Scanned on demand rather than every draw: enumerating every
+                   pair, trio and quad in the window is far too much work to
+                   repeat on each round, especially at speed on a phone. */
+                '<div class="kh-list kh-rep"><span class="kh-k">Repeat groups' +
+                  '<button class="kh-scan" type="button" data-kh="scan">Scan</button></span>' +
+                  '<span data-kh="rep">press Scan</span></div>' +
                 '<div class="kh-row"><span>Spots to pick</span>' +
                   '<input type="number" min="1" max="' + MAX_PICKS + '" value="10" data-kh="spots"></div>' +
                 '<div class="kh-btns">' +
@@ -11736,6 +11943,7 @@ self.onmessage = async (e) => {
                   '<input type="checkbox" data-kh="heat" checked>Heatmap</label>' +
                   '<label style="display:flex;align-items:center;gap:5px;cursor:pointer">' +
                   '<input type="checkbox" data-kh="counts" checked>Counts</label></div>' +
+                '<div class="kh-legend" data-kh="legend"></div>' +
                 '<div class="kh-status"></div>' +
                 '<div class="kh-foot"><span>v' + KH_VERSION + '</span>' +
                   '<button class="kh-reset" type="button" data-kh="reset">Reset draws</button></div>';
@@ -11745,6 +11953,25 @@ self.onmessage = async (e) => {
             elStat  = el.querySelector('.kh-status');
             elSpots = el.querySelector('[data-kh="spots"]');
             elCount = el.querySelector('[data-kh="count"]');
+            elRep   = el.querySelector('[data-kh="rep"]');
+            elLegend = el.querySelector('[data-kh="legend"]');
+
+            el.querySelector('[data-kh="scan"]').addEventListener('click', function () {
+                var win = windowDraws();
+                if (win.length < 2) { elRep.textContent = 'not enough draws yet'; return; }
+                elRep.textContent = 'scanning ' + win.length + '…';
+                /* Yield first so the label paints before the scan blocks. */
+                setTimeout(function () {
+                    var t0 = Date.now();
+                    var groups = computeCombos(win, boardSize(), 8);
+                    elRep.innerHTML = groups.length ? groups.map(function (g) {
+                        return '<span class="kh-rep-row' + (g.notable ? ' kh-rep-hot' : '') + '">' +
+                               '<b>' + g.nums + '</b> &times;' + g.count +
+                               ' <i>vs ' + g.expected.toFixed(1) + ' expected</i></span>';
+                    }).join('') : 'no group has repeated yet';
+                    setStatus('scanned ' + win.length + ' draws in ' + (Date.now() - t0) + 'ms');
+                }, 30);
+            });
 
             var sel = el.querySelector('[data-kh="window"]');
             sel.value = String(store.window);
@@ -11772,13 +11999,57 @@ self.onmessage = async (e) => {
             }).join('  ');
         }
 
+        /** A swatch painted with the REAL tint, composited over a tile-dark base
+         *  so it looks like what is actually on the board — naming the shades in
+         *  words ("light orange") only invites arguing with the screen. */
+        function swatch(col, label) {
+            var bg = col ? 'linear-gradient(' + col + ',' + col + '),#181c25' : '#181c25';
+            return '<span class="kh-lg"><i style="background:' + bg + '"></i>' + label + '</span>';
+        }
+        /* Ranges are given as DRAW COUNTS, not standard deviations, because the
+           count is the number printed on the tile. The bands are defined in
+           sigma, so the counts they map to move with the window size — which is
+           the point: the same colour means the same thing at 50 draws or 500. */
+        function legendHtml(heat) {
+            if (!heat.rounds || !(heat.sd > 0)) return '';
+            var lo = function (z) { return Math.ceil(heat.mean + z * heat.sd); };
+            var hot = [], cold = [], i, a, b;
+            for (i = 0; i < HEAT_BANDS.length; i++) {
+                a = lo(HEAT_BANDS[i].z);
+                b = (i === 0) ? null : lo(HEAT_BANDS[i - 1].z) - 1;   // top band is open-ended
+                if (b !== null && b < a) continue;                    // band spans no whole count
+                hot.push(swatch('rgba(' + HEAT_BANDS[i].hot + ',' + HEAT_BANDS[i].a + ')',
+                                b === null ? a + '+' : (a === b ? String(a) : a + '&ndash;' + b)));
+                a = Math.floor(heat.mean - HEAT_BANDS[i].z * heat.sd);
+                b = (i === 0) ? null : Math.floor(heat.mean - HEAT_BANDS[i - 1].z * heat.sd) + 1;
+                if (b !== null && b > a) continue;
+                cold.push(swatch('rgba(' + HEAT_BANDS[i].cold + ',' + HEAT_BANDS[i].a + ')',
+                                 b === null ? '&le;' + (a < 0 ? 0 : a) : (a === b ? String(a) : b + '&ndash;' + a)));
+            }
+            var mid = Math.floor(heat.mean - HEAT_BANDS[HEAT_BANDS.length - 1].z * heat.sd) + 1;
+            var midHi = lo(HEAT_BANDS[HEAT_BANDS.length - 1].z) - 1;
+            /* One continuous scale, coldest to hottest, wrapping as it needs to.
+               Split into a cold row and a hot row it read as two separate ramps
+               and the eye kept jumping back to the middle. */
+            return '<div class="kh-lgrow">' + cold.join('') +
+                     swatch(null, midHi >= mid ? (mid === midHi ? String(mid) : mid + '&ndash;' + midHi) : 'expected') +
+                     hot.reverse().join('') + '</div>' +
+                   '<div class="kh-lgrow"><span class="kh-lg"><i class="kh-lg-pick"></i>your picks</span></div>';
+        }
+
         function render() {
             if (!sect || !sect.isConnected) return;
             var heat = computeHeat(windowDraws(), boardSize());
             elHot.innerHTML = listHtml(heat, false);
             elCold.innerHTML = listHtml(heat, true);
+            if (elLegend) elLegend.innerHTML = legendHtml(heat);
             elCount.textContent = store.draws.length + ' draw' + (store.draws.length === 1 ? '' : 's') +
                 (heat.rounds !== store.draws.length ? ' (' + heat.rounds + ' in window)' : '');
+            /* Say so rather than sitting there recording nothing. The old version
+               silently banked whatever it saw; this one waits to be shown what a
+               selected tile looks like, and has to admit it is waiting. */
+            if (!calibrated() && elStat && !elStat.textContent)
+                setStatus('Tap any number once so I can learn this site’s selected colour — until then draws are not recorded.');
         }
 
         /* ---------------------------------------------------------------

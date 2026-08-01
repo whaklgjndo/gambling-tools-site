@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Stake Dice — Desktop
 // @namespace    http://tampermonkey.net/
-// @version      3.37
+// @version      3.38
 // @description  Standalone single-tool build, extracted from the unified bundle.
 // @author       .
 // @match        https://stake.com/*
@@ -26,7 +26,7 @@
 (function () {
     'use strict';
 
-    console.log('%cStake Dice — Desktop — standalone build v3.37', 'color:#17c7b8;font-weight:800;font-size:13px');
+    console.log('%cStake Dice — Desktop — standalone build v3.38', 'color:#17c7b8;font-weight:800;font-size:13px');
 
     /* =========================================================
        PRE-STITCH UI HIDER
