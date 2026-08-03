@@ -52,6 +52,23 @@
         <!-- ============ Add new releases above this line (newest first) ============ -->
         <article class="release latest" data-reveal>
           <div class="release-head">
+            <span class="ver-badge">v3.39</span>
+            <span class="chip">Desktop</span>
+            <span class="ver-badge">v6.10</span>
+            <span class="chip">Mobile</span>
+            <span class="rel-date">August 3, 2026</span>
+          </div>
+          <h2 class="rel-title">URGENT — Stake changed its layout and broke every stop limit</h2>
+          <ul class="changes">
+            <li><span class="tag fixed">Fixed</span><span class="ctxt"><b>Stake redesigned its site and the tools could no longer read your balance &mdash; which silently switched off stop-loss, take-profit and autostop.</b> Every one of those limits is a comparison against your balance, so when the balance read as <b>0</b> none of them could ever trigger and a losing run had nothing left to stop it. Update immediately. Affects <b>Smart mode</b> and <b>Advanced IOW</b> on Dice and Limbo, and <b>Moles</b>.</span></li>
+            <li><span class="tag fixed">Fixed</span><span class="ctxt">The cause: Stake renamed its styling classes (<code>ds-body-md-strong</code> became <code>edge_typography_body_md_strong</code>), so the element the tools read the balance from no longer matched anything. <b>Moles</b> was worse &mdash; all four of the selectors it tried were removed by Stake, so it was completely blind.</span></li>
+            <li><span class="tag added">Added</span><span class="ctxt"><b>A fail-safe, so this can never go unnoticed again.</b> If the balance cannot be read, the tools now <b>stop and tell you</b> instead of carrying on with the safety limits disabled. A stopped run costs nothing; an unbounded one costs everything.</span></li>
+            <li><span class="tag fixed">Fixed</span><span class="ctxt">Currency detection also broke &mdash; the balance bar used to read &ldquo;25.00 SC&rdquo; and now reads &ldquo;25.00 Wallet&rdquo;, with no currency code. It reads the page's own currency attribute instead, so SC and GC are told apart correctly again.</span></li>
+            <li><span class="tag fixed">Fixed</span><span class="ctxt">The Play button lookup and the calculator's &ldquo;import balance&rdquo; button relied on the same renamed class and have been updated.</span></li>
+          </ul>
+        </article>
+        <article class="release" data-reveal>
+          <div class="release-head">
             <span class="ver-badge">v3.38</span>
             <span class="chip">Desktop</span>
             <span class="ver-badge">v6.09</span>

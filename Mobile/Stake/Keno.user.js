@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Stake Keno — Mobile
 // @namespace    http://tampermonkey.net/
-// @version      6.09
+// @version      6.10
 // @description  Standalone single-tool mobile build, extracted from the unified mobile bundle.
 // @author       .
 // @match        https://stake.com/*
@@ -25,7 +25,7 @@
 (function () {
     'use strict';
 
-    try { console.log('[Stake Keno — Mobile] standalone build v6.09'); } catch (e) {}
+    try { console.log('[Stake Keno — Mobile] standalone build v6.10'); } catch (e) {}
 
 
     try { console.log('[unified-mobile] boot v5.64 — DiceTool.exe replica UI for the dice tool (Calculator / Easy Mode / Strategy Finder / Results / Settings)'); } catch (e) {}

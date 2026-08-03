@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Stake Auto-Vault — Desktop
 // @namespace    http://tampermonkey.net/
-// @version      3.38
+// @version      3.39
 // @description  Standalone single-tool build, extracted from the unified bundle.
 // @author       .
 // @match        https://stake.com/*
@@ -26,7 +26,7 @@
 (function () {
     'use strict';
 
-    console.log('%cStake Auto-Vault — Desktop — standalone build v3.38', 'color:#17c7b8;font-weight:800;font-size:13px');
+    console.log('%cStake Auto-Vault — Desktop — standalone build v3.39', 'color:#17c7b8;font-weight:800;font-size:13px');
 
     /* =========================================================
        UNIFIED LOADER — STORAGE KEYS & SETTINGS
@@ -834,6 +834,19 @@
     }
 
     function detectCurrencyFromBalanceBar() {
+        /* The balance bar used to read "25.00 SC". Since Stake's 2026 redesign it
+           reads "25.00 Wallet" — no currency code — so the old uppercase-letters
+           match returned null and the currency cross-check inside
+           getCurrentBalance() silently stopped working. Read the attribute the
+           page now carries instead; it is the same value getCurrency() uses, so
+           the two agree by construction. */
+        const attr = document.querySelector('[data-active-currency]') ||
+                     document.querySelector('[data-bet-amount-active-currency]');
+        if (attr) {
+            const v = attr.getAttribute('data-active-currency') ||
+                      attr.getAttribute('data-bet-amount-active-currency');
+            if (v) return v.toLowerCase();
+        }
         const el =
             document.querySelector('[data-testid="coin-toggle"]') ||
             document.querySelector('[data-testid="balance-toggle"]');

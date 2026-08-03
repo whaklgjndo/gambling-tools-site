@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Shuffle Limbo — Mobile
 // @namespace    http://tampermonkey.net/
-// @version      6.09
+// @version      6.10
 // @description  Standalone single-tool mobile build, extracted from the unified mobile bundle.
 // @author       .
 // @match        https://shuffle.com/*
@@ -16,7 +16,7 @@
 (function () {
     'use strict';
 
-    try { console.log('[Shuffle Limbo — Mobile] standalone build v6.09'); } catch (e) {}
+    try { console.log('[Shuffle Limbo — Mobile] standalone build v6.10'); } catch (e) {}
 
 
     try { console.log('[unified-mobile] boot v5.64 — DiceTool.exe replica UI for the dice tool (Calculator / Easy Mode / Strategy Finder / Results / Settings)'); } catch (e) {}
@@ -663,6 +663,12 @@
     let sessionPeak = 0;
     let initialBalance = 0;
     let lastKnownBalance = 0;
+    /* Set by getCurrentBalance() on every read. When the site changes its DOM
+       out from under us the balance becomes unreadable, and a silent 0 turns off
+       stop-loss, take-profit and autostop all at once — which is exactly how a
+       losing run was allowed to continue unchecked on 2026-08-03. A run must NOT
+       proceed while this is false. */
+    let balanceReadable = true;
     let totalWagered = 0;
     let highestProfit = 0;
     let totalWins = 0;
@@ -2060,27 +2066,44 @@
             const val = parseFloat(cleaned);
             return !isNaN(val) ? val : null;
         };
-        const balanceElems = document.querySelectorAll('span.text-neutral-default.ds-body-md-strong[data-ds-text="true"][style*="max-width: 16ch"]');
-        let fallbackVal = null;
-        for (let elem of balanceElems) {
-            const val = parseBalText(elem.textContent);
+        /* MEASURED LIVE 2026-08-03, stake.us: the old selector matched NOTHING.
+
+               span.text-neutral-default.ds-body-md-strong[data-ds-text][style*="max-width: 16ch"]
+
+           Stake moved to a new design system and renamed its typography classes
+           — `ds-body-md-strong` is now `edge_typography_body_md_strong`, and
+           `span.ds-body-md-strong` returns 0 elements site-wide. This function
+           then fell through to `return lastKnownBalance || 0` and handed every
+           caller a ZERO.
+
+           That is not a cosmetic failure. Stop-loss, take-profit and autostop
+           are all comparisons against the balance, so a balance of 0 silently
+           disables every one of them and a losing run has nothing to stop it.
+
+           The coin-toggle chain below is what the rest of the bundle already
+           used and is verified live; it reads the ACTIVE currency's balance, so
+           it needs no icon matching. The old selector is kept last in case
+           Stake serves the previous UI to anyone. */
+        const STAKE_BALANCE_SELECTORS = [
+            '[data-testid="coin-toggle"] .content span[data-ds-text="true"]',
+            '[data-testid="balance-toggle"] .content span[data-ds-text="true"]',
+            '[data-testid="coin-toggle"] .content span',
+            '[data-testid="balance-toggle"] span.content span',
+            'span[data-ds-text="true"][style*="16ch"]',
+            'span.text-neutral-default.ds-body-md-strong[data-ds-text="true"][style*="max-width: 16ch"]'
+        ];
+        for (const sel of STAKE_BALANCE_SELECTORS) {
+            const el = document.querySelector(sel);
+            if (!el) continue;
+            const val = parseBalText(el.textContent);
             if (val === null) continue;
-            if (fallbackVal === null) fallbackVal = val;
-            if (!iconName) continue;
-            const sibling = elem.parentElement && elem.parentElement.nextElementSibling;
-            if (!sibling) continue;
-            const svg = sibling.querySelector('svg[data-ds-icon]');
-            const svgIcon = svg && (svg.getAttribute('data-ds-icon') || '').toUpperCase();
-            const title = (sibling.getAttribute('title') || '').toUpperCase();
-            if (svgIcon === iconName || title === iconName) {
-                lastKnownBalance = val;
-                return val;
-            }
+            lastKnownBalance = val;
+            balanceReadable = true;
+            return val;
         }
-        if (fallbackVal !== null) {
-            lastKnownBalance = fallbackVal;
-            return fallbackVal;
-        }
+        /* Could not read it at all. Say so loudly rather than returning a zero
+           that quietly switches off the safety limits. */
+        balanceReadable = false;
         return lastKnownBalance || 0;
     }
 
@@ -2168,7 +2191,12 @@
         }
         let btn = document.querySelector('button[data-testid="bet-button"]');
         if (btn) return btn;
-        const spans = document.querySelectorAll('span.ds-body-md-strong[data-ds-text="true"]');
+        // `ds-body-md-strong` was renamed to `edge_typography_body_md_strong`
+        // in Stake's 2026 design system; match either, plus any labelled span.
+        const spans = document.querySelectorAll(
+            'span.ds-body-md-strong[data-ds-text="true"],' +
+            'span[class*="edge_typography_body"][data-ds-text="true"],' +
+            'span[data-ds-text="true"]');
         for (let span of spans) {
             if (span.textContent.trim() === 'Play') {
                 const button = span.closest('button');
@@ -3269,6 +3297,19 @@
        watcher below, which has no tile to read) reuse this function's per-mode
        logic instead of duplicating the iow / cond / smart branches. */
     function processNewBet(container, specificTile, forcedWon) {
+        /* FAIL SAFE. Every limit this tool offers — stop loss, take profit,
+           autostop — is a comparison against the balance. If the balance cannot
+           be read, none of them can fire, and on 2026-08-03 that let losing runs
+           continue with every safety switch silently off. Refusing to bet is the
+           only correct behaviour: a stopped run costs nothing, an unbounded one
+           costs everything. */
+        getCurrentBalance();
+        if (!balanceReadable && isRapidFiring) {
+            stopRapidFire();
+            log('⛔ STOPPED: cannot read your balance, so stop-loss / take-profit / autostop cannot be enforced. The site has probably changed its layout — update the script.');
+            try { alert('Tools stopped: your balance could not be read, so the stop-loss and take-profit limits could not be enforced.\n\nThis usually means the casino changed its page layout. Update the script before running again.'); } catch (e) {}
+            return;
+        }
         const haveForced = (forcedWon === true || forcedWon === false);
         // The Nuts observer passes the exact tile it counted; other callers
         // fall back to "latest entry" + id-based dedup (Stake path).
@@ -7295,7 +7336,11 @@ self.onmessage = async (e) => {
     }
 
     async function dt_stake_exportBalance() {
-        const el = document.querySelector('span.ds-body-md-strong[data-ds-text="true"][style*="max-width: 16ch"]') ||
+        // `ds-body-md-strong` no longer exists on Stake (renamed to
+        // `edge_typography_*`); read the coin toggle, which is verified live.
+        const el = document.querySelector('[data-testid="coin-toggle"] .content span[data-ds-text="true"]') ||
+                   document.querySelector('[data-testid="balance-toggle"] .content span[data-ds-text="true"]') ||
+                   document.querySelector('span.ds-body-md-strong[data-ds-text="true"][style*="max-width: 16ch"]') ||
                    document.querySelector('span.ds-body-md-strong[data-ds-text="true"]');
         if (!el) { dt_toast('Balance element not found'); return; }
         const rawText = el.textContent.trim();

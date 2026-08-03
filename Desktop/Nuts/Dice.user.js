@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Nuts Dice — Desktop
 // @namespace    http://tampermonkey.net/
-// @version      3.38
+// @version      3.39
 // @description  Standalone single-tool build, extracted from the unified bundle.
 // @author       .
 // @match        https://nuts.gg/*
@@ -17,7 +17,7 @@
 (function () {
     'use strict';
 
-    console.log('%cNuts Dice — Desktop — standalone build v3.38', 'color:#17c7b8;font-weight:800;font-size:13px');
+    console.log('%cNuts Dice — Desktop — standalone build v3.39', 'color:#17c7b8;font-weight:800;font-size:13px');
 
     /* =========================================================
        UNIFIED LOADER — STORAGE KEYS & SETTINGS
@@ -554,6 +554,12 @@
     let sessionPeak = 0;
     let initialBalance = 0;
     let lastKnownBalance = 0;
+    /* Set by getCurrentBalance() on every read. When the site changes its DOM
+       out from under us the balance becomes unreadable, and a silent 0 turns off
+       stop-loss, take-profit and autostop all at once — which is exactly how a
+       losing run was allowed to continue unchecked on 2026-08-03. A run must NOT
+       proceed while this is false. */
+    let balanceReadable = true;
     let totalWagered = 0;
     let highestProfit = 0;
     let totalWins = 0;
@@ -6272,7 +6278,11 @@ self.onmessage = async (e) => {
         return false;
     }
     async function stake_exportBalance() {
-        const el = document.querySelector('span.ds-body-md-strong[data-ds-text="true"][style*="max-width: 16ch"]') ||
+        // `ds-body-md-strong` no longer exists on Stake (renamed to
+        // `edge_typography_*`); read the coin toggle, which is verified live.
+        const el = document.querySelector('[data-testid="coin-toggle"] .content span[data-ds-text="true"]') ||
+                   document.querySelector('[data-testid="balance-toggle"] .content span[data-ds-text="true"]') ||
+                   document.querySelector('span.ds-body-md-strong[data-ds-text="true"][style*="max-width: 16ch"]') ||
                    document.querySelector('span.ds-body-md-strong[data-ds-text="true"]');
         if (!el) { toast('Balance element not found'); return; }
         const rawText = el.textContent.trim();

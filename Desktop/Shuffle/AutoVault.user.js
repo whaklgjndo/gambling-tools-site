@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Shuffle Auto-Vault — Desktop
 // @namespace    http://tampermonkey.net/
-// @version      3.38
+// @version      3.39
 // @description  Standalone single-tool build, extracted from the unified bundle.
 // @author       .
 // @match        https://shuffle.com/*
@@ -17,7 +17,7 @@
 (function () {
     'use strict';
 
-    console.log('%cShuffle Auto-Vault — Desktop — standalone build v3.38', 'color:#17c7b8;font-weight:800;font-size:13px');
+    console.log('%cShuffle Auto-Vault — Desktop — standalone build v3.39', 'color:#17c7b8;font-weight:800;font-size:13px');
 
     /* =========================================================
        UNIFIED LOADER — STORAGE KEYS & SETTINGS

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Stake Moles — Mobile
 // @namespace    http://tampermonkey.net/
-// @version      6.09
+// @version      6.10
 // @description  Standalone single-tool mobile build, extracted from the unified mobile bundle.
 // @author       Zerocu
 // @match        https://stake.com/*
@@ -25,7 +25,7 @@
 (function () {
     'use strict';
 
-    try { console.log('[Stake Moles — Mobile] standalone build v6.09'); } catch (e) {}
+    try { console.log('[Stake Moles — Mobile] standalone build v6.10'); } catch (e) {}
 
 
     try { console.log('[unified-mobile] boot v5.64 — DiceTool.exe replica UI for the dice tool (Calculator / Easy Mode / Strategy Finder / Results / Settings)'); } catch (e) {}
@@ -2766,7 +2766,20 @@
     let balanceStartedAt = null;
 
     function readPageBalance() {
+        /* MEASURED LIVE 2026-08-03 on stake.us/casino/games/moles: ALL FOUR of
+           the original candidates below returned nothing. Stake's new design
+           system dropped `header-balance`, `header-balance-button`,
+           `wallet-amount` and `data-test="balance"` entirely.
+
+           With no balance, checkStopConditions() cannot evaluate stop-loss or
+           take-profit, so a run had nothing left to stop it. The coin-toggle
+           chain is verified live and reads the ACTIVE currency's balance; the
+           old ids are kept as fallbacks. */
         const candidates = [
+            '[data-testid="coin-toggle"] .content span[data-ds-text="true"]',
+            '[data-testid="balance-toggle"] .content span[data-ds-text="true"]',
+            '[data-testid="coin-toggle"] .content span',
+            '[data-testid="balance-toggle"] span.content span',
             '[data-testid="header-balance-button"] [data-testid="header-balance"]',
             '[data-testid="header-balance"]',
             '[data-testid="wallet-amount"]',
