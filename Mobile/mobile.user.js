@@ -11272,7 +11272,7 @@ self.onmessage = async (e) => {
         if (tool_snakes._booted) return;
         tool_snakes._booted = true;
 
-        var SNK_VERSION  = '1.01';
+        var SNK_VERSION  = '1.02';
         /* Tuned to play as fast as the site will let it. The pace is set by the
            GAME, not by us: a control is pressed the instant it becomes usable
            again. A fixed cooldown would either be slower than the game or race
@@ -11286,6 +11286,8 @@ self.onmessage = async (e) => {
         var SETTLE_MS    = 120;    // after a round ends, before opening the next
         var MIN_GAP_MS   = 40;     // never two clicks inside a frame
         var FALLBACK_MS  = 500;    // act anyway if the busy frame was never seen
+        var MULT_SETTLE_MS   = 1500;  // grace for the profit text to catch up with the button
+        var CASHOUT_GRACE_MS = 4000;  // keep retrying Cashout for this long once a target is hit
 
         function buttons() { return Array.prototype.slice.call(document.querySelectorAll('button')); }
         function btnByText(re) {
@@ -11400,6 +11402,8 @@ self.onmessage = async (e) => {
         var clickAt     = 0;      // when we last pressed something
         var sawBusy     = false;  // that control has since gone disabled
         var multAtRoll  = null;   // the multiplier when we last pressed Roll
+        var lastRollAt  = 0;      // when the last Roll was pressed
+        var targetPendingSince = 0; // target reached, waiting for Cashout to free up
         var lastSig     = '';
         var statusText  = 'Idle.';
         /* NO-BET SAFETY GATE — not a setting.
@@ -11464,6 +11468,8 @@ self.onmessage = async (e) => {
                itself. Any one of those is enough, which is what lets the same
                code cover Nuts without having seen its mid-round markup. */
             var live = (!startB) || !!coB || canRoll;
+            // A round going live IS the proof that a bet was accepted.
+            if (live && !roundActive) noteActivity();
             if (live) roundActive = true;
 
             var sig = (startB ? (startB.disabled ? 'S0' : 'S1') : 'S-') +
@@ -11490,6 +11496,7 @@ self.onmessage = async (e) => {
                         : (m > 0 ? 'cashed out at ' + m.toFixed(2) + '×' : 'busted');
                 roundActive = false;
                 rollsDone   = 0;
+                targetPendingSince = 0;
                 noteActivity();
                 handedOver  = false;
                 multAtRoll  = null;
@@ -11526,7 +11533,12 @@ self.onmessage = async (e) => {
             if (atIdle) {
                 if (clickAt && !settled(startB)) return;
                 if (click(startB)) {
-                    noteActivity();
+                    /* Deliberately NOT stamping the watchdog here. Pressing Bet
+                       is not evidence a bet happened — with an empty balance the
+                       press does nothing at all, and stamping on the press would
+                       let that loop reset its own safety gate forever, which is
+                       the exact case the gate exists for. The stamp goes on the
+                       round actually going live. */
                     phase = 'rolling';
                     setStatus('Betting…');
                 } else if (Date.now() - lastChange > STALL_MS) {
@@ -11574,12 +11586,17 @@ self.onmessage = async (e) => {
                     setStatus('Hit ' + nowMult.toFixed(2) + '× (target ' + cfg.target + '×) — cashed out.');
                     return;
                 }
-                /* Target hit but no cashout control to press: stop rolling and
-                   say so rather than rolling past it. */
+                /* Cashout is not clickable YET. Sites disable it while the roll
+                   settles, so the first look after a roll lands often finds it
+                   greyed out — keep trying instead of giving up, because giving
+                   up here used to be permanent and silently skipped the cashout
+                   the player had asked for. */
+                if (!targetPendingSince) targetPendingSince = Date.now();
+                if (Date.now() - targetPendingSince < CASHOUT_GRACE_MS) return;
                 if (!handedOver) {
                     handedOver = true;
                     phase = 'handover';
-                    setStatus('Hit ' + nowMult.toFixed(2) + '× but could not find Cashout — cash out by hand.');
+                    setStatus('Hit ' + nowMult.toFixed(2) + '× but Cashout never became available — cash out by hand.');
                 }
                 return;
             }
@@ -11589,6 +11606,7 @@ self.onmessage = async (e) => {
                 multAtRoll = nowMult;
                 if (click(rollB)) {
                     noteActivity();
+                    lastRollAt = Date.now();
                     rollsDone++;
                     phase = 'rolling';
                     setStatus('Rolled ' + rollsDone + ' of ' + cfg.rolls + '…');
@@ -11598,6 +11616,21 @@ self.onmessage = async (e) => {
 
             /* ---- hand the board back ---- */
             if (canRoll && rollsDone >= cfg.rolls && !handedOver) {
+                /* WAIT FOR THE MULTIPLIER TO CATCH UP FIRST.
+
+                   The Roll button frees up before the site re-renders the profit
+                   text, so on the tick after the final roll the reading is still
+                   the PREVIOUS one. The target test above skips a stale reading
+                   — correctly — and control used to fall straight through to
+                   here, handing over permanently. A target reached on the last
+                   auto roll was therefore ignored, which is exactly how it was
+                   reported: three rolls set, target hit on the third, no cashout.
+
+                   So when a target is armed and the reading has not moved yet,
+                   hold the handover briefly and look again. Bounded, so a site
+                   that never updates the text cannot wedge the round. */
+                if (cfg.target > 0 && nowMult !== null && nowMult === multAtRoll &&
+                    Date.now() - lastRollAt < MULT_SETTLE_MS) return;
                 handedOver = true;
                 phase = 'handover';
                 setStatus('YOUR MOVE — ' + rollsDone + ' roll' + (rollsDone === 1 ? '' : 's') +
