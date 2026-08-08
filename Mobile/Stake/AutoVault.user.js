@@ -3577,7 +3577,15 @@
             prevVaultBal = currentVaultBal();
         }
 
+        function avToolEnabled() {
+            try { return isToolIdEnabled(toolIdForCurrentSite('autovault')); } catch (e) { return true; }
+        }
+
         async function tick() {
+            /* Switched off in the gear panel while running. Mobile REMOVES the
+               widget when a tool is disabled but never cleared this interval, so
+               the vault kept depositing with no panel on screen at all. */
+            if (!avToolEnabled()) { stopMonitor(); return; }
             if (!cfg.isRunning) return;
             const cur = readBalance();
             if (!cur || cur <= 0) return;
@@ -4010,11 +4018,11 @@
         // Refresh UI every 2s even when not running, so balance display updates.
         setInterval(() => uiWidget.render(), 2000);
         uiWidget.render();
-        if (cfg.isRunning) {
-            // User had it running before page reload; resume.
-            cfg.isRunning = false; // toggle back off so startMonitor() re-arms cleanly
-            startMonitor();
-        }
+        /* Deliberately does NOT resume a previous session. This used to re-arm
+           itself on every page load once you had pressed Start even once, which
+           is how it came to be "running when I never turned it on". A tool that
+           moves money starts only when you press Start, on this page load. */
+        if (cfg.isRunning) { cfg.isRunning = false; saveCfg(); uiWidget.render(); }
     }
 
     /* ============================================================
@@ -4099,6 +4107,9 @@
             if (isOnAnyCasinoPage() && isToolIdEnabled(toolIdForCurrentSite('autovault'))) {
                 try { tool_autovault(); markToolRan(toolIdForCurrentSite('autovault')); } catch (e) { console.error('[unified-mobile] tool_autovault failed:', e); }
             } else if (!isToolIdEnabled(toolIdForCurrentSite('autovault'))) {
+                /* Removing the node is not enough on its own - the monitor lives
+                   on an interval, not on the DOM. The tick guards itself too;
+                   this just tears the widget down at the same time. */
                 const av = document.getElementById('autovault-floaty');
                 if (av) av.remove();
             }

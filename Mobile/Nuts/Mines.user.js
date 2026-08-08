@@ -2315,6 +2315,9 @@
             if (isOnAnyCasinoPage() && isToolIdEnabled(toolIdForCurrentSite('autovault'))) {
                 try { tool_autovault(); markToolRan(toolIdForCurrentSite('autovault')); } catch (e) { console.error('[unified-mobile] tool_autovault failed:', e); }
             } else if (!isToolIdEnabled(toolIdForCurrentSite('autovault'))) {
+                /* Removing the node is not enough on its own - the monitor lives
+                   on an interval, not on the DOM. The tick guards itself too;
+                   this just tears the widget down at the same time. */
                 const av = document.getElementById('autovault-floaty');
                 if (av) av.remove();
             }

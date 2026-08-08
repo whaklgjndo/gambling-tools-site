@@ -1031,7 +1031,13 @@
         let monitorTimer = null;
         let depositInProgress = false;
 
+        function avToolEnabled() {
+            try { return isToolIdEnabled('shuffle-autovault'); } catch (e) { return true; }
+        }
+
         async function tick() {
+            // Switched off in the gear panel while running - see the Stake twin.
+            if (!avToolEnabled()) { stopMonitor(); return; }
             if (depositInProgress) return;
             const bal = getBalance();
             if (isNaN(bal)) { renderStats(bal, NaN, getSessionVaulted()); return; }
@@ -1200,7 +1206,10 @@
             renderStats(bal, bal - lastBaseline, getSessionVaulted());
         }, 1500);
         // First full tick after a brief delay so the header balance has rendered.
-        setTimeout(() => { renderStats(getBalance(), NaN, getSessionVaulted()); if (config.isRunning) startMonitor(); }, 1500);
+        /* Deliberately does NOT resume a previous session. A tool that moves
+           money starts only when you press Start, on this page load. */
+        if (config.isRunning) { config.isRunning = false; saveConfig(config); }
+        setTimeout(() => { renderStats(getBalance(), NaN, getSessionVaulted()); }, 1500);
     }
 
 

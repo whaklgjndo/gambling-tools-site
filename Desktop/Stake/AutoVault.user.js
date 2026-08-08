@@ -1900,7 +1900,17 @@
         prevVaultBal = currentVaultBal();
     }
 
+    /** The gear-panel switch. Unknown ids read as enabled so a missing loader
+     *  (standalone builds) can never disable the tool by accident. */
+    function avToolEnabled() {
+        try { return isToolIdEnabled('stake-autovault'); } catch (e) { return true; }
+    }
+
     function checkBalanceChanges() {
+        /* Switched off in the gear panel while running. Disabling only hides the
+           panel - it does not stop this loop - so without it the vault kept
+           depositing invisibly. */
+        if (!avToolEnabled()) { stopVaultScript(); return; }
         if (checkCurrencyChange()) return;
         const cur = getCurrentBalance();
         /* Units unknown for the moment — see balanceTrusted. Skipping is safe:

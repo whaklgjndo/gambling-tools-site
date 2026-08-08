@@ -1266,7 +1266,13 @@
         prevVaultBal = (typeof vaultBalance === 'number') ? vaultBalance : null;
     }
 
+    function avToolEnabled() {
+        try { return isToolIdEnabled('nuts-autovault'); } catch (e) { return true; }
+    }
+
     function checkBalanceChanges() {
+        // Switched off in the gear panel while running - see the Stake twin.
+        if (!avToolEnabled()) { stopVault(); return; }
         if (playBalance === null || !isInitialized) return;
         if (oldBalance === null) { rebaseline(playBalance); return; }
         const vaultNow = (typeof vaultBalance === 'number') ? vaultBalance : null;

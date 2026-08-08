@@ -2104,7 +2104,17 @@
         prevVaultBal = currentVaultBal();
     }
 
+    /** The gear-panel switch. Unknown ids read as enabled so a missing loader
+     *  (standalone builds) can never disable the tool by accident. */
+    function avToolEnabled() {
+        try { return isToolIdEnabled('stake-autovault'); } catch (e) { return true; }
+    }
+
     function checkBalanceChanges() {
+        /* Switched off in the gear panel while running. Disabling only hides the
+           panel - it does not stop this loop - so without it the vault kept
+           depositing invisibly. */
+        if (!avToolEnabled()) { stopVaultScript(); return; }
         if (checkCurrencyChange()) return;
         const cur = getCurrentBalance();
         /* Units unknown for the moment — see balanceTrusted. Skipping is safe:
@@ -10109,7 +10119,13 @@ let isRunning = false;
         prevVaultBal = (typeof vaultBalance === 'number') ? vaultBalance : null;
     }
 
+    function avToolEnabled() {
+        try { return isToolIdEnabled('nuts-autovault'); } catch (e) { return true; }
+    }
+
     function checkBalanceChanges() {
+        // Switched off in the gear panel while running - see the Stake twin.
+        if (!avToolEnabled()) { stopVault(); return; }
         if (playBalance === null || !isInitialized) return;
         if (oldBalance === null) { rebaseline(playBalance); return; }
         const vaultNow = (typeof vaultBalance === 'number') ? vaultBalance : null;
@@ -15437,7 +15453,13 @@ let isRunning = false;
         let monitorTimer = null;
         let depositInProgress = false;
 
+        function avToolEnabled() {
+            try { return isToolIdEnabled('shuffle-autovault'); } catch (e) { return true; }
+        }
+
         async function tick() {
+            // Switched off in the gear panel while running - see the Stake twin.
+            if (!avToolEnabled()) { stopMonitor(); return; }
             if (depositInProgress) return;
             const bal = getBalance();
             if (isNaN(bal)) { renderStats(bal, NaN, getSessionVaulted()); return; }
@@ -15606,7 +15628,10 @@ let isRunning = false;
             renderStats(bal, bal - lastBaseline, getSessionVaulted());
         }, 1500);
         // First full tick after a brief delay so the header balance has rendered.
-        setTimeout(() => { renderStats(getBalance(), NaN, getSessionVaulted()); if (config.isRunning) startMonitor(); }, 1500);
+        /* Deliberately does NOT resume a previous session. A tool that moves
+           money starts only when you press Start, on this page load. */
+        if (config.isRunning) { config.isRunning = false; saveConfig(config); }
+        setTimeout(() => { renderStats(getBalance(), NaN, getSessionVaulted()); }, 1500);
     }
 
 
