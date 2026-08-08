@@ -917,10 +917,10 @@
            so heavier saving means a LOWER percentage, and the values cannot be
            shared with the other two panels. */
         const AV_PRESETS = {
-            /* Slots: a long grind punctuated by a spike. Skim little on the way,
+            /* Big wins: a long grind punctuated by a spike. Skim little on the way,
                take a big bite when the balance actually jumps, and do not bother
                looking often — nothing happens between hits. */
-            slots:     { saveAmount: 0.10, bigWinThreshold: 3.0, bigWinMultiplier: 4, checkInterval: 120000 },
+            bigwins:   { saveAmount: 0.10, bigWinThreshold: 3.0, bigWinMultiplier: 4, checkInterval: 120000 },
             /* Fast paced (dice, limbo): profit arrives steadily and rarely spikes,
                so the big-win branch is switched off (multiplier 1) and the ordinary
                skim does the work. The interval is set just under the deposit rate
@@ -960,7 +960,7 @@
                 <div class="av-config">
                     <label>Preset</label>
                     <select id="av-preset">
-                        <option value="slots">Slots — big wins only</option>
+                        <option value="bigwins">Big wins — slots, keno, chasing multis</option>
                         <option value="fast">Fast paced — dice / limbo</option>
                         <option value="balanced">Balanced</option>
                         <option value="aggressive">Aggressive</option>

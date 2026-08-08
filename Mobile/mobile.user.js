@@ -21379,10 +21379,10 @@ function tool_stake_7day_tracker() {
            sites and mobile's bigWinThreshold is a balance MULTIPLE on every one
            of them, so unlike desktop Shuffle a single table is correct here. */
         const AV_PRESETS = {
-            /* Slots: a long grind punctuated by a spike. Skim little on the way,
+            /* Big wins: a long grind punctuated by a spike. Skim little on the way,
                take a big bite when the balance actually jumps, and do not bother
                looking often — nothing happens between hits. */
-            slots:     { saveAmount: 0.10, bigWinThreshold: 3.0, bigWinMultiplier: 4, checkInterval: 120000 },
+            bigwins:   { saveAmount: 0.10, bigWinThreshold: 3.0, bigWinMultiplier: 4, checkInterval: 120000 },
             /* Fast paced (dice, limbo): profit arrives steadily and rarely spikes,
                so the big-win branch is switched off (multiplier 1) and the ordinary
                skim does the work. The interval is set just under the deposit rate
@@ -22065,7 +22065,7 @@ function tool_stake_7day_tracker() {
                          STORED as a fraction; only the display changed. -->
                     <label>Preset</label>
                     <select id="av-preset">
-                        <option value="slots">Slots — big wins only</option>
+                        <option value="bigwins">Big wins — slots, keno, chasing multis</option>
                         <option value="fast">Fast paced — dice / limbo</option>
                         <option value="balanced">Balanced</option>
                         <option value="aggressive">Aggressive</option>

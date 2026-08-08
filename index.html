@@ -417,25 +417,25 @@
             <div class="mode-h">Presets</div>
             <p>Four numbers interact here, and you don't need to understand any of them to use it. Pick a preset and it fills them all in:</p>
             <ul class="bullets">
-              <li><b>Slots</b> &mdash; for a long grind punctuated by the occasional spike. Skims a little on the way through, then takes a much bigger bite when your balance actually jumps, and checks less often because nothing happens in between.</li>
-              <li><b>Fast paced</b> &mdash; for dice, limbo and anything else played at speed. Profit arrives steadily and rarely spikes, so big-win handling is switched off entirely and the ordinary skim does the work. The interval is set to bank as often as the site allows: there is a cap of <b>50 vault deposits an hour</b>, and this sits just under it at 48.</li>
+              <li><b>Big wins</b> &mdash; skims a little as you go, then takes a much bigger bite when your balance actually jumps, and checks less often in between. Built for slots, and just as good for keno or for chasing a big multiplier on any original.</li>
+              <li><b>Fast paced</b> &mdash; for dice, limbo and anything else played at speed. Profit arrives steadily and rarely spikes, so big-win handling is off and the ordinary skim does the work. The interval banks as often as the site allows: there is a cap of <b>50 vault deposits an hour</b>, and this sits just under it at 48.</li>
               <li><b>Balanced</b> &mdash; vaults under most conditions, a meaningful slice each time.</li>
               <li><b>Aggressive</b> &mdash; bigger slices, and a much lower bar for what counts as a big win.</li>
-              <li><b>Custom</b> &mdash; your own numbers. Change any field by hand and the selector switches to Custom on its own, so the label can never claim a setup the numbers no longer match.</li>
+              <li><b>Custom</b> &mdash; your own numbers. Change any field by hand and the selector switches to Custom on its own, so the label always matches what is actually set.</li>
             </ul>
             <div class="mode-h">Save % of profit</div>
-            <p>The share of each gain swept into your vault, entered as a <b>real percentage</b> &mdash; type <b>25</b> for 25%. It used to be a decimal between 0 and 1 where 0.1 meant 10%, which caught people out badly: typing 30 for &ldquo;30%&rdquo; was clamped to 1 and vaulted the entire win. Your existing setting carries over unchanged.</p>
+            <p>The share of each gain swept into your vault, as a percentage &mdash; type <b>25</b> for 25%. Whenever your balance goes up, that portion of the increase is moved across.</p>
             <div class="mode-h">Big win at balance &times;</div>
-            <p>What counts as a &ldquo;big win&rdquo;: a multiple of your balance. At <b>2&times;</b> your balance has to double since the last check. This used to default to <b>5&times;</b> &mdash; your balance quintupling inside one check window &mdash; which in practice meant big-win handling never fired at all. It now defaults to 1.5&times;, and an old saved 5 is migrated once.</p>
+            <p>What counts as a &ldquo;big win&rdquo;: a multiple of your balance. At <b>2&times;</b>, your balance has to double since the last check for the gain to count as one.</p>
             <div class="mode-h">Big-win multiplier</div>
-            <p>How much extra to vault when a big win lands: your Save % is multiplied by this. A Save % of 10 with a multiplier of 3 vaults 30% of that win. Set it to <b>1</b> to switch big-win handling off entirely, which is what the Fast paced preset does.</p>
+            <p>How much extra to vault when a big win lands &mdash; your Save % is multiplied by this. A Save % of 10 with a multiplier of 3 vaults 30% of that win. Set it to <b>1</b> to switch big-win handling off entirely, which is what the Fast paced preset does.</p>
             <div class="note warn" style="margin:14px 0 0;"><span class="ico" aria-hidden="true">&#9888;&#65039;</span><div><b>Keep Save % &times; Big-win multiplier at or under 100%</b>, or a big win vaults everything you just won and then some. Every preset stays inside that.</div></div>
             <div class="mode-h">Check interval (sec)</div>
             <p>How often your balance is checked. Lower reacts faster and catches smaller swings but burns through the hourly deposit cap quicker; higher is calmer and vaults less often.</p>
-            <div class="mode-h">It reads your real balance, not the one on screen</div>
-            <p>If you play on stake.com with your display set to dollars, the number in the header is <b>not</b> what the vault moves &mdash; the vault deals in coins. Handing it the displayed figure asked Stake to move <b>5.57 SOL</b> against a balance of 0.075 SOL, which is why it used to answer &ldquo;insufficient balance&rdquo; and do nothing at all. It now takes the true coin balance from the site itself, so <b>it makes no difference whether you are viewing in fiat or crypto</b>. Switch coins mid-session and it pauses for a few seconds rather than act on a number it cannot vouch for.</p>
+            <div class="mode-h">Fiat or crypto, it makes no difference</div>
+            <p>The vault moves coins, not dollars, so the tool reads your true coin balance from the site rather than the figure in the header. You can play with your display set to either and it vaults the right amount. If you switch coins mid-session it pauses for a few seconds until it can read the new one.</p>
             <div class="mode-h">Moving money out of the vault</div>
-            <p>Withdrawing from your vault used to look exactly like a win, so the tool would immediately take a cut of your own money straight back. It tells the two apart now and leaves withdrawals alone &mdash; and if a withdrawal and a real win land in the same window, only the win is vaulted.</p>
+            <p>Withdrawing from your vault raises your balance the same way a win does, but the tool tells the two apart and leaves withdrawals alone. If a withdrawal and a real win land in the same window, only the win is vaulted.</p>
             </div>
             <aside class="tool-shots">
               <div class="shot-group is-desktop">
