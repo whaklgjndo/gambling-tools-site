@@ -570,7 +570,7 @@
         if (tool_snakes._booted) return;
         tool_snakes._booted = true;
 
-        var SNK_VERSION  = '1.02';
+        var SNK_VERSION  = '1.03';
         /* Tuned to play as fast as the site will let it. The pace is set by the
            GAME, not by us: a control is pressed the instant it becomes usable
            again. A fixed cooldown would either be slower than the game or race
@@ -580,10 +580,10 @@
            of this wedged forever waiting for it. */
         var POLL_MS      = 60;
         var GAME_MAX     = 5;      // the game's own cap — five pips under the board
-        var STALL_MS     = 20000;  // nothing moved for this long: stop and say so
         var SETTLE_MS    = 120;    // after a round ends, before opening the next
         var MIN_GAP_MS   = 40;     // never two clicks inside a frame
         var FALLBACK_MS  = 500;    // act anyway if the busy frame was never seen
+        var MULT_WAIT_MS     = 1000;  // wait this long for a roll's multiplier to render
         var MULT_SETTLE_MS   = 1500;  // grace for the profit text to catch up with the button
         var CASHOUT_GRACE_MS = 4000;  // keep retrying Cashout for this long once a target is hit
 
@@ -606,6 +606,14 @@
                 /* Read only, never clicked — it is how we show you the round is
                    yours now, and it is what tells a bust from a cashout. */
                 cashout: function () { return document.querySelector('[data-testid="cashout-button"]'); },
+                /* Is the game itself still on screen? "Bet is missing" means a
+                   round is in progress AND ALSO means the page has blown up and
+                   taken every control with it — two states the rest of this code
+                   cannot tell apart without asking. */
+                present: function () {
+                    return !!document.querySelector('[data-testid="bet-button"],' +
+                        '[data-testid="cashout-button"],[data-testid="game-next"]');
+                },
                 mult:    function () {
                     var m = (document.body.innerText || '').match(/Total Profit \(([\d.]+)\s*×\)/);
                     return m ? parseFloat(m[1]) : null;
@@ -618,6 +626,14 @@
                 start:   function () { return btnByText(/^play$/i); },
                 roll:    function () { return btnByText(/^roll$/i); },
                 cashout: function () { return btnByText(/cash\s*out/i); },
+                /* See the Stake twin. Between the bet and the first roll Nuts
+                   labels the top button MUST ROLL ONCE — neither PLAY nor
+                   CASHOUT — so that state is probed by name too. Both it and the
+                   spinner-only PLAY were observed on a recording, 2026-08-08. */
+                present: function () {
+                    return !!(btnByText(/^play$/i) || btnByText(/^roll$/i) ||
+                              btnByText(/cash\s*out/i) || btnByText(/must roll once/i));
+                },
                 /* Supplied from the live page 2026-08-08:
                      <div class="snakes-module__3yTeBG__rollMultiplier"
                           style="--color: var(--color-green-500);">1.11x</div>
@@ -704,12 +720,19 @@
         var targetPendingSince = 0; // target reached, waiting for Cashout to free up
         var lastSig     = '';
         var statusText  = 'Idle.';
-        /* NO-BET SAFETY GATE — not a setting.
+        /* STUCK GATE — not a setting.
 
-           Its job is narrow: stop a run that CANNOT place a bet, the usual cause
-           being an empty balance. Left alone that state loops on the Bet button
-           forever. It is deliberately not exposed in the panel, because a safety
-           gate you can set to zero is not a safety gate.
+           Its job: stop a run that is getting nowhere. Two states from a
+           recording of a real session, both of which used to hang until the tool
+           was stopped by hand — a mid-round freeze where no control was
+           actionable, and the page crashing outright and taking every control
+           with it. Neither could place a bet, and neither could be noticed by a
+           check that only ran while the Bet button was clickable.
+
+           So the test is not "did a bet happen" but "did ANYTHING on the board
+           change while it was the tool's turn to act". It is deliberately not
+           exposed in the panel, because a safety gate you can set to zero is not
+           a safety gate.
 
            IT DOES NOT RUN WHILE THE BOARD IS YOURS. Once the tool has handed
            over it is waiting on a human decision, and there is no such thing as
@@ -722,10 +745,10 @@
            suspend timers when the tab is hidden or the phone is locked, so the
            gate is paused while hidden and given a full fresh window on return —
            without that it becomes the "it stops at random" bug. */
-        var NO_BET_STOP_MS = 90000;
-        var lastBetAt      = 0;
+        var NO_PROGRESS_MS = 5000;
+        var GAME_GONE_MS   = 2000;   // controls absent this long: the page is gone
+        var goneSince      = 0;
         var visibleAgainAt = 0;
-        function noteActivity() { lastBetAt = Date.now(); }
 
         function setStatus(t) { statusText = t; paint(); }
 
@@ -754,6 +777,21 @@
 
         function tick() {
             if (!onPage() || !enabled()) return;
+
+            /* For an instant this is just a re-render. For longer, the page has
+               crashed or navigated — and every test below would read it as a
+               round in progress and wait on it forever. */
+            var here = true;
+            try { here = SITE.present(); } catch (e) {}
+            if (!here) {
+                if (!goneSince) goneSince = Date.now();
+                if (running && Date.now() - goneSince > GAME_GONE_MS) {
+                    stop('Stopped: the game is no longer on the page — reload it.');
+                }
+                return;
+            }
+            goneSince = 0;
+
             var startB = SITE.start();
             var rollB  = SITE.roll();
             var coB    = null;
@@ -766,8 +804,6 @@
                itself. Any one of those is enough, which is what lets the same
                code cover Nuts without having seen its mid-round markup. */
             var live = (!startB) || !!coB || canRoll;
-            // A round going live IS the proof that a bet was accepted.
-            if (live && !roundActive) noteActivity();
             if (live) roundActive = true;
 
             var sig = (startB ? (startB.disabled ? 'S0' : 'S1') : 'S-') +
@@ -795,7 +831,6 @@
                 roundActive = false;
                 rollsDone   = 0;
                 targetPendingSince = 0;
-                noteActivity();
                 handedOver  = false;
                 multAtRoll  = null;
                 phase       = 'idle';
@@ -806,21 +841,25 @@
 
             if (!running) return;
 
-            /* ---- no-bet safety gate ---- */
+            /* ---- stuck gate ----
+               lastChange is stamped at the top of every tick the board looked
+               different from the last one, so it doubles as "when did anything
+               last happen". */
             var nowT = Date.now();
             if (handedOver || document.hidden) {
                 /* Your decision time, and time the tab spent in the background,
                    are both held rather than counted. Holding the stamp (instead
                    of just skipping the test) is what gives a full fresh window
                    the moment the tool is answerable again. */
-                lastBetAt = nowT;
+                lastChange = nowT;
                 if (document.hidden) visibleAgainAt = 0;
             } else {
                 if (!visibleAgainAt) visibleAgainAt = nowT;
-                if (!lastBetAt) lastBetAt = nowT;
-                if (nowT - Math.max(lastBetAt, visibleAgainAt) > NO_BET_STOP_MS) {
-                    stop('Stopped: could not place a bet for ' +
-                         Math.round(NO_BET_STOP_MS / 1000) + 's — check your balance.');
+                if (nowT - Math.max(lastChange, visibleAgainAt) > NO_PROGRESS_MS) {
+                    stop(atIdle
+                        ? 'Stopped: ' + (SITE === SITES.nuts ? 'PLAY' : 'Bet') +
+                          ' is not starting a round — check your balance.'
+                        : 'Stopped: the game stopped responding mid-round.');
                     return;
                 }
             }
@@ -839,8 +878,6 @@
                        round actually going live. */
                     phase = 'rolling';
                     setStatus('Betting…');
-                } else if (Date.now() - lastChange > STALL_MS) {
-                    stop('Stopped: could not press ' + (SITE === SITES.nuts ? 'PLAY' : 'Bet') + '.');
                 }
                 return;
             }
@@ -900,10 +937,17 @@
             }
 
             if (canRoll && !handedOver && rollsDone < cfg.rolls) {
-                if (rollsDone > 0 && nowMult !== null && multAtRoll !== null && nowMult === multAtRoll) return;
+                /* Wait for the previous roll's multiplier to render before taking
+                   the next one, so the reading can never fall behind the rolls.
+                   Treating null as a reading is the point: it is what every
+                   round's first roll starts from, and skipping the wait there
+                   was what let the whole round run ahead of the text. Bounded,
+                   so a site whose multiplier cannot be read costs a beat per
+                   roll instead of hanging. */
+                if (rollsDone > 0 && nowMult === multAtRoll &&
+                    Date.now() - lastRollAt < MULT_WAIT_MS) return;
                 multAtRoll = nowMult;
                 if (click(rollB)) {
-                    noteActivity();
                     lastRollAt = Date.now();
                     rollsDone++;
                     phase = 'rolling';
@@ -1060,7 +1104,7 @@
                 running = true;
                 rollsDone = 0; handedOver = false; roundActive = false; multAtRoll = null;
                 phase = 'idle'; cooldown = 0; lastChange = Date.now();
-                lastBetAt = Date.now(); visibleAgainAt = 0;
+                goneSince = 0; visibleAgainAt = 0;
                 setStatus('Armed — ' + cfg.rolls + ' auto roll' + (cfg.rolls === 1 ? '' : 's') + ' per round.');
             });
             el.querySelector('[data-sk="halt"]').addEventListener('click', function () {
