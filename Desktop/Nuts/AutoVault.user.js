@@ -942,6 +942,16 @@
             display: flex; align-items: center; justify-content: space-between;
         }
         #nuts-autovault-floaty .nv-label { color: #a0a0b0; font-size: 12px; }
+        /* Black on white. Nothing styled the select, so it took the panel's
+           light text into a light native dropdown and the preset names were
+           hard to read. */
+        #nuts-autovault-floaty select {
+            background: #fff; color: #000;
+            border: 1px solid #4a4a5a; border-radius: 4px;
+            padding: 4px 6px; font-size: 12px; font-weight: 600;
+            max-width: 62%; outline: none; cursor: pointer;
+        }
+        #nuts-autovault-floaty select option { background: #fff; color: #000; }
         #nuts-autovault-floaty input[type="number"] {
             background: #0f0f1a; color: #e0e0f0; border: 1px solid #4a4a5a;
             border-radius: 4px; padding: 4px 6px; font-size: 12px; width: 72px;
@@ -1041,11 +1051,11 @@
             <div class="nv-row">
                 <span class="nv-label" title="A ready-made set of the values below">Preset</span>
                 <select id="nvPreset">
-                    <option value="bigwins">Big wins — slots, keno, chasing multis</option>
-                    <option value="fast">Fast paced — dice / limbo</option>
-                    <option value="balanced">Balanced</option>
-                    <option value="aggressive">Aggressive</option>
-                    <option value="custom">Custom</option>
+                    <option value="balanced" title="Vaults under most conditions, a meaningful slice each time">Balanced</option>
+                    <option value="bigwins" title="Slots, keno, or chasing a big multiplier: skim a little as you go, take a much bigger bite on a spike">Big Wins</option>
+                    <option value="fast" title="Dice, limbo, anything played at speed: steady skim, banks as often as the site allows">Fast Paced</option>
+                    <option value="aggressive" title="Bigger slices, and a much lower bar for what counts as a big win">Aggressive</option>
+                    <option value="custom" title="Your own numbers - editing any field below switches to this on its own">Custom</option>
                 </select>
             </div>
             <div class="nv-row">

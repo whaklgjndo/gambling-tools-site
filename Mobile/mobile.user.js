@@ -22032,6 +22032,18 @@ function tool_stake_7day_tracker() {
                 -webkit-appearance: none; appearance: none;
             }
             #autovault-floaty .av-config input:focus { border-color: var(--av-accent); }
+            /* Black on white. Nothing styled the select, so it took the panel's
+           light text into a light native dropdown and the preset names were
+           hard to read.
+               Spans the grid because the 80px value column cannot hold a name. */
+            #autovault-floaty .av-config select {
+                grid-column: 1 / -1; width: 100%;
+                background: #fff; color: #000;
+                border: 1px solid #2f4553; border-radius: 6px;
+                padding: 7px 8px; font-size: 12px; font-weight: 700;
+                min-height: 32px; outline: none; cursor: pointer;
+            }
+            #autovault-floaty .av-config select option { background: #fff; color: #000; }
             #autovault-floaty .av-btn-row { display: flex; gap: 6px; }
             #autovault-floaty .av-btn {
                 flex: 1;
@@ -22106,11 +22118,11 @@ function tool_stake_7day_tracker() {
                          STORED as a fraction; only the display changed. -->
                     <label>Preset</label>
                     <select id="av-preset">
-                        <option value="bigwins">Big wins — slots, keno, chasing multis</option>
-                        <option value="fast">Fast paced — dice / limbo</option>
-                        <option value="balanced">Balanced</option>
-                        <option value="aggressive">Aggressive</option>
-                        <option value="custom">Custom</option>
+                        <option value="balanced" title="Vaults under most conditions, a meaningful slice each time">Balanced</option>
+                        <option value="bigwins" title="Slots, keno, or chasing a big multiplier: skim a little as you go, take a much bigger bite on a spike">Big Wins</option>
+                        <option value="fast" title="Dice, limbo, anything played at speed: steady skim, banks as often as the site allows">Fast Paced</option>
+                        <option value="aggressive" title="Bigger slices, and a much lower bar for what counts as a big win">Aggressive</option>
+                        <option value="custom" title="Your own numbers - editing any field below switches to this on its own">Custom</option>
                     </select>
                     <label>Save % of profit</label>
                     <input type="number" id="av-save" min="0" max="100" step="1">

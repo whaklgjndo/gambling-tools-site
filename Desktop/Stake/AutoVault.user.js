@@ -1147,6 +1147,16 @@
             color: #94a3b8;
             font-size: 12px;
         }
+        /* Black on white. Nothing styled the select, so it took the panel's
+           light text into a light native dropdown and the preset names were
+           hard to read. */
+        #autovault-floaty select {
+            background: #fff; color: #000;
+            border: 1px solid #2f4553; border-radius: 4px;
+            padding: 4px 6px; font-size: 12px; font-weight: 600;
+            max-width: 62%; outline: none; cursor: pointer;
+        }
+        #autovault-floaty select option { background: #fff; color: #000; }
         #autovault-floaty input[type="number"] {
             background: #1a2c38;
             color: #e2e8f0;
@@ -1405,11 +1415,11 @@
             <div class="av-row">
                 <span class="av-label" title="A ready-made set of the four values below">Preset</span>
                 <select id="vaultPreset">
-                    <option value="bigwins">Big wins — slots, keno, chasing multis</option>
-                    <option value="fast">Fast paced — dice / limbo</option>
-                    <option value="balanced">Balanced</option>
-                    <option value="aggressive">Aggressive</option>
-                    <option value="custom">Custom</option>
+                    <option value="balanced" title="Vaults under most conditions, a meaningful slice each time">Balanced</option>
+                    <option value="bigwins" title="Slots, keno, or chasing a big multiplier: skim a little as you go, take a much bigger bite on a spike">Big Wins</option>
+                    <option value="fast" title="Dice, limbo, anything played at speed: steady skim, banks as often as the site allows">Fast Paced</option>
+                    <option value="aggressive" title="Bigger slices, and a much lower bar for what counts as a big win">Aggressive</option>
+                    <option value="custom" title="Your own numbers - editing any field below switches to this on its own">Custom</option>
                 </select>
             </div>
             <!-- The field is a real percentage now. It used to be labelled
