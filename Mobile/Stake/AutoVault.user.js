@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Stake Auto-Vault — Mobile
 // @namespace    http://tampermonkey.net/
-// @version      6.10
+// @version      6.11
 // @description  Standalone single-tool mobile build, extracted from the unified mobile bundle.
 // @author       .
 // @match        https://stake.com/*
@@ -25,7 +25,7 @@
 (function () {
     'use strict';
 
-    try { console.log('[Stake Auto-Vault — Mobile] standalone build v6.10'); } catch (e) {}
+    try { console.log('[Stake Auto-Vault — Mobile] standalone build v6.11'); } catch (e) {}
 
 
     try { console.log('[unified-mobile] boot v5.64 — DiceTool.exe replica UI for the dice tool (Calculator / Easy Mode / Strategy Finder / Results / Settings)'); } catch (e) {}
@@ -387,13 +387,59 @@
         if (!isFinite(raw)) return fallback;
         return isNuts() ? displayToSol(raw) : raw;
     }
+    /* How many decimals THIS site accepts on a bet, read from the bet field's
+       own `step` rather than assumed from the hostname.
+
+       The Stake path was a flat 2dp because it was written for stake.us, where
+       SC really is 2dp. On stake.com the same field is SOL at 8dp, so every bet
+       was rounded up to 0.01 SOL (~74c) or down to 0.00. Reported 2026-08-03:
+       "your bet field only goes to 0.00", "it tries to bet .01 solana".
+
+       Reading the site's own step covers any coin Stake adds later, and it is
+       right in fiat display mode too — the field still takes the COIN amount
+       whatever the header happens to be showing. */
+    function betDp() {
+        try {
+            const inp = document.querySelector('input[data-testid="input-game-amount"]') ||
+                        document.querySelector('input[data-testid="bet-amount"]');
+            const step = inp && inp.getAttribute('step');
+            /* MEASURED ON stake.com, 2026-08-07: the field reports
+
+                   step="1e-8"
+
+               and NOT "0.00000001", which is what this function was written to
+               expect. The first cut matched the step as a STRING against
+               /^0\.(0*)1$/, so exponent notation missed every branch and fell
+               through to the 2dp fallback — meaning the fix for "it tries to bet
+               .01 solana" did not actually change anything on .com. Verified by
+               running this function's own shipped source against the real value.
+
+               Parse the number and ask how many places it needs instead, which
+               is notation-agnostic and also right for a step like 0.05. */
+            const n = (step === null || step === '') ? NaN : parseFloat(step);
+            if (isFinite(n) && n > 0) {
+                for (let d = 0; d <= 12; d++) {
+                    const scaled = n * Math.pow(10, d);
+                    if (Math.abs(scaled - Math.round(scaled)) < 1e-9) return d;
+                }
+                return 12;
+            }
+        } catch (e) {}
+        return isNuts() ? 8 : 2;
+    }
+    /** A step attribute string for `dp` places — never "1e-8", which is invalid. */
+    function stepStrFor(dp) { return dp <= 0 ? '1' : '0.' + '0'.repeat(dp - 1) + '1'; }
     function formatCurrencyInput(amount) {
         if (!isFinite(amount)) return '';
-        return isNuts() ? formatBetForInput(amount) : amount.toFixed(2);
+        // Nuts keeps its own path: it also converts SOL <-> the fiat display.
+        return isNuts() ? formatBetForInput(amount) : amount.toFixed(betDp());
     }
     function currencyInputStep() {
-        return isNuts() && !isUSDDisplayMode() ? '0.00000001' : '0.01';
+        if (isNuts()) return isUSDDisplayMode() ? '0.01' : '0.00000001';
+        return stepStrFor(betDp());
     }
+    /** The smallest bet this site allows, i.e. one unit in its last place. */
+    function siteMinBet() { return Math.pow(10, -betDp()); }
     function typeIntoInput(inp, value) {
         /* Focus is unavoidable: execCommand('insertText') only produces the real
            input events a React-controlled field needs if the field is focused.
@@ -659,6 +705,14 @@
     let winsBeforeReset = 5;
     let autoStopBalance = null;
     let minBaseBet = isNuts() ? 0.00000001 : 0.01;
+    /* minBaseBet is the floor every bet is clamped to. A flat 0.01 is ~74c of
+       SOL on stake.com and made micro-betting impossible. Only ever LOWER it to
+       the site's own minimum; a floor the user raised deliberately is theirs.
+       Runs from updateUI so it settles once the bet field exists. */
+    function syncMinBaseBet() {
+        const m = siteMinBet();
+        if (isFinite(m) && m > 0 && m < minBaseBet) minBaseBet = m;
+    }
     let maxBaseBet = 99999999999999;
     let lastBetId = null;
     let lossStreak = 0;
@@ -2144,7 +2198,7 @@
             typeIntoInput(inp, formatBetForInput(clamped));
             return true;
         }
-        const targetStr = Math.min(amount, maxBaseBet).toFixed(2);
+        const targetStr = formatCurrencyInput(Math.min(amount, maxBaseBet));
         if (isShuffle()) {
             const input = document.querySelector('input[data-testid="bet-amount"], input[placeholder*="Amount"], input[placeholder*="Bet"], input[type="text"][inputmode="decimal"]');
             if (!input) return false;
@@ -2876,7 +2930,9 @@
                 '<small id="ut-count">' + matching.length + ' available on this page</small>' +
             '</div>' +
             '<div>' +
-                '<button class="ut-header-btn" id="ut-collapse" title="Collapse">×</button>' +
+                // Glyph is a minus, not a cross: this only collapses the panel,
+                // and a × on it read as "close the tools".
+                '<button class="ut-header-btn" id="ut-collapse" title="Collapse">−</button>' +
             '</div>' +
         '</div>' +
         '<div class="ut-body">';
@@ -3089,6 +3145,37 @@
             checkInterval: 30000
         };
 
+        /* Presets — the same three names as the desktop panels, so "Balanced"
+           means the same thing wherever you meet it. One body serves all three
+           sites and mobile's bigWinThreshold is a balance MULTIPLE on every one
+           of them, so unlike desktop Shuffle a single table is correct here. */
+        const AV_PRESETS = {
+            /* Slots: a long grind punctuated by a spike. Skim little on the way,
+               take a big bite when the balance actually jumps, and do not bother
+               looking often — nothing happens between hits. */
+            slots:     { saveAmount: 0.10, bigWinThreshold: 3.0, bigWinMultiplier: 4, checkInterval: 120000 },
+            /* Fast paced (dice, limbo): profit arrives steadily and rarely spikes,
+               so the big-win branch is switched off (multiplier 1) and the ordinary
+               skim does the work. The interval is set just under the deposit rate
+               limit of 50/hour — 75s allows 48 — so it banks as often as the site
+               permits without ever tripping the cap. */
+            fast:      { saveAmount: 0.12, bigWinThreshold: 5.0, bigWinMultiplier: 1, checkInterval: 75000 },
+            /* Balanced: fires under most conditions, meaningful slice each time. */
+            balanced:  { saveAmount: 0.25, bigWinThreshold: 2.0, bigWinMultiplier: 2, checkInterval: 60000 },
+            /* Aggressive: bigger slices, and a low bar for calling something big. */
+            aggressive:{ saveAmount: 0.50, bigWinThreshold: 1.4, bigWinMultiplier: 2, checkInterval: 45000 }
+                };
+        function avPresetNameFor(c) {
+            for (const name in AV_PRESETS) {
+                const p = AV_PRESETS[name];
+                if (Math.abs((c.saveAmount || 0) - p.saveAmount) < 1e-9 &&
+                    Math.abs((c.bigWinThreshold || 0) - p.bigWinThreshold) < 1e-9 &&
+                    Math.abs((c.bigWinMultiplier || 0) - p.bigWinMultiplier) < 1e-9 &&
+                    Math.abs((c.checkInterval || 0) - p.checkInterval) < 1e-9) return name;
+            }
+            return 'custom';
+        }
+
         let cfg = Object.assign({}, DEFAULTS);
         try {
             const raw = localStorage.getItem(CONFIG_KEY);
@@ -3152,8 +3239,102 @@
             try { sessionStorage.setItem(SESSION_VAULTED_KEY, '0'); } catch {}
         }
 
-        /* ---- Balance read (reuses HUD's per-platform helper) ---- */
+        /* ---- Balance read (reuses HUD's per-platform helper) ----
+
+           ON STAKE THE API VALUE WINS, because it is the only one in COIN units.
+
+           The HUD helper reads the balance off the page, and on stake.com the
+           page routinely shows fiat — a $300 header for what is really a
+           fraction of a SOL. `createVaultDeposit` takes a coin amount, so the
+           displayed figure went in as one: 30% of an $81 profit asked Stake to
+           move 24.3 SOL instead of $24.30, and Stake answered "insufficient
+           balance" every time. Reported 2026-08-03. Desktop AutoVault was fixed
+           that day; mobile reads through the same broken path and was missed.
+
+           Polling Stake's own balances query makes display mode irrelevant
+           rather than something to detect and convert. The DOM read stays as the
+           fallback for the first seconds before the API answers, and for
+           Shuffle and Nuts, whose own paths were never in question — Nuts
+           already converts SOL properly.
+
+           Deliberately scoped to AutoVault. The HUD's getCurrentBalance also
+           feeds stop-loss and take-profit, whose stored values are in whatever
+           unit the user was looking at when they typed them; switching that
+           number under them is how the last balance change caused real damage. */
+        const stakeApiBalance = {};
+        const stakeVaultBalance = {};
+        let apiBalTimer = null;
+        async function refreshStakeApiBalance() {
+            if (PLATFORM !== 'stake') return;
+            try {
+                const token = getCookie('session');
+                if (!token) return;
+                const res = await fetch(window.location.origin + '/_api/graphql', {
+                    method: 'POST',
+                    credentials: 'include',
+                    headers: {
+                        'content-type': 'application/json',
+                        'x-access-token': token,
+                        'x-language': 'en',
+                        'x-operation-name': 'UserBalances'
+                    },
+                    body: JSON.stringify({
+                        // The VAULT side is what separates a withdrawal from a win:
+                        // both raise the available balance, only a withdrawal drops
+                        // the vault at the same time.
+                        query: 'query UserBalances {\n  user { id balances { available { amount currency } vault { amount currency } } }\n}',
+                        variables: {}
+                    }),
+                    mode: 'cors',
+                    cache: 'no-cache'
+                });
+                if (!res.ok) return;
+                const data = await res.json();
+                const list = data && data.data && data.data.user && data.data.user.balances;
+                if (!Array.isArray(list)) return;
+                for (const b of list) {
+                    const cur = b && b.available && b.available.currency;
+                    const amt = b && b.available && b.available.amount;
+                    const n = typeof amt === 'number' ? amt : parseFloat(amt);
+                    if (cur && isFinite(n) && n >= 0) stakeApiBalance[String(cur).toLowerCase()] = n;
+                    const vAmt = b && b.vault && b.vault.amount;
+                    const vn = typeof vAmt === 'number' ? vAmt : parseFloat(vAmt);
+                    if (cur && isFinite(vn) && vn >= 0) stakeVaultBalance[String(cur).toLowerCase()] = vn;
+                }
+            } catch (e) { /* leave the DOM read in charge */ }
+        }
+        function startApiBalancePolling() {
+            if (PLATFORM !== 'stake') return;
+            if (apiBalTimer) clearInterval(apiBalTimer);
+            apiBalTimer = setInterval(refreshStakeApiBalance, 5000);
+            refreshStakeApiBalance();
+        }
+        function stopApiBalancePolling() {
+            if (apiBalTimer) { clearInterval(apiBalTimer); apiBalTimer = null; }
+        }
+
+        /* False while the API is the source of truth but has nothing for the
+           ACTIVE currency yet - the seconds right after a currency switch. The
+           tick sits those out rather than acting on a figure whose units it
+           cannot vouch for. Same guard as the desktop twin. */
+        let balanceTrusted = true;
         function readBalance() {
+            if (PLATFORM === 'stake') {
+                const cur = detectStakeCurrency();
+                const api = stakeApiBalance[cur];
+                if (!stakeCurrencyIsGuess && typeof api === 'number' && api >= 0) {
+                    balanceTrusted = true;
+                    return api;
+                }
+                /* Once the API has answered for ANY currency it is the source,
+                   and the displayed number is fiat as often as not. An unknown
+                   currency means not-yet, never ask-the-page. */
+                if (Object.keys(stakeApiBalance).length) {
+                    balanceTrusted = false;
+                    try { return getCurrentBalance(); } catch (e) { return 0; }
+                }
+            }
+            balanceTrusted = true;
             try { return getCurrentBalance(); } catch (e) { return 0; }
         }
         function formatVaultAmount(amount) {
@@ -3170,18 +3351,25 @@
             const m = document.cookie.match('(^|;)\\s*' + name + '\\s*=\\s*([^;]+)');
             return m ? m.pop().replace(/"/g, '') : '';
         }
+        /* Set false whenever the currency below came from the page rather than
+           from the hostname guess. readBalance only trusts the API balance when
+           it knows which coin to look up: the guess is 'sc' on stake.us, and
+           handing back an SC figure to someone playing GC would be a new way of
+           reading the wrong number, which is the bug being fixed. */
+        let stakeCurrencyIsGuess = true;
         function detectStakeCurrency() {
             const el = document.querySelector('[data-active-currency]');
             if (el) {
                 const c = el.getAttribute('data-active-currency');
-                if (c) return c.toLowerCase();
+                if (c) { stakeCurrencyIsGuess = false; return c.toLowerCase(); }
             }
             const toggle = document.querySelector('[data-testid="coin-toggle"]') || document.querySelector('[data-testid="balance-toggle"]');
             if (toggle) {
                 const txt = (toggle.textContent || '').trim();
                 const m = txt.match(/\b[A-Z]{2,5}\b/);
-                if (m) return m[0].toLowerCase();
+                if (m) { stakeCurrencyIsGuess = false; return m[0].toLowerCase(); }
             }
+            stakeCurrencyIsGuess = true;
             return /stake\.(us|games)/.test(location.hostname) ? 'sc' : 'btc';
         }
         async function stakeDeposit(amount) {
@@ -3351,7 +3539,10 @@
             if (result && result.ok) {
                 recordVault();
                 addSessionVaulted(amount);
-                baseline = readBalance(); // re-baseline post-deposit to avoid drift
+                // Re-baseline post-deposit to avoid drift. Both halves together —
+                // our own deposit raises the vault, and leaving prevVaultBal
+                // behind would make that rise look like a withdrawal was owed.
+                rebaseline(readBalance());
                 const suffix = PLATFORM === 'nuts' ? '' : (result.currency || '');
                 logActivity(`Vaulted ${formatVaultAmount(amount)} ${suffix}`.trim(), 'success');
             } else {
@@ -3360,13 +3551,54 @@
             if (uiWidget) uiWidget.render();
         }
 
+        /* Moving money from the vault back to the balance looks identical to a
+           win from here, so AutoVault took its cut and put a slice straight back
+           — "the damn vaulter keeps vaulting my balance as soon as I move the
+           vault to my balance". The vault figure separates them: a win leaves
+           the vault alone, a withdrawal drops it by the amount the balance rose.
+           Our own deposits move it UP, so they can never read as a withdrawal.
+           Stake only — it is the one platform whose balances query gives it.
+
+           THE VAULT READING IS PAIRED WITH THE BALANCE, NOT WITH THE TICK. The
+           first cut advanced its own baseline on every tick, so a tick that did
+           nothing still consumed the drop, and by the time a later tick acted on
+           the balance rise the withdrawal had been forgotten and the money got
+           vaulted anyway. Measured: a 5 SOL withdrawal vaulted 1.41. `baseline`
+           and `prevVaultBal` now only ever move together. */
+        let prevVaultBal = null;
+        function currentVaultBal() {
+            if (PLATFORM !== 'stake') return null;
+            const v = stakeVaultBalance[detectStakeCurrency()];
+            return typeof v === 'number' ? v : null;
+        }
+        /** Re-baseline both halves of the observation at once. */
+        function rebaseline(bal) {
+            baseline = bal;
+            prevVaultBal = currentVaultBal();
+        }
+
         async function tick() {
             if (!cfg.isRunning) return;
             const cur = readBalance();
             if (!cur || cur <= 0) return;
-            if (baseline === null) { baseline = cur; lastBalance = cur; return; }
+            // Units unknown for the moment - re-baseline and wait for a good read.
+            if (!balanceTrusted) { rebaseline(cur); lastBalance = cur; return; }
+            const vaultNow = currentVaultBal();
+            if (baseline === null) { rebaseline(cur); lastBalance = cur; return; }
+            const withdrawn = (vaultNow !== null && prevVaultBal !== null)
+                ? Math.max(0, prevVaultBal - vaultNow) : 0;
             if (cur > baseline) {
-                const profit = cur - baseline;
+                /* Subtracted rather than ignored, so a tick holding BOTH a
+                   withdrawal and a real win still vaults the winnings. */
+                const profit = Math.max(0, (cur - baseline) - withdrawn);
+                if (profit <= 0) {
+                    if (withdrawn > 0) logActivity('Vault withdrawal — not counted as profit', 'info');
+                    rebaseline(cur);
+                    lastProfit = 0;
+                    lastBalance = cur;
+                    if (uiWidget) uiWidget.render();
+                    return;
+                }
                 lastProfit = profit;
                 // Big-win detection: post-bet balance is at least bigWinThreshold× the pre-bet balance.
                 // bigWinThreshold is a multiplier (e.g. 1.5 means 50% gain or more on the round).
@@ -3379,7 +3611,7 @@
             } else if (cur < baseline) {
                 // Loss — re-baseline so the next profit measurement is against the
                 // post-loss balance, not the pre-loss one.
-                baseline = cur;
+                rebaseline(cur);
                 lastProfit = 0;
             }
             lastBalance = cur;
@@ -3390,7 +3622,13 @@
             if (cfg.isRunning) return;
             cfg.isRunning = true;
             saveCfg();
-            baseline = readBalance();
+            startApiBalancePolling();
+            /* On Stake the very first read can still be the DOM's fiat figure
+               while every read after it is the API's coin figure, and comparing
+               those two is comparing dollars with SOL. Let the first tick set
+               the baseline instead, once the source has settled — tick() already
+               treats a null baseline as "establish it and return". */
+            baseline = PLATFORM === 'stake' ? null : readBalance();
             lastBalance = baseline;
             logActivity('AutoVault started — watching ' + PLATFORM.toUpperCase(), 'success');
             if (monitorTimer) clearInterval(monitorTimer);
@@ -3401,6 +3639,7 @@
             cfg.isRunning = false;
             saveCfg();
             if (monitorTimer) { clearInterval(monitorTimer); monitorTimer = null; }
+            stopApiBalancePolling();
             logActivity('AutoVault stopped', 'info');
             if (uiWidget) uiWidget.render();
         }
@@ -3582,7 +3821,6 @@
                 </div>
                 <div class="av-head-btns">
                     <button class="av-mini-btn" id="av-mini" title="Collapse">−</button>
-                    <button class="av-mini-btn" id="av-close" title="Close">×</button>
                 </div>
             </div>
             <div class="av-body">
@@ -3592,8 +3830,20 @@
                 <div class="av-stat-row"><span>Deposits this hour</span><span id="av-rate">0 / 50</span></div>
                 <div class="av-section-title">Settings</div>
                 <div class="av-config">
+                    <!-- A real percentage now. The label said "%" while the field
+                         took a FRACTION (max 1), so 0.2 meant 20% and typing 30
+                         for "30%" clamped to 1 and vaulted everything. Still
+                         STORED as a fraction; only the display changed. -->
+                    <label>Preset</label>
+                    <select id="av-preset">
+                        <option value="slots">Slots — big wins only</option>
+                        <option value="fast">Fast paced — dice / limbo</option>
+                        <option value="balanced">Balanced</option>
+                        <option value="aggressive">Aggressive</option>
+                        <option value="custom">Custom</option>
+                    </select>
                     <label>Save % of profit</label>
-                    <input type="number" id="av-save" min="0.01" max="1" step="0.05">
+                    <input type="number" id="av-save" min="0" max="100" step="1">
                     <label>Big-win threshold (×)</label>
                     <input type="number" id="av-bwt" min="1" step="0.1">
                     <label>Big-win multiplier</label>
@@ -3617,6 +3867,7 @@
         const vaultedEl = gui.querySelector('#av-vaulted');
         const profitEl = gui.querySelector('#av-profit');
         const rateEl = gui.querySelector('#av-rate');
+        const presetSel = gui.querySelector('#av-preset');
         const saveInp = gui.querySelector('#av-save');
         const bwtInp = gui.querySelector('#av-bwt');
         const bwmInp = gui.querySelector('#av-bwm');
@@ -3625,9 +3876,9 @@
         const resetBtn = gui.querySelector('#av-reset');
         const logEl = gui.querySelector('#av-log');
         const miniBtn = gui.querySelector('#av-mini');
-        const closeBtn = gui.querySelector('#av-close');
 
-        saveInp.value = cfg.saveAmount;
+        presetSel.value = avPresetNameFor(cfg);
+        saveInp.value = Math.round(cfg.saveAmount * 100);   // fraction -> percent for display
         bwtInp.value = cfg.bigWinThreshold;
         bwmInp.value = cfg.bigWinMultiplier;
         intInp.value = Math.round(cfg.checkInterval / 1000);
@@ -3673,9 +3924,33 @@
         renderLog();
 
         /* ---- UI events ---- */
-        saveInp.addEventListener('input', () => { cfg.saveAmount = parseFloat(saveInp.value) || DEFAULTS.saveAmount; saveCfg(); });
-        bwtInp.addEventListener('input', () => { cfg.bigWinThreshold = parseFloat(bwtInp.value) || DEFAULTS.bigWinThreshold; saveCfg(); });
-        bwmInp.addEventListener('input', () => { cfg.bigWinMultiplier = parseFloat(bwmInp.value) || DEFAULTS.bigWinMultiplier; saveCfg(); });
+        const avSyncPreset = () => { presetSel.value = avPresetNameFor(cfg); };
+        presetSel.addEventListener('change', () => {
+            const p = AV_PRESETS[presetSel.value];
+            if (!p) return;                        // Custom: change nothing
+            cfg.saveAmount = p.saveAmount;
+            cfg.bigWinThreshold = p.bigWinThreshold;
+            cfg.bigWinMultiplier = p.bigWinMultiplier;
+            cfg.checkInterval = p.checkInterval;
+            saveInp.value = Math.round(p.saveAmount * 100);
+            bwtInp.value = p.bigWinThreshold;
+            bwmInp.value = p.bigWinMultiplier;
+            intInp.value = Math.round(p.checkInterval / 1000);
+            saveCfg();
+            if (monitorTimer) { clearInterval(monitorTimer); monitorTimer = setInterval(tick, cfg.checkInterval); }
+        });
+
+        saveInp.addEventListener('input', () => {
+            // Typed as a percentage, stored as a fraction. Clamped so an empty or
+            // silly entry cannot quietly become "vault everything".
+            let pct = parseFloat(saveInp.value);
+            if (!isFinite(pct) || pct < 0) pct = DEFAULTS.saveAmount * 100;
+            if (pct > 100) pct = 100;
+            cfg.saveAmount = pct / 100;
+            saveCfg(); avSyncPreset();
+        });
+        bwtInp.addEventListener('input', () => { cfg.bigWinThreshold = parseFloat(bwtInp.value) || DEFAULTS.bigWinThreshold; saveCfg(); avSyncPreset(); });
+        bwmInp.addEventListener('input', () => { cfg.bigWinMultiplier = parseFloat(bwmInp.value) || DEFAULTS.bigWinMultiplier; saveCfg(); avSyncPreset(); });
         intInp.addEventListener('input', () => {
             const v = parseInt(intInp.value, 10);
             if (v >= 5) {
@@ -3697,10 +3972,6 @@
         miniBtn.addEventListener('click', () => {
             gui.classList.toggle('mini');
             miniBtn.textContent = gui.classList.contains('mini') ? '+' : '−';
-        });
-        closeBtn.addEventListener('click', () => {
-            stopMonitor();
-            gui.remove();
         });
 
         /* ---- Pointer Events drag ---- */
@@ -3799,6 +4070,12 @@
             } else {
                 const k = document.getElementById('keno-preset-gui');
                 if (k) k.remove();
+            }
+            if (isOnSnakesPage() && isToolIdEnabled(toolIdForCurrentSite('snakes'))) {
+                try { tool_snakes(); } catch (e) { console.error('[unified-mobile] tool_snakes failed:', e); }
+            } else {
+                const sk = document.getElementById('snakes-auto-gui');
+                if (sk) sk.remove();
             }
             if (isOnMinesPage() && isToolIdEnabled(toolIdForCurrentSite('mines'))) {
                 try { tool_mines(); markToolRan(toolIdForCurrentSite('mines')); } catch (e) { console.error('[unified-mobile] tool_mines failed:', e); }
@@ -3948,6 +4225,7 @@
         }, 800);
     }
 
+
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', boot, { once: true });
     } else {
@@ -3959,6 +4237,8 @@
     function isOnMinesPage() { return false; }
     function isOnBlackjackPage() { return false; }
     function isOnMolesPage() { return false; }
+    function isOnSnakesPage() { return false; }
+    function tool_snakes() {}
     function tool_keno() {}
     function tool_mines() {}
     function tool_blackjack() {}

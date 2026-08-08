@@ -1,23 +1,23 @@
 // ==UserScript==
-// @name         Shuffle Mines — Desktop
+// @name         Nuts Snakes — Desktop
 // @namespace    http://tampermonkey.net/
 // @version      3.40
 // @description  Standalone single-tool build, extracted from the unified bundle.
 // @author       .
-// @match        https://shuffle.com/*
-// @match        https://shuffle.us/*
+// @match        https://nuts.gg/*
+// @match        https://*.nuts.gg/*
 // @grant        GM_addStyle
 // @grant        unsafeWindow
 // @run-at       document-start
 // @noframes
-// @updateURL    https://whaklgjndo.github.io/gambling-tools-site/Desktop/Shuffle/Mines.user.js
-// @downloadURL  https://whaklgjndo.github.io/gambling-tools-site/Desktop/Shuffle/Mines.user.js
+// @updateURL    https://whaklgjndo.github.io/gambling-tools-site/Desktop/Nuts/Snakes.user.js
+// @downloadURL  https://whaklgjndo.github.io/gambling-tools-site/Desktop/Nuts/Snakes.user.js
 // ==/UserScript==
 
 (function () {
     'use strict';
 
-    console.log('%cShuffle Mines — Desktop — standalone build v3.40', 'color:#17c7b8;font-weight:800;font-size:13px');
+    console.log('%cNuts Snakes — Desktop — standalone build v3.40', 'color:#17c7b8;font-weight:800;font-size:13px');
 
     /* =========================================================
        UNIFIED LOADER — STORAGE KEYS & SETTINGS
@@ -534,441 +534,589 @@
         TOOLS.push(definition);
     }
 
-    /* === source: shuffle-mines-desktop.user.js ===
-       Auto-plays Mines on Shuffle with weighted random tile picks. Mirrors
-       the Stake Mines logic, with Shuffle-specific selectors and a purple
-       theme to match the site. */
-    function tool_shuffle_mines() {
+    /* === source: snakes-partial-autoplay (Stake / Nuts) === */
+    /**
+     * Snakes — partial autoplay.
+     *
+     * Snakes is a climb. You Bet, then Roll up a spiral of multipliers, and any
+     * roll can end the round. The game caps a round at five rolls.
+     *
+     * This tool plays the OPENING of each round and then gets out of the way.
+     * You choose how many rolls it takes for you (1-4); it bets, takes exactly
+     * that many, then stops and hands the board back, so the decision that
+     * actually matters — roll again or cash out — stays yours. IT NEVER CASHES
+     * OUT FOR YOU. The only buttons it ever presses are Bet and Roll.
+     *
+     * It re-arms for the next round as soon as the current one ends, however it
+     * ends: a bust, your cashout, or running out the five-roll cap. Once it has
+     * handed over it stays hands-off for the rest of that round no matter how
+     * many more times you roll.
+     *
+     * Site differences that shape the code below, both measured live 2026-08-07:
+     *
+     *   Stake — stable data-testids. The Bet button is REPLACED by a Cashout
+     *           button while a round is live, so "a Bet button exists" is a
+     *           reliable "no round in progress".
+     *   Nuts  — a visual clone with NO data-testid anywhere (styled-components
+     *           hashes only), so its controls are found by their text: PLAY and
+     *           roll. Its round-live markup could not be observed (the account
+     *           had no balance), so the round-over test is written as "a button
+     *           labelled PLAY is present and enabled", which is correct whether
+     *           Nuts hides that button mid-round the way Stake does or merely
+     *           relabels it.
+     */
+    function tool_snakes() {
         'use strict';
-        let isRunning = false;
-        let runUrl = null; // URL captured when bot starts; bail if it changes
-        // 15 ms gives ~66 readiness checks per second — matches Stake's bot.
-        // Shuffle's React updates aren't synchronous, so faster polling than
-        // this doesn't surface state changes any sooner, it just spins CPU.
-        const POLL_INTERVAL_MS = 15;
-        // Short pause after cashout so the multiplier popup is visible before
-        // the next round starts. Lower = faster cycle time, less readable.
-        const POST_WIN_PAUSE_MS = 150;
-        const onMinesPage = () => /\/games\/originals\/mines/i.test(location.pathname);
-        const urlChanged = () => runUrl !== null && location.pathname !== runUrl;
+        if (tool_snakes._booted) return;
+        tool_snakes._booted = true;
 
-        const gui = document.createElement('div');
-        gui.id = 'mines-auto-gui';
-        gui.style.cssText = `
-            position: fixed; top: 20px; right: 20px; z-index: 999999;
-            background: linear-gradient(180deg, rgba(20, 8, 38, 0.96) 0%, rgba(12, 6, 28, 0.96) 100%);
-            color: #e9d5ff; padding: 14px;
-            border-radius: 12px; border: 1px solid rgba(168, 85, 247, 0.3);
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-            min-width: 240px; box-shadow: 0 8px 32px rgba(0,0,0,0.5), 0 0 24px rgba(168, 85, 247, 0.15);
-            cursor: move; user-select: none; transition: box-shadow 0.3s ease;
-        `;
-        gui.innerHTML = `
-            <div style="font-weight: 700; margin-bottom: 10px; text-align: center; color: #fff; font-size: 13px; letter-spacing: 0.4px;">
-                Shuffle Mines
-            </div>
-            <div style="display: flex; align-items: center; margin: 6px 0;">
-                <label style="flex: 1; color: #c4b5fd; font-size: 12px; font-weight: 600;">Min:</label>
-                <input id="minPicks" type="number" value="3" min="1" max="24" style="width: 64px; padding: 5px 6px; border: 1px solid rgba(168, 85, 247, 0.3); border-radius: 4px; background: rgba(0,0,0,0.4); color: #fff; font-weight: 600; text-align: center; outline: none;">
-            </div>
-            <div style="display: flex; align-items: center; margin: 6px 0;">
-                <label style="flex: 1; color: #c4b5fd; font-size: 12px; font-weight: 600;">Max:</label>
-                <input id="maxPicks" type="number" value="8" min="1" max="24" style="width: 64px; padding: 5px 6px; border: 1px solid rgba(168, 85, 247, 0.3); border-radius: 4px; background: rgba(0,0,0,0.4); color: #fff; font-weight: 600; text-align: center; outline: none;">
-            </div>
-            <div style="margin: 12px 0 6px; text-align: center; display: flex; gap: 8px; justify-content: center;">
-                <button id="btnStart" style="flex: 1; background: linear-gradient(135deg, #a855f7, #7c3aed); color: #fff; border: none; padding: 7px 14px; border-radius: 6px; font-weight: 800; cursor: pointer; transition: all 0.18s; font-size: 12px; letter-spacing: 0.4px; text-transform: uppercase; box-shadow: 0 0 12px rgba(168, 85, 247, 0.3);">
-                    Start
-                </button>
-                <button id="btnStop" style="flex: 1; background: #ef4444; color: #fff; border: none; padding: 7px 14px; border-radius: 6px; font-weight: 800; cursor: pointer; display: none; transition: all 0.18s; font-size: 12px; letter-spacing: 0.4px; text-transform: uppercase;">
-                    Stop
-                </button>
-            </div>
-            <div id="status" style="font-size: 11px; color: #c4b5fd; text-align: center; min-height: 1.2em; margin-top: 4px;"></div>
-            <div style="margin-top: 12px; border-top: 1px solid rgba(168, 85, 247, 0.2); padding-top: 10px;">
-                <div style="font-weight: 700; margin-bottom: 6px; text-align: center; color: #a855f7; font-size: 11px; text-transform: uppercase; letter-spacing: 0.6px;">
-                    Live Stats
-                </div>
-                <p style="margin: 4px 0; font-size: 12px; display: flex; justify-content: space-between;"><span style="color: #c4b5fd;">Multiplier:</span><span id="mult" style="font-weight: 700; color: #fff;">—</span></p>
-                <p style="margin: 4px 0; font-size: 12px; display: flex; justify-content: space-between;"><span style="color: #c4b5fd;">Payout:</span><span id="pout" style="font-weight: 700; color: #fff;">—</span></p>
-                <p style="margin: 4px 0; font-size: 12px; display: flex; justify-content: space-between;"><span style="color: #c4b5fd;">Next Gem:</span><span id="chance" style="font-weight: 700; color: #fff;">—</span></p>
-            </div>
-            <div style="margin-top: 8px; border-top: 1px solid rgba(168, 85, 247, 0.2); padding-top: 10px;">
-                <div style="font-weight: 700; margin-bottom: 6px; text-align: center; color: #a855f7; font-size: 11px; text-transform: uppercase; letter-spacing: 0.6px;">
-                    Projected Range
-                </div>
-                <p style="margin: 4px 0; font-size: 12px; display: flex; justify-content: space-between;"><span style="color: #c4b5fd;">Min Mult:</span><span id="minMult" style="font-weight: 700; color: #a855f7;">—</span></p>
-                <p style="margin: 4px 0; font-size: 12px; display: flex; justify-content: space-between;"><span style="color: #c4b5fd;">Max Mult:</span><span id="maxMult" style="font-weight: 700; color: #a855f7;">—</span></p>
-                <p style="margin: 4px 0; font-size: 12px; display: flex; justify-content: space-between;"><span style="color: #c4b5fd;">Min Payout:</span><span id="minPayout" style="font-weight: 700; color: #a855f7;">—</span></p>
-                <p style="margin: 4px 0; font-size: 12px; display: flex; justify-content: space-between;"><span style="color: #c4b5fd;">Max Payout:</span><span id="maxPayout" style="font-weight: 700; color: #a855f7;">—</span></p>
-            </div>
-        `;
-        document.body.appendChild(gui);
+        var SNK_VERSION  = '1.01';
+        /* Tuned to play as fast as the site will let it. The pace is set by the
+           GAME, not by us: a control is pressed the instant it becomes usable
+           again. A fixed cooldown would either be slower than the game or race
+           it, so instead each click waits to see its own control go busy and
+           then free — with FALLBACK_MS as the escape hatch, because a round that
+           resolves inside one poll never shows the busy frame and the first cut
+           of this wedged forever waiting for it. */
+        var POLL_MS      = 60;
+        var GAME_MAX     = 5;      // the game's own cap — five pips under the board
+        var STALL_MS     = 20000;  // nothing moved for this long: stop and say so
+        var SETTLE_MS    = 120;    // after a round ends, before opening the next
+        var MIN_GAP_MS   = 40;     // never two clicks inside a frame
+        var FALLBACK_MS  = 500;    // act anyway if the busy frame was never seen
 
-        // Drag
-        let isDragging = false, currentX, currentY, initialX, initialY;
-        gui.addEventListener('mousedown', (e) => {
-            if (e.target.tagName === 'BUTTON' || e.target.tagName === 'INPUT' || e.target.tagName === 'LABEL') return;
-            initialX = e.clientX - currentX; initialY = e.clientY - currentY;
-            isDragging = true;
-        });
-        document.addEventListener('mousemove', (e) => {
-            if (!isDragging) return;
-            e.preventDefault();
-            currentX = e.clientX - initialX; currentY = e.clientY - initialY;
-            gui.style.left = currentX + 'px'; gui.style.top = currentY + 'px';
-            gui.style.right = 'auto';
-        });
-        document.addEventListener('mouseup', () => { isDragging = false; });
-        currentX = window.innerWidth - gui.offsetWidth - 30; currentY = 40;
-        gui.style.left = currentX + 'px'; gui.style.top = currentY + 'px';
-
-        const btnStart = document.getElementById('btnStart');
-        const btnStop = document.getElementById('btnStop');
-        const status = document.getElementById('status');
-        function setStatus(txt, color = '#c4b5fd') { status.textContent = txt; status.style.color = color; }
-
-        async function delay(ms) { return new Promise(r => setTimeout(r, ms)); }
-        async function waitFor(predicate, timeoutMs) {
-            const start = Date.now();
-            while (Date.now() - start < timeoutMs) {
-                if (!isRunning) return false;
-                try { if (predicate()) return true; } catch (e) {}
-                await delay(POLL_INTERVAL_MS);
-            }
-            return false;
-        }
-
-        // ---- Shuffle Mines selectors ----
-        // Shuffle's UI behavior, observed on the live page:
-        //   - Between rounds: button[data-testid="bet-button"] exists with
-        //     text "Play".
-        //   - Mid-round: the bet-button is REMOVED from the DOM entirely.
-        //     A "REDEEM <amount> <currency>" button replaces it (this is
-        //     the cashout). The button has no data-testid.
-        //   - Tile state isn't stored in a class — it's in the inline
-        //     `background-color` style. Unrevealed tiles use a specific
-        //     dark grey; revealed tiles get a colored bg (yellow for gem,
-        //     red-ish for bomb). We treat any tile whose inline bg is the
-        //     dark grey as still-clickable.
-        //   - Bust detection: after clicking a tile, if the round ENDS
-        //     (Play button reappears) without us pressing Redeem, we
-        //     busted on that pick. Otherwise it was a safe gem.
-        const TILE_IDLE_BG = 'rgb(32, 35, 41)';
-        function isPlayReady() {
-            const el = document.querySelector('button[data-testid="bet-button"]');
-            if (!el || el.disabled || el.getAttribute('aria-disabled') === 'true') return false;
-            return /^play$/i.test((el.textContent || '').trim());
-        }
-        function clickPlay() {
-            if (!isPlayReady()) return false;
-            document.querySelector('button[data-testid="bet-button"]').click();
-            return true;
-        }
-        function findCashoutButton() {
-            // The mid-round "REDEEM 200.00 GC" button. Exclude the "Redeem
-            // Code" menu item (which is a user-menu entry, not a cashout).
-            const btns = document.querySelectorAll('button');
-            for (const b of btns) {
-                if (!b.offsetParent || b.disabled) continue;
-                const t = (b.textContent || '').trim();
-                if (/^redeem\b/i.test(t) && /\d/.test(t) && !/code/i.test(t)) return b;
+        function buttons() { return Array.prototype.slice.call(document.querySelectorAll('button')); }
+        function btnByText(re) {
+            var b = buttons(), i, t;
+            for (i = 0; i < b.length; i++) {
+                t = (b[i].textContent || '').trim();
+                if (t && re.test(t)) return b[i];
             }
             return null;
         }
-        function isCashoutReady() { return !!findCashoutButton(); }
-        function isTileIdle(tile) {
-            // Inline-style bg color is the discriminator; computed style is
-            // identical between idle/revealed because Shuffle drives the
-            // reveal animation via JS-set inline styles.
-            return (tile.style.backgroundColor || '') === TILE_IDLE_BG;
-        }
-        function getIdleTiles() {
-            return Array.from(document.querySelectorAll('button[class*="MinesGameTileWrapper_root"]'))
-                .filter(isTileIdle);
-        }
-        // Batch-pick: fire all clicks in one synchronous burst, then wait
-        // for either every requested tile to reveal OR the round to end on
-        // a bust. Verified live: Shuffle accepts and processes rapid clicks
-        // (7 clicks fired in ~3 ms, full settle in ~275 ms including bust
-        // detection — ~10× faster than the per-pick serial approach).
-        //
-        // Round-state detection after the burst:
-        //   - idle tiles == 0  → bust (Shuffle reveals every tile on bust,
-        //     regardless of which one was the mine; this is the only fully
-        //     reliable bust signal because the Play button can come back
-        //     disabled when the user runs out of balance — making
-        //     isPlayReady misclassify a bust as "still mid-round")
-        //   - idle tiles >  0  AND our N picks landed → safe; cashout
-        //     button should be available
-        async function batchPickTiles(picks) {
-            const idle = getIdleTiles();
-            if (idle.length === 0) return { ok: false, busted: false, fired: 0 };
-            const n = Math.min(picks, idle.length);
-            const revealedBefore = 25 - idle.length;
-            const arr = idle.slice();
-            for (let i = arr.length - 1; i > arr.length - 1 - n; i--) {
-                const j = Math.floor(Math.random() * (i + 1));
-                [arr[i], arr[j]] = [arr[j], arr[i]];
+
+        var SITES = {
+            stake: {
+                label: 'Stake',
+                onPage: function () { return /casino\/games\/snakes(?:\/|$|\?|#)/i.test(location.pathname || ''); },
+                start:   function () { return document.querySelector('[data-testid="bet-button"]'); },
+                roll:    function () { return document.querySelector('[data-testid="game-next"]'); },
+                /* Read only, never clicked — it is how we show you the round is
+                   yours now, and it is what tells a bust from a cashout. */
+                cashout: function () { return document.querySelector('[data-testid="cashout-button"]'); },
+                mult:    function () {
+                    var m = (document.body.innerText || '').match(/Total Profit \(([\d.]+)\s*×\)/);
+                    return m ? parseFloat(m[1]) : null;
+                },
+                multMeansOutcome: true   // a bust zeroes it; a cashout leaves it
+            },
+            nuts: {
+                label: 'Nuts',
+                onPage: function () { return /\/snakes(?:\/|$|\?|#)/i.test(location.pathname || ''); },
+                start:   function () { return btnByText(/^play$/i); },
+                roll:    function () { return btnByText(/^roll$/i); },
+                cashout: function () { return btnByText(/cash\s*out/i); },
+                /* Supplied from the live page 2026-08-08:
+                     <div class="snakes-module__3yTeBG__rollMultiplier"
+                          style="--color: var(--color-green-500);">1.11x</div>
+                   Matched on the stable tail of the CSS-module class, never the
+                   whole thing — `3yTeBG` is a build hash and will change the next
+                   time Nuts ships. Takes the LAST match: if the page renders one
+                   of these per roll rather than a single live figure, the last is
+                   the current one. */
+                mult:    function () {
+                    var els = document.querySelectorAll('[class*="rollMultiplier"]');
+                    if (!els.length) return null;
+                    var txt = (els[els.length - 1].textContent || '').trim();
+                    var m = txt.match(/([\d.]+)\s*x/i) || txt.match(/([\d.]+)/);
+                    if (!m) return null;
+                    var v = parseFloat(m[1]);
+                    return isFinite(v) ? v : null;
+                },
+                /* Stake zeroes its multiplier on a bust, which is how the status
+                   line tells a bust from a cashout. Whether Nuts does the same is
+                   unconfirmed, so outcomes here stay worded as a plain "round
+                   over" rather than risk announcing a cashout that never was. */
+                multMeansOutcome: false
             }
-            arr.slice(arr.length - n).forEach(t => t.click());
-            await waitFor(() => {
-                const idleNow = getIdleTiles().length;
-                if (idleNow === 0) return true; // bust — all tiles revealed
-                return (25 - idleNow) >= revealedBefore + n; // our picks landed
-            }, 3000);
-            const busted = getIdleTiles().length === 0;
-            if (!busted) {
-                // Safe path — give the cashout button a brief window to settle
-                // into a clickable state before the caller invokes it.
-                await waitFor(findCashoutButton, 500);
+        };
+        function detectSite() {
+            return /(^|\.)nuts\.gg$/i.test(location.hostname) ? SITES.nuts : SITES.stake;
+        }
+        var SITE    = detectSite();
+        var TOOL_ID = (SITE === SITES.nuts ? 'nuts' : 'stake') + '-snakes';
+
+        function onPage()  { try { return SITE.onPage(); } catch (e) { return false; } }
+        function enabled() { try { return isToolIdEnabled(TOOL_ID); } catch (e) { return true; } }
+
+        /* ---------------------------------------------------------------
+           SETTINGS
+           --------------------------------------------------------------- */
+        var KEY = 'snakes-partial-autoplay-v1';
+        /* `target` is an optional auto-cashout: the one case where the tool DOES
+           take the money off the table for you. If the multiplier reaches it
+           during the auto rolls the round is closed there and then, including on
+           the very last auto roll — a 50× on roll two of three is not something
+           to hand back and hope about. 0 means off, which is the default. */
+        var cfg = { rolls: 2, target: 0 };
+        try {
+            var raw = JSON.parse(localStorage.getItem(KEY) || 'null');
+            if (raw && raw.rolls >= 1 && raw.rolls <= GAME_MAX - 1) cfg.rolls = raw.rolls | 0;
+            if (raw && isFinite(raw.target) && raw.target >= 0) cfg.target = +raw.target;
+        } catch (e) {}
+        function saveCfg() { try { localStorage.setItem(KEY, JSON.stringify(cfg)); } catch (e) {} }
+
+        /* ---------------------------------------------------------------
+           STATE MACHINE
+
+           Deliberately driven by what the BUTTONS say rather than by a timer or
+           a bet count. Every transition below is one of the states measured on
+           a live Stake board:
+
+             idle        Bet present + enabled          -> no round
+             betting     we clicked Bet, waiting        -> Bet goes away
+             rolling     Roll enabled, under the target -> click Roll
+             handover    target reached                 -> hands off, yours
+             (any)       Bet comes back                 -> round over, re-arm
+
+           A roll in flight shows as Roll present but DISABLED, which is why the
+           click path waits to see it disabled and then enabled again rather
+           than counting its own clicks — a click that the page drops must not
+           be counted as a roll taken.
+           --------------------------------------------------------------- */
+        var running     = false;  // is the tool armed
+        var phase       = 'idle'; // idle | rolling | handover — for the status line only
+        var rollsDone   = 0;
+        var handedOver  = false;
+        var roundActive = false;
+        var rounds      = 0;
+        /* Counted because the status line is transient — at full speed a round
+           can finish and the next one start before you have read what happened. */
+        var targetHits  = 0;
+        var lastChange  = Date.now();
+        var cooldown    = 0;      // set only after a round ends
+        var clickAt     = 0;      // when we last pressed something
+        var sawBusy     = false;  // that control has since gone disabled
+        var multAtRoll  = null;   // the multiplier when we last pressed Roll
+        var lastSig     = '';
+        var statusText  = 'Idle.';
+        /* NO-BET SAFETY GATE — not a setting.
+
+           Its job is narrow: stop a run that CANNOT place a bet, the usual cause
+           being an empty balance. Left alone that state loops on the Bet button
+           forever. It is deliberately not exposed in the panel, because a safety
+           gate you can set to zero is not a safety gate.
+
+           IT DOES NOT RUN WHILE THE BOARD IS YOURS. Once the tool has handed
+           over it is waiting on a human decision, and there is no such thing as
+           taking too long over it — the clock is held at the current time for
+           the whole of the handover and only starts again between rounds, which
+           is the only window where the tool is the one failing to act.
+
+           Same hidden-tab rule as the dice HUD's rapid-fire watchdog: a
+           backgrounded tab is not a stalled run. Browsers throttle and often
+           suspend timers when the tab is hidden or the phone is locked, so the
+           gate is paused while hidden and given a full fresh window on return —
+           without that it becomes the "it stops at random" bug. */
+        var NO_BET_STOP_MS = 90000;
+        var lastBetAt      = 0;
+        var visibleAgainAt = 0;
+        function noteActivity() { lastBetAt = Date.now(); }
+
+        function setStatus(t) { statusText = t; paint(); }
+
+        function click(el) {
+            if (!el || el.disabled) return false;
+            el.click();
+            clickAt = Date.now();
+            sawBusy = false;
+            return true;
+        }
+        /** True once the thing we pressed has finished. Fast path: we watched it
+         *  go busy and come back. Safety net: FALLBACK_MS, so a transition that
+         *  happens between two polls can never wedge the loop. */
+        function settled(control) {
+            var since = Date.now() - clickAt;
+            if (since < MIN_GAP_MS) return false;
+            if (sawBusy) return !!(control && !control.disabled);
+            return since >= FALLBACK_MS;
+        }
+
+        function stop(why) {
+            running = false;
+            phase = 'idle';
+            setStatus(why || 'Stopped.');
+        }
+
+        function tick() {
+            if (!onPage() || !enabled()) return;
+            var startB = SITE.start();
+            var rollB  = SITE.roll();
+            var coB    = null;
+            try { coB = SITE.cashout(); } catch (e) {}
+
+            var atIdle  = !!(startB && !startB.disabled);
+            var canRoll = !!(rollB && !rollB.disabled);
+            /* A round is live when the start button has gone (Stake replaces it
+               with Cashout), or a Cashout control exists, or Roll is offering
+               itself. Any one of those is enough, which is what lets the same
+               code cover Nuts without having seen its mid-round markup. */
+            var live = (!startB) || !!coB || canRoll;
+            // A round going live IS the proof that a bet was accepted.
+            if (live && !roundActive) noteActivity();
+            if (live) roundActive = true;
+
+            var sig = (startB ? (startB.disabled ? 'S0' : 'S1') : 'S-') +
+                      (rollB  ? (rollB.disabled  ? 'R0' : 'R1') : 'R-') + rollsDone;
+            if (sig !== lastSig) { lastSig = sig; lastChange = Date.now(); }
+
+            /* Watch for the pressed control going busy — that is what lets the
+               next action fire the moment it comes back, rather than waiting out
+               a fixed delay. */
+            if (!sawBusy && clickAt &&
+                ((rollB && rollB.disabled) || (!startB && !rollB) || (startB && startB.disabled))) {
+                sawBusy = true;
             }
-            return { ok: true, busted, fired: n };
-        }
-        function getMinesCount() {
-            // Shuffle's mines selector has no testid. DOM shape (observed):
-            //   <div class="FormControlWrapper_root… Select_formWrapper…">
-            //     <div class="LabelBlock_root…"><label>Mines</label></div>
-            //     <div><select> with options 1..N </select></div>
-            //     <button class="Select_button…">CURRENT_VALUE</button>
-            //   </div>
-            // Match by walking from the Mines LABEL up to FormControlWrapper.
-            // The select holds the canonical value. (Mid-round Shuffle hides
-            // the dropdown, but the underlying form element stays mounted.)
-            const labels = document.querySelectorAll('label');
-            for (const lbl of labels) {
-                if (!/^mines$/i.test((lbl.textContent || '').trim())) continue;
-                const wrap = lbl.closest('[class*="FormControlWrapper"], [class*="Select_formWrapper"]');
-                if (!wrap) continue;
-                const sel = wrap.querySelector('select');
-                if (sel) {
-                    const v = parseInt(sel.value, 10);
-                    if (!isNaN(v) && v >= 1 && v < 25) return v;
-                }
-                // Fallback: read the Select_button text (the visible value).
-                const btn = wrap.querySelector('button[class*="Select_button"]');
-                if (btn) {
-                    const v = parseInt((btn.textContent || '').trim(), 10);
-                    if (!isNaN(v) && v >= 1 && v < 25) return v;
-                }
+
+            /* ---- the round ended, however it ended ---- */
+            if (roundActive && !live && atIdle) {
+                var m = null;
+                try { m = SITE.mult(); } catch (e) {}
+                rounds++;
+                /* A bust zeroes the multiplier; a cashout leaves the one you
+                   walked away with on screen. Nuts does not expose it, so there
+                   the outcome is reported plainly as "round over". */
+                var how = (m === null || !SITE.multMeansOutcome) ? 'round over'
+                        : (m > 0 ? 'cashed out at ' + m.toFixed(2) + '×' : 'busted');
+                roundActive = false;
+                rollsDone   = 0;
+                noteActivity();
+                handedOver  = false;
+                multAtRoll  = null;
+                phase       = 'idle';
+                cooldown    = Date.now() + SETTLE_MS;
+                setStatus(running ? ('Round ' + rounds + ': ' + how + ' — re-arming…')
+                                  : ('Round ' + rounds + ': ' + how + '.'));
             }
-            return NaN;
-        }
-        function getBetAmount() {
-            const inp = document.querySelector('input[data-testid="bet-amount"]');
-            return inp ? parseFloat(inp.value) : NaN;
-        }
 
-        function weightedRandom(min, max) {
-            const base = 1.5; let weights = []; let total = 0;
-            for (let i = min; i <= max; i++) { const w = Math.pow(base, max - i); weights.push(w); total += w; }
-            let r = Math.random() * total, sum = 0;
-            for (let idx = 0; idx < weights.length; idx++) { sum += weights[idx]; if (r < sum) return min + idx; }
-            return max;
-        }
+            if (!running) return;
 
-        // Composite live-check: bail not just on user-stop, but also on
-        // SPA-navigation away from the mines page. Without this, the bot
-        // can fire clickPlay / cashout on whatever the next page happens
-        // to render (Stake's bet-button testid is reused across games).
-        const stillLive = () => isRunning && !urlChanged();
-
-        // Detect whether Shuffle is currently in an active round (Play button
-        // absent from the DOM, idle tiles ready to click). Lets the bot pick
-        // up an in-progress round instead of hanging on isPlayReady.
-        function isMidRound() {
-            return !document.querySelector('button[data-testid="bet-button"]') && getIdleTiles().length > 0;
-        }
-
-        async function doOneRound() {
-            if (!stillLive()) return;
-            setStatus('Running');
-
-            // If we're not already mid-round, wait for Play and start one.
-            if (!isMidRound()) {
-                const playReadyStart = Date.now();
-                const MAX_WAIT_MS = 20000;
-                if (!await waitFor(isPlayReady, MAX_WAIT_MS)) {
-                    if (isRunning && Date.now() - playReadyStart >= MAX_WAIT_MS) {
-                        setStatus('Stopped — out of balance', '#ef4444');
-                        stopBot();
-                    }
+            /* ---- no-bet safety gate ---- */
+            var nowT = Date.now();
+            if (handedOver || document.hidden) {
+                /* Your decision time, and time the tab spent in the background,
+                   are both held rather than counted. Holding the stamp (instead
+                   of just skipping the test) is what gives a full fresh window
+                   the moment the tool is answerable again. */
+                lastBetAt = nowT;
+                if (document.hidden) visibleAgainAt = 0;
+            } else {
+                if (!visibleAgainAt) visibleAgainAt = nowT;
+                if (!lastBetAt) lastBetAt = nowT;
+                if (nowT - Math.max(lastBetAt, visibleAgainAt) > NO_BET_STOP_MS) {
+                    stop('Stopped: could not place a bet for ' +
+                         Math.round(NO_BET_STOP_MS / 1000) + 's — check your balance.');
                     return;
                 }
-                if (!stillLive()) return;
-                if (!clickPlay()) { await delay(100); return; }
-                if (!await waitFor(() => getIdleTiles().length > 0, 2500)) return;
-                if (!stillLive()) return;
             }
 
-            const min = parseInt(document.getElementById('minPicks').value) || 3;
-            const max = parseInt(document.getElementById('maxPicks').value) || 12;
-            const picks = weightedRandom(min, max);
-            setStatus(`Picking ${picks} tiles`);
+            if (Date.now() < cooldown) return;
 
-            const result = await batchPickTiles(picks);
-            if (!stillLive()) return;
-            if (!result.ok) return;
-            if (result.busted) { setStatus('Busted'); return; }
-
-            // Safe — cashout button is up. Click Redeem to lock in the win.
-            const cashoutBtn = findCashoutButton();
-            if (cashoutBtn) {
-                cashoutBtn.click();
-                setStatus('Cashed out');
-                await delay(POST_WIN_PAUSE_MS);
-            }
-        }
-
-        async function runLoop() {
-            while (stillLive()) {
-                await doOneRound();
-            }
-            if (urlChanged()) { setStatus('Stopped — navigated away', '#ef4444'); stopBot(); }
-        }
-        function startBot() {
-            if (isRunning) return;
-            if (!onMinesPage()) { setStatus('Not on Mines page', '#ef4444'); return; }
-            isRunning = true;
-            runUrl = location.pathname;
-            btnStart.style.display = 'none'; btnStop.style.display = 'inline-block';
-            setStatus('Running', '#a855f7');
-            runLoop();
-        }
-        function stopBot() {
-            isRunning = false;
-            runUrl = null;
-            btnStart.style.display = 'inline-block'; btnStop.style.display = 'none';
-            setStatus('Stopped', '#ef4444');
-        }
-        btnStart.onclick = startBot;
-        btnStop.onclick = stopBot;
-        window.addEventListener('beforeunload', stopBot);
-
-        // ---- Multiplier formula (assume 1% house edge, same as Stake) ----
-        function binomCoeff(n, k) {
-            if (k < 0 || k > n) return 0;
-            if (k === 0 || k === n) return 1;
-            if (k > n - k) k = n - k;
-            let result = 1;
-            for (let i = 0; i < k; i++) result = result * (n - i) / (i + 1);
-            return result;
-        }
-        function computeMult(picks, mines) {
-            if (!isFinite(picks) || !isFinite(mines)) return NaN;
-            if (picks < 1 || mines < 1 || mines > 24) return NaN;
-            const safe = 25 - mines;
-            if (picks > safe) return NaN;
-            return 0.99 * binomCoeff(25, picks) / binomCoeff(safe, picks);
-        }
-
-        // ---- Min/Max pick cap (matches Stake/Nuts Mines behavior) ----
-        let _lastSafe = null;
-        function getSafeTiles() {
-            const m = getMinesCount();
-            if (isNaN(m)) return 24;
-            return Math.max(1, 25 - m);
-        }
-        function syncCaps() {
-            const safe = getSafeTiles();
-            const minInp = document.getElementById('minPicks');
-            const maxInp = document.getElementById('maxPicks');
-            if (minInp) minInp.max = String(safe);
-            if (maxInp) maxInp.max = String(safe);
-            return safe;
-        }
-        function clampInputs() {
-            const safe = getSafeTiles();
-            const minInp = document.getElementById('minPicks');
-            const maxInp = document.getElementById('maxPicks');
-            if (!minInp || !maxInp) return;
-            const minF = document.activeElement === minInp;
-            const maxF = document.activeElement === maxInp;
-            let mn = parseInt(minInp.value); if (isNaN(mn)) mn = 1;
-            let mx = parseInt(maxInp.value); if (isNaN(mx)) mx = 1;
-            mn = Math.max(1, Math.min(mn, safe));
-            mx = Math.max(1, Math.min(mx, safe));
-            if (mn > mx) mx = mn;
-            if (!minF && minInp.value !== String(mn)) minInp.value = String(mn);
-            if (!maxF && maxInp.value !== String(mx)) maxInp.value = String(mx);
-        }
-
-        function updateInfo() {
-            const safe = syncCaps();
-            if (_lastSafe !== null && _lastSafe !== safe) clampInputs();
-            _lastSafe = safe;
-
-            const mines = getMinesCount();
-            const bet = getBetAmount();
-            const totalTiles = document.querySelectorAll('button[class*="MinesGameTileWrapper_root"]').length;
-            const idleCount = getIdleTiles().length;
-            const inRound = totalTiles > 0 && idleCount < totalTiles && !isPlayReady();
-            const revealed = inRound ? (totalTiles - idleCount) : NaN;
-
-            let liveMult = NaN, livePayout = NaN, chanceText = '—';
-            if (isFinite(revealed) && revealed > 0 && !isNaN(mines)) {
-                liveMult = computeMult(revealed, mines);
-                if (isFinite(bet) && bet > 0) livePayout = bet * liveMult;
-                const remaining = 25 - revealed;
-                const safeRemaining = (25 - mines) - revealed;
-                if (remaining > 0 && safeRemaining >= 0) chanceText = ((safeRemaining / remaining) * 100).toFixed(2) + '%';
-            }
-            const multEl = document.getElementById('mult');
-            const poutEl = document.getElementById('pout');
-            const chanceEl = document.getElementById('chance');
-            if (multEl) multEl.textContent = isNaN(liveMult) ? '—' : liveMult.toFixed(2) + '×';
-            if (poutEl) poutEl.textContent = isNaN(livePayout) ? '—' : livePayout.toFixed(2);
-            if (chanceEl) chanceEl.textContent = chanceText;
-
-            const minPicks = parseInt(document.getElementById('minPicks').value);
-            const maxPicks = parseInt(document.getElementById('maxPicks').value);
-            const minMultEl = document.getElementById('minMult');
-            const maxMultEl = document.getElementById('maxMult');
-            const minPayEl = document.getElementById('minPayout');
-            const maxPayEl = document.getElementById('maxPayout');
-            if (isNaN(minPicks) || isNaN(maxPicks) || isNaN(mines)) {
-                [minMultEl, maxMultEl, minPayEl, maxPayEl].forEach(el => { if (el) el.textContent = '—'; });
+            /* ---- start a round ---- */
+            if (atIdle) {
+                if (clickAt && !settled(startB)) return;
+                if (click(startB)) {
+                    /* Deliberately NOT stamping the watchdog here. Pressing Bet
+                       is not evidence a bet happened — with an empty balance the
+                       press does nothing at all, and stamping on the press would
+                       let that loop reset its own safety gate forever, which is
+                       the exact case the gate exists for. The stamp goes on the
+                       round actually going live. */
+                    phase = 'rolling';
+                    setStatus('Betting…');
+                } else if (Date.now() - lastChange > STALL_MS) {
+                    stop('Stopped: could not press ' + (SITE === SITES.nuts ? 'PLAY' : 'Bet') + '.');
+                }
                 return;
             }
-            const cMin = Math.max(1, Math.min(minPicks, safe));
-            const cMax = Math.max(cMin, Math.min(maxPicks, safe));
-            const minMult = computeMult(cMin, mines);
-            const maxMult = computeMult(cMax, mines);
-            if (minMultEl) minMultEl.textContent = isNaN(minMult) ? '—' : minMult.toFixed(2) + '×';
-            if (maxMultEl) maxMultEl.textContent = isNaN(maxMult) ? '—' : maxMult.toFixed(2) + '×';
-            if (isFinite(bet) && bet > 0) {
-                if (minPayEl) minPayEl.textContent = isNaN(minMult) ? '—' : (bet * minMult).toFixed(2);
-                if (maxPayEl) maxPayEl.textContent = isNaN(maxMult) ? '—' : (bet * maxMult).toFixed(2);
-            } else {
-                if (minPayEl) minPayEl.textContent = '—';
-                if (maxPayEl) maxPayEl.textContent = '—';
+
+            if (!settled(rollB)) return;
+
+            /* ---- take our share of the rolls ----
+
+               Guarded twice on purpose. The button being enabled is the primary
+               signal, but the FIRST cut of this waited to observe the button go
+               disabled and then enabled again, and a roll that resolves inside
+               one poll interval never shows that transition — the tool wedged
+               after a single roll and sat there forever. A cooldown cannot wedge.
+               Where a multiplier is readable it is checked too: unchanged since
+               the last press means the previous roll has not landed yet. */
+            var nowMult = null;
+            try { nowMult = SITE.mult(); } catch (e) {}
+
+            /* ---- auto-cashout target ----
+
+               Checked the moment a roll has landed, BEFORE deciding whether to
+               roll again or hand over — so it fires whether the target is hit
+               early (50× on roll two of three) or on the very last auto roll.
+               Only during the auto phase: once the board is yours it stays
+               yours. Needs a readable multiplier, which Nuts does not yet give
+               us, so there the field is disabled rather than quietly inert. */
+            /* `nowMult !== multAtRoll` is the "this roll actually landed" test —
+               multAtRoll holds the reading from just before the last press. It
+               matters most on Nuts, where the multiplier is matched by class and
+               could in principle be a per-roll list that outlives the round: a
+               stale carry-over reads as unchanged and so cannot trip the target
+               on the first roll of a fresh round. */
+            if (canRoll && !handedOver && rollsDone > 0 &&
+                cfg.target > 0 && nowMult !== null && nowMult !== multAtRoll &&
+                nowMult >= cfg.target) {
+                var co = null;
+                try { co = SITE.cashout(); } catch (e) {}
+                if (co && !co.disabled) {
+                    click(co);
+                    targetHits++;
+                    setStatus('Hit ' + nowMult.toFixed(2) + '× (target ' + cfg.target + '×) — cashed out.');
+                    return;
+                }
+                /* Target hit but no cashout control to press: stop rolling and
+                   say so rather than rolling past it. */
+                if (!handedOver) {
+                    handedOver = true;
+                    phase = 'handover';
+                    setStatus('Hit ' + nowMult.toFixed(2) + '× but could not find Cashout — cash out by hand.');
+                }
+                return;
+            }
+
+            if (canRoll && !handedOver && rollsDone < cfg.rolls) {
+                if (rollsDone > 0 && nowMult !== null && multAtRoll !== null && nowMult === multAtRoll) return;
+                multAtRoll = nowMult;
+                if (click(rollB)) {
+                    noteActivity();
+                    rollsDone++;
+                    phase = 'rolling';
+                    setStatus('Rolled ' + rollsDone + ' of ' + cfg.rolls + '…');
+                }
+                return;
+            }
+
+            /* ---- hand the board back ---- */
+            if (canRoll && rollsDone >= cfg.rolls && !handedOver) {
+                handedOver = true;
+                phase = 'handover';
+                setStatus('YOUR MOVE — ' + rollsDone + ' roll' + (rollsDone === 1 ? '' : 's') +
+                          ' taken. Roll again or cash out.');
             }
         }
-        setInterval(updateInfo, 1000);
-        ['minPicks', 'maxPicks'].forEach(id => {
-            const el = document.getElementById(id);
-            if (!el) return;
-            el.addEventListener('input', updateInfo);
-            el.addEventListener('blur', () => { clampInputs(); updateInfo(); });
-        });
-        clampInputs();
-        updateInfo();
+
+        /* ---------------------------------------------------------------
+           PANEL — small, draggable, same language as the Mines/Moles huds.
+           --------------------------------------------------------------- */
+        /* Per-site skin, matching the rest of the bundle: Stake slate, Nuts neon.
+           Same colours the Nuts Keno panel already uses, so the two sit together
+           on the page instead of one looking like it wandered in from Stake. */
+        var THEME = (SITE === SITES.nuts) ? {
+            panel:  'background:rgba(16,20,30,.72);backdrop-filter:blur(16px);' +
+                    '-webkit-backdrop-filter:blur(16px);border:1px solid rgba(0,255,255,.15);' +
+                    'border-top:1px solid rgba(0,255,255,.3);border-left:1px solid rgba(0,255,255,.3);' +
+                    'border-radius:14px;color:#e0ffff;' +
+                    'box-shadow:0 8px 32px rgba(0,0,0,.35),inset 0 0 20px rgba(0,255,255,.05)',
+            headBorder: 'rgba(0,255,255,.15)',
+            headText:   '#00ffff;letter-spacing:1px;text-shadow:0 0 10px rgba(0,255,255,.6)',
+            field:      'background:rgba(0,0,0,.35);border:1px solid rgba(0,255,255,.25);color:#e0ffff',
+            accent:     '#19f3ff',
+            onInk:      '#04121a',
+            haltBg:     'rgba(0,255,255,.12);color:#bffcff'
+        } : {
+            panel:  'background:#0f212e;border:1px solid #2f4553;border-radius:8px;color:#b1bad3;' +
+                    'box-shadow:0 8px 28px rgba(0,0,0,.45)',
+            headBorder: '#2f4553',
+            headText:   '#fff',
+            field:      'background:#213743;border:1px solid #2f4553;color:#e2e8f0',
+            accent:     '#1fff20',
+            onInk:      '#0f212e',
+            haltBg:     '#2f4553;color:#e2e8f0'
+        };
+        var CSS =
+            '#snakes-auto-gui{position:fixed;z-index:2147483000;top:96px;right:18px;width:212px;' +
+              THEME.panel + ';' +
+              'font:12px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;' +
+              'user-select:none}' +
+            '#snakes-auto-gui .sk-head{display:flex;align-items:center;justify-content:space-between;' +
+              'padding:8px 10px;border-bottom:1px solid ' + THEME.headBorder + ';cursor:grab;' +
+              'font-weight:700;color:' + THEME.headText + '}' +
+            '#snakes-auto-gui .sk-head:active{cursor:grabbing}' +
+            '#snakes-auto-gui .sk-body{padding:10px;display:flex;flex-direction:column;gap:8px}' +
+            '#snakes-auto-gui .sk-row{display:flex;align-items:center;justify-content:space-between;gap:8px}' +
+            '#snakes-auto-gui .sk-pills{display:flex;gap:4px}' +
+            '#snakes-auto-gui .sk-pill{flex:1;' + THEME.field + ';' +
+              'border-radius:5px;padding:5px 0;text-align:center;cursor:pointer;font-weight:700}' +
+            '#snakes-auto-gui .sk-pill.on{background:' + THEME.accent + ';border-color:' + THEME.accent +
+              ';color:' + THEME.onInk + '}' +
+            '#snakes-auto-gui .sk-target{width:60px;' + THEME.field + ';' +
+              'border-radius:5px;padding:4px 6px;text-align:right;font-weight:700;' +
+              'font-size:12px;margin-right:3px}' +
+            '#snakes-auto-gui .sk-target:disabled{opacity:.4;cursor:not-allowed}' +
+            '#snakes-auto-gui .sk-btn{flex:1;border:0;border-radius:5px;padding:7px 0;cursor:pointer;' +
+              'font-weight:700;font-size:12px}' +
+            '#snakes-auto-gui .sk-go{background:' + THEME.accent + ';color:' + THEME.onInk + '}' +
+            '#snakes-auto-gui .sk-halt{background:' + THEME.haltBg + '}' +
+            '#snakes-auto-gui .sk-status{font-size:11px;line-height:1.35;min-height:2.4em;opacity:.85}' +
+            '#snakes-auto-gui .sk-status.yours{color:' + THEME.accent + ';font-weight:700;opacity:1}' +
+            '#snakes-auto-gui .sk-foot{display:flex;justify-content:space-between;opacity:.45;font-size:10px;' +
+              'padding:0 10px 8px}';
+
+        var gui = null, elStatus = null, elPills = null, elGo = null, elRounds = null;
+
+        function injectCss() {
+            if (document.getElementById('snakes-auto-css')) return;
+            var viaGM = false;
+            try { if (typeof GM_addStyle === 'function') { GM_addStyle(CSS); viaGM = true; } } catch (e) {}
+            var marker = document.createElement(viaGM ? 'meta' : 'style');
+            marker.id = 'snakes-auto-css';
+            if (!viaGM) marker.textContent = CSS;
+            (document.head || document.documentElement).appendChild(marker);
+        }
+
+        function build() {
+            var el = document.createElement('div');
+            el.id = 'snakes-auto-gui';
+            var pills = '';
+            for (var n = 1; n <= GAME_MAX - 1; n++)
+                pills += '<div class="sk-pill" data-sk="' + n + '">' + n + '</div>';
+            el.innerHTML =
+                '<div class="sk-head"><span>Snakes</span>' +
+                  '<span data-sk="min" title="Minimise" style="cursor:pointer;opacity:.6;padding:0 4px">−</span></div>' +
+                '<div class="sk-body">' +
+                  '<div class="sk-row"><span>Auto rolls</span></div>' +
+                  '<div class="sk-pills">' + pills + '</div>' +
+                  '<div class="sk-row"><span>Cash out at</span>' +
+                    '<span><input class="sk-target" type="number" min="0" step="0.01" ' +
+                      'data-sk="target" placeholder="off">&times;</span></div>' +
+                  '<div class="sk-row">' +
+                    '<button class="sk-btn sk-go" data-sk="go">START</button>' +
+                    '<button class="sk-btn sk-halt" data-sk="halt">STOP</button>' +
+                  '</div>' +
+                  '<div class="sk-status"></div>' +
+                '</div>' +
+                '<div class="sk-foot"><span>v' + SNK_VERSION + '</span><span data-sk="rounds">0 rounds</span></div>';
+
+            elStatus = el.querySelector('.sk-status');
+            elPills  = el.querySelector('.sk-pills');
+            elGo     = el.querySelector('[data-sk="go"]');
+            elRounds = el.querySelector('[data-sk="rounds"]');
+
+            var elTarget = el.querySelector('[data-sk="target"]');
+            if (cfg.target > 0) elTarget.value = cfg.target;
+            /* The target needs a readable multiplier. Both sites have one now,
+               but Nuts' only exists once a round is in progress — so the field is
+               left enabled and the check below simply never trips while there is
+               nothing to read, rather than being greyed out on a cold page. */
+            elTarget.addEventListener('change', function () {
+                var v = parseFloat(this.value);
+                cfg.target = (isFinite(v) && v > 0) ? v : 0;
+                if (!cfg.target) this.value = '';
+                saveCfg();
+                paint();
+            });
+
+
+            elPills.addEventListener('click', function (e) {
+                var p = e.target.closest ? e.target.closest('.sk-pill') : null;
+                if (!p) return;
+                cfg.rolls = parseInt(p.getAttribute('data-sk'), 10) || 1;
+                saveCfg();
+                paint();
+            });
+            el.querySelector('[data-sk="go"]').addEventListener('click', function () {
+                if (running) return;
+                running = true;
+                rollsDone = 0; handedOver = false; roundActive = false; multAtRoll = null;
+                phase = 'idle'; cooldown = 0; lastChange = Date.now();
+                lastBetAt = Date.now(); visibleAgainAt = 0;
+                setStatus('Armed — ' + cfg.rolls + ' auto roll' + (cfg.rolls === 1 ? '' : 's') + ' per round.');
+            });
+            el.querySelector('[data-sk="halt"]').addEventListener('click', function () {
+                stop('Stopped. The current round is yours to finish.');
+            });
+            /* Collapses to a draggable pill — the header stays, which is also the
+               drag handle. There is deliberately no close: removing the panel
+               would need a reload to get it back, and stopping the tool is what
+               STOP is for. */
+            el.querySelector('[data-sk="min"]').addEventListener('click', function () {
+                var body = el.querySelector('.sk-body');
+                var foot = el.querySelector('.sk-foot');
+                var mini = el.classList.toggle('sk-mini');
+                if (body) body.style.display = mini ? 'none' : '';
+                if (foot) foot.style.display = mini ? 'none' : '';
+                el.style.width = mini ? 'auto' : '';
+                this.textContent = mini ? '+' : '−';
+                this.title = mini ? 'Restore' : 'Minimise';
+            });
+            makeDraggableSnk(el, el.querySelector('.sk-head'));
+            return el;
+        }
+
+        function makeDraggableSnk(panel, handle) {
+            var dragging = false, dx = 0, dy = 0;
+            handle.addEventListener('mousedown', function (e) {
+                if (e.target && e.target.getAttribute && e.target.getAttribute('data-sk') === 'min') return;
+                dragging = true;
+                var r = panel.getBoundingClientRect();
+                dx = e.clientX - r.left; dy = e.clientY - r.top;
+                e.preventDefault();
+            });
+            document.addEventListener('mousemove', function (e) {
+                if (!dragging) return;
+                panel.style.left = Math.max(0, e.clientX - dx) + 'px';
+                panel.style.top  = Math.max(0, e.clientY - dy) + 'px';
+                panel.style.right = 'auto';
+            });
+            document.addEventListener('mouseup', function () { dragging = false; });
+        }
+
+        function paint() {
+            if (!gui || !gui.isConnected) return;
+            var pills = elPills.querySelectorAll('.sk-pill'), i;
+            for (i = 0; i < pills.length; i++)
+                pills[i].classList.toggle('on', parseInt(pills[i].getAttribute('data-sk'), 10) === cfg.rolls);
+            elStatus.textContent = statusText;
+            elStatus.classList.toggle('yours', phase === 'handover');
+            elGo.textContent = running ? 'RUNNING' : 'START';
+            elGo.style.opacity = running ? '.55' : '1';
+            elRounds.textContent = rounds + ' round' + (rounds === 1 ? '' : 's') +
+                                   (targetHits ? ' · ' + targetHits + ' hit target' : '');
+        }
+
+        setInterval(function () {
+            try {
+                if (!onPage() || !enabled()) {
+                    if (gui && gui.parentNode) { running = false; gui.remove(); }
+                    return;
+                }
+                injectCss();
+                if (!gui || !gui.isConnected) { gui = build(); document.body.appendChild(gui); paint(); }
+                tick();
+                paint();
+            } catch (e) { /* never let one tick kill the loop */ }
+        }, POLL_MS);
+
+        console.log('%c[Snakes] partial autoplay v' + SNK_VERSION + ' on ' + SITE.label,
+                    'color:#1fff20;font-weight:700');
     }
+    /* === end body: snakes === */
 
-
-    /* ----- Shuffle Mines ----- */
     register({
-        id: 'shuffle-mines',
-        name: 'Shuffle Mines',
-        description: 'Auto-plays Mines on Shuffle with weighted random tile picks.',
-        matches: [
-            'https://shuffle.us/games/originals/mines*',
-            'https://shuffle.com/games/originals/mines*'
-        ],
+        id: 'nuts-snakes',
+        name: 'Nuts Snakes',
+        description: 'Auto-rolls the first 1-4 rolls of each round, then hands the board back so the cashout call is yours.',
+        matches: ['https://nuts.gg/snakes*', 'https://*.nuts.gg/snakes*'],
         runAt: 'document-end',
         defaultEnabled: true,
-        group: 'Shuffle',
-        uiSelectors: ['#mines-auto-gui']
-    }, tool_shuffle_mines);
+        group: 'Nuts',
+        uiSelectors: ['#snakes-auto-gui']
+    }, tool_snakes);
 
     /* =========================================================
        CONTROL PANEL UI
@@ -1519,5 +1667,5 @@
     function setupIowDiceIntegration() {}
 
 
-    console.log('%c[Shuffle Mines — Desktop] loaded (' + TOOLS.length + ' tool slot(s)). Click \u2699 to toggle.', 'color:#8bc34a;font-weight:700;');
+    console.log('%c[Nuts Snakes — Desktop] loaded (' + TOOLS.length + ' tool slot(s)). Click \u2699 to toggle.', 'color:#8bc34a;font-weight:700;');
 })();

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Nuts Auto-Vault — Desktop
 // @namespace    http://tampermonkey.net/
-// @version      3.39
+// @version      3.40
 // @description  Standalone single-tool build, extracted from the unified bundle.
 // @author       .
 // @match        https://nuts.gg/*
@@ -17,7 +17,7 @@
 (function () {
     'use strict';
 
-    console.log('%cNuts Auto-Vault — Desktop — standalone build v3.39', 'color:#17c7b8;font-weight:800;font-size:13px');
+    console.log('%cNuts Auto-Vault — Desktop — standalone build v3.40', 'color:#17c7b8;font-weight:800;font-size:13px');
 
     /* =========================================================
        UNIFIED LOADER — STORAGE KEYS & SETTINGS
@@ -548,14 +548,28 @@
     function loadConfig() {
         try {
             const saved = localStorage.getItem('nuts-autovault-config');
-            if (saved) return { ...defaults(), ...JSON.parse(saved) };
+            if (saved) {
+                const cfg = { ...defaults(), ...JSON.parse(saved) };
+                // Same one-time migration as the Stake twin: a stored 5 is the old
+                // default and could never fire. Flagged so a deliberate 5 sticks.
+                if (cfg.bigWinThreshold === 5 && !cfg.bigWinMigrated) {
+                    cfg.bigWinThreshold = 1.5;
+                    cfg.bigWinMigrated = true;
+                    try { localStorage.setItem('nuts-autovault-config', JSON.stringify(cfg)); } catch (e) {}
+                }
+                return cfg;
+            }
         } catch (e) {}
         return defaults();
     }
     function defaults() {
         return {
             saveAmount: 0.1,
-            bigWinThreshold: 5,
+            /* 1.5, not 5 — see the Stake twin. `ratio >= threshold` at 5 asks the
+               balance to QUINTUPLE inside one check window, so the big-win branch
+               was dead code on every default install. */
+            bigWinThreshold: 1.5,
+            bigWinMigrated: true,
             bigWinMultiplier: 3,
             checkInterval: 90000,
             minDepositSol: 0.001
@@ -563,6 +577,36 @@
     }
     function saveConfig() {
         localStorage.setItem('nuts-autovault-config', JSON.stringify(config));
+    }
+
+    /* Presets — same three setups as the Stake twin, so the two panels mean the
+       same thing by "Balanced". minDepositSol is left out on purpose: it is a
+       dust floor for the SOL network, not a strategy choice. */
+    const AV_PRESETS = {
+        /* Slots: a long grind punctuated by a spike. Skim little on the way,
+           take a big bite when the balance actually jumps, and do not bother
+           looking often — nothing happens between hits. */
+        slots:     { saveAmount: 0.10, bigWinThreshold: 3.0, bigWinMultiplier: 4, checkInterval: 120000 },
+        /* Fast paced (dice, limbo): profit arrives steadily and rarely spikes,
+           so the big-win branch is switched off (multiplier 1) and the ordinary
+           skim does the work. The interval is set just under the deposit rate
+           limit of 50/hour — 75s allows 48 — so it banks as often as the site
+           permits without ever tripping the cap. */
+        fast:      { saveAmount: 0.12, bigWinThreshold: 5.0, bigWinMultiplier: 1, checkInterval: 75000 },
+        /* Balanced: fires under most conditions, meaningful slice each time. */
+        balanced:  { saveAmount: 0.25, bigWinThreshold: 2.0, bigWinMultiplier: 2, checkInterval: 60000 },
+        /* Aggressive: bigger slices, and a low bar for calling something big. */
+        aggressive:{ saveAmount: 0.50, bigWinThreshold: 1.4, bigWinMultiplier: 2, checkInterval: 45000 }
+    };
+    function avPresetNameFor(c) {
+        for (const name in AV_PRESETS) {
+            const p = AV_PRESETS[name];
+            if (Math.abs((c.saveAmount || 0) - p.saveAmount) < 1e-9 &&
+                Math.abs((c.bigWinThreshold || 0) - p.bigWinThreshold) < 1e-9 &&
+                Math.abs((c.bigWinMultiplier || 0) - p.bigWinMultiplier) < 1e-9 &&
+                Math.abs((c.checkInterval || 0) - p.checkInterval) < 1e-9) return name;
+        }
+        return 'custom';
     }
 
     let config = loadConfig();
@@ -660,6 +704,12 @@
     let playBalance = null;
     let vaultBalance = null;
     let oldBalance = null;
+    /* Declared up here with the balance it is paired with, not down beside
+       checkBalanceChanges: the socket handler below calls rebaseline() and would
+       hit the temporal dead zone if this `let` sat further down the file. That
+       exact shape (TDZ inside a swallowed catch) has silently eaten state in
+       this bundle before. */
+    let prevVaultBal = null;
     let lastBalance = null;
     let isInitialized = false;
     let balanceChecks = 0;
@@ -675,10 +725,10 @@
         if (!d) return;
         if ('balance' in d && d.balance && d.balance.after !== undefined) {
             playBalance = Number(d.balance.after);
-            if (playBalance > 0 && oldBalance === null) oldBalance = playBalance;
+            if (playBalance > 0 && oldBalance === null) rebaseline(playBalance);
             if (!isInitialized && ++balanceChecks >= MIN_BALANCE_CHECKS && playBalance > 0) {
                 isInitialized = true;
-                oldBalance = playBalance;
+                rebaseline(playBalance);
                 log(`Initial balance: ${unitToSol(playBalance).toFixed(6)} SOL`);
             }
             if (uiWidget) uiWidget.render();
@@ -978,9 +1028,9 @@
                 <span>Nuts AutoVault</span>
             </div>
             <div class="nv-header-btns">
+                <!-- No close button by design; see the Stake twin. − collapses. -->
                 <button class="nv-header-btn" id="nvMinBtn" title="Minimize">−</button>
                 <button class="nv-header-btn" id="nvStealthBtn" title="Stealth">○</button>
-                <button class="nv-header-btn" id="nvCloseBtn" title="Close">×</button>
             </div>
         `;
         widget.appendChild(header);
@@ -989,8 +1039,19 @@
         content.className = 'nv-content';
         content.innerHTML = `
             <div class="nv-row">
+                <span class="nv-label" title="A ready-made set of the values below">Preset</span>
+                <select id="nvPreset">
+                    <option value="slots">Slots — big wins only</option>
+                    <option value="fast">Fast paced — dice / limbo</option>
+                    <option value="balanced">Balanced</option>
+                    <option value="aggressive">Aggressive</option>
+                    <option value="custom">Custom</option>
+                </select>
+            </div>
+            <div class="nv-row">
+                <!-- A real percentage. It read "%" while taking a FRACTION. -->
                 <span class="nv-label">Save % of profit</span>
-                <input type="number" id="nvSavePct" min="0" max="1" step="0.01" value="${SAVE_AMOUNT}">
+                <input type="number" id="nvSavePct" min="0" max="100" step="1" value="${Math.round(SAVE_AMOUNT * 100)}">
             </div>
             <div class="nv-row">
                 <span class="nv-label">Big-win threshold (×)</span>
@@ -1053,7 +1114,6 @@
         const stopBtn = content.querySelector('#nvStop');
         const minBtn = widget.querySelector('#nvMinBtn');
         const stealthBtn = widget.querySelector('#nvStealthBtn');
-        const closeBtn = widget.querySelector('#nvCloseBtn');
 
         function setViewMode(mode) {
             currentViewMode = mode;
@@ -1068,7 +1128,6 @@
         };
         stealthBtn.onclick = (e) => { e.stopPropagation(); setViewMode('stealth'); };
         stealthDot.onclick = () => { setViewMode('full'); minBtn.textContent = '−'; };
-        closeBtn.onclick = () => { widget.remove(); stealthDot.remove(); };
 
         // Drag
         let isDragging = false, dx = 0, dy = 0;
@@ -1089,30 +1148,49 @@
         document.addEventListener('mouseup', () => { isDragging = false; });
 
         // Parameter bindings
+        const nvPreset = content.querySelector('#nvPreset');
+        const nvSyncPreset = () => { nvPreset.value = avPresetNameFor(config); };
+        nvPreset.onchange = function () {
+            const p = AV_PRESETS[this.value];
+            if (!p) return;                    // Custom: leave the numbers alone
+            SAVE_AMOUNT = config.saveAmount = p.saveAmount;
+            BIG_WIN_THRESHOLD = config.bigWinThreshold = p.bigWinThreshold;
+            BIG_WIN_MULTIPLIER = config.bigWinMultiplier = p.bigWinMultiplier;
+            CHECK_INTERVAL = config.checkInterval = p.checkInterval;
+            content.querySelector('#nvSavePct').value = Math.round(p.saveAmount * 100);
+            content.querySelector('#nvBigWin').value = p.bigWinThreshold;
+            content.querySelector('#nvBigMult').value = p.bigWinMultiplier;
+            content.querySelector('#nvCheck').value = Math.round(p.checkInterval / 1000);
+            saveConfig();
+            if (running) { stopVault(); startVault(); }   // the interval changed
+        };
+        nvSyncPreset();
+
         content.querySelector('#nvSavePct').onchange = function() {
-            let v = parseFloat(this.value);
-            if (isNaN(v) || v < 0) v = 0;
-            if (v > 1) v = 1;
-            SAVE_AMOUNT = config.saveAmount = v;
-            this.value = v; saveConfig();
+            // Typed as a percentage, stored as a fraction.
+            let pct = parseFloat(this.value);
+            if (isNaN(pct) || pct < 0) pct = 0;
+            if (pct > 100) pct = 100;
+            SAVE_AMOUNT = config.saveAmount = pct / 100;
+            this.value = pct; saveConfig(); nvSyncPreset();
         };
         content.querySelector('#nvBigWin').onchange = function() {
             let v = parseFloat(this.value);
             if (isNaN(v) || v < 1) v = 1;
             BIG_WIN_THRESHOLD = config.bigWinThreshold = v;
-            this.value = v; saveConfig();
+            this.value = v; saveConfig(); nvSyncPreset();
         };
         content.querySelector('#nvBigMult').onchange = function() {
             let v = parseFloat(this.value);
             if (isNaN(v) || v < 1) v = 1;
             BIG_WIN_MULTIPLIER = config.bigWinMultiplier = v;
-            this.value = v; saveConfig();
+            this.value = v; saveConfig(); nvSyncPreset();
         };
         content.querySelector('#nvCheck').onchange = function() {
             let v = parseInt(this.value, 10);
             if (isNaN(v) || v < 10) v = 10;
             CHECK_INTERVAL = v * 1000; config.checkInterval = CHECK_INTERVAL;
-            this.value = v; saveConfig();
+            this.value = v; saveConfig(); nvSyncPreset();
             if (running) { stopVault(); startVault(); }
         };
         content.querySelector('#nvMinDep').onchange = function() {
@@ -1164,7 +1242,8 @@
             vaultedThisSession += amountUnits;
             vaultActionTimestamps.push(Date.now());
             saveRateLimitData(vaultActionTimestamps);
-            oldBalance = playBalance;
+            // both halves together: our own deposit raises the vault
+            rebaseline(playBalance);
             logActivity(`Secured ${formatSolAmountForDisplay(unitToSol(amountUnits))}`, 'success');
             if (uiWidget) uiWidget.render();
         } catch (e) {
@@ -1173,18 +1252,42 @@
         }
     }
 
+    /* Moving money out of the vault raises the play balance exactly like a win
+       does, so AutoVault took its cut and put a slice straight back. `vaultBalance`
+       is already maintained here from the socket's vaultBalance.after, so the two
+       can be told apart: a win leaves the vault alone, a withdrawal drops it.
+
+       Paired with the balance, never advanced on its own — a check that does
+       nothing must not consume the drop, or the withdrawal is forgotten before
+       anything acts on the matching balance rise. See the Stake twin, where
+       exactly that let a 5 SOL withdrawal vault 1.41. */
+    function rebaseline(bal) {
+        oldBalance = bal;
+        prevVaultBal = (typeof vaultBalance === 'number') ? vaultBalance : null;
+    }
+
     function checkBalanceChanges() {
         if (playBalance === null || !isInitialized) return;
-        if (oldBalance === null) { oldBalance = playBalance; return; }
+        if (oldBalance === null) { rebaseline(playBalance); return; }
+        const vaultNow = (typeof vaultBalance === 'number') ? vaultBalance : null;
+        const withdrawn = (vaultNow !== null && prevVaultBal !== null)
+            ? Math.max(0, prevVaultBal - vaultNow) : 0;
         if (playBalance > oldBalance) {
-            const profit = playBalance - oldBalance;
-            const ratio = oldBalance > 0 ? playBalance / oldBalance : 1;
-            const isBig = ratio >= BIG_WIN_THRESHOLD;
-            const dep = Math.floor(profit * SAVE_AMOUNT * (isBig ? BIG_WIN_MULTIPLIER : 1));
-            if (dep > 0) processDeposit(dep, isBig);
-            oldBalance = playBalance;
+            // Subtracted, not ignored, so a withdrawal alongside a real win still
+            // vaults the winnings.
+            const profit = Math.max(0, (playBalance - oldBalance) - withdrawn);
+            if (profit <= 0) {
+                if (withdrawn > 0) logActivity('Vault withdrawal — not counted as profit', 'info');
+                rebaseline(playBalance);
+            } else {
+                const ratio = oldBalance > 0 ? playBalance / oldBalance : 1;
+                const isBig = ratio >= BIG_WIN_THRESHOLD;
+                const dep = Math.floor(profit * SAVE_AMOUNT * (isBig ? BIG_WIN_MULTIPLIER : 1));
+                if (dep > 0) processDeposit(dep, isBig);
+                rebaseline(playBalance);
+            }
         } else if (playBalance < oldBalance) {
-            oldBalance = playBalance;
+            rebaseline(playBalance);
         }
         lastBalance = playBalance;
         if (uiWidget) uiWidget.render();
@@ -1194,7 +1297,7 @@
         if (running) return;
         running = true;
         logActivity(pickFlavor(FLAVOR.start), 'success');
-        oldBalance = playBalance;
+        rebaseline(playBalance);
         isProcessing = false;
         vaultedThisSession = 0;
         vaultInterval = setInterval(checkBalanceChanges, CHECK_INTERVAL);
@@ -1450,7 +1553,9 @@
                 '<small id="ut-count">' + matching.length + ' available on this page</small>' +
             '</div>' +
             '<div>' +
-                '<button class="ut-header-btn" id="ut-collapse" title="Collapse">×</button>' +
+                // Glyph is a minus, not a cross: this only collapses the panel,
+                // and a × on it read as "close the tools".
+                '<button class="ut-header-btn" id="ut-collapse" title="Collapse">−</button>' +
             '</div>' +
         '</div>' +
         '<div class="ut-body">';

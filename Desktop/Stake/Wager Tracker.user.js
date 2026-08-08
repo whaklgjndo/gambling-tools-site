@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Stake Wager Tracker — Desktop
 // @namespace    http://tampermonkey.net/
-// @version      3.39
+// @version      3.40
 // @description  Standalone single-tool build, extracted from the unified bundle.
 // @author       .
 // @match        https://stake.com/*
@@ -26,7 +26,7 @@
 (function () {
     'use strict';
 
-    console.log('%cStake Wager Tracker — Desktop — standalone build v3.39', 'color:#17c7b8;font-weight:800;font-size:13px');
+    console.log('%cStake Wager Tracker — Desktop — standalone build v3.40', 'color:#17c7b8;font-weight:800;font-size:13px');
 
     /* =========================================================
        UNIFIED LOADER — STORAGE KEYS & SETTINGS
@@ -2726,7 +2726,9 @@ function tool_stake_7day_tracker() {
                 '<small id="ut-count">' + matching.length + ' available on this page</small>' +
             '</div>' +
             '<div>' +
-                '<button class="ut-header-btn" id="ut-collapse" title="Collapse">×</button>' +
+                // Glyph is a minus, not a cross: this only collapses the panel,
+                // and a × on it read as "close the tools".
+                '<button class="ut-header-btn" id="ut-collapse" title="Collapse">−</button>' +
             '</div>' +
         '</div>' +
         '<div class="ut-body">';

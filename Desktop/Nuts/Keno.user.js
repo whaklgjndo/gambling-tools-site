@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Nuts Keno — Desktop
 // @namespace    http://tampermonkey.net/
-// @version      3.39
+// @version      3.40
 // @description  Standalone single-tool build, extracted from the unified bundle.
 // @author       .
 // @match        https://nuts.gg/*
@@ -17,7 +17,7 @@
 (function () {
     'use strict';
 
-    console.log('%cNuts Keno — Desktop — standalone build v3.39', 'color:#17c7b8;font-weight:800;font-size:13px');
+    console.log('%cNuts Keno — Desktop — standalone build v3.40', 'color:#17c7b8;font-weight:800;font-size:13px');
 
     /* =========================================================
        UNIFIED LOADER — STORAGE KEYS & SETTINGS
@@ -715,11 +715,11 @@ const PRESETS_KEY = 'keno-presets';
         letter-spacing: 1px;
         text-shadow: 0 0 10px rgba(0, 255, 255, 0.6), 0 0 20px rgba(0, 255, 255, 0.2);
     }
-    #keno-preset-gui .kp-close {
+    #keno-preset-gui .kp-min {
         background: none; border: none; color: rgba(224, 255, 255, 0.5); cursor: pointer;
         padding: 2px 6px; font-size: 16px; line-height: 1; border-radius: 4px;
     }
-    #keno-preset-gui .kp-close:hover { color: #00ffff; background: rgba(0, 255, 255, 0.1); text-shadow: 0 0 5px rgba(0, 255, 255, 0.5); }
+    #keno-preset-gui .kp-min:hover { color: #00ffff; background: rgba(0, 255, 255, 0.1); text-shadow: 0 0 5px rgba(0, 255, 255, 0.5); }
     #keno-preset-gui .kp-content { padding: 12px 14px 14px; display: flex; flex-direction: column; gap: 10px; }
     #keno-preset-gui select {
         width: 100%; background: rgba(0, 0, 0, 0.25); color: #00ffff;
@@ -769,7 +769,7 @@ const PRESETS_KEY = 'keno-presets';
     gui.innerHTML = `
         <div class="kp-header">
             <span class="kp-title">Nuts Keno</span>
-            <button class="kp-close" id="kp-close" title="Close">×</button>
+            <button class="kp-min" id="kp-min" title="Minimise">−</button>
         </div>
         <div class="kp-content">
             <div class="kp-current" id="kp-current">Loading…</div>
@@ -788,7 +788,7 @@ const PRESETS_KEY = 'keno-presets';
     const loadBtn = gui.querySelector('#kp-load');
     const saveBtn = gui.querySelector('#kp-save');
     const deleteBtn = gui.querySelector('#kp-delete');
-    const closeBtn = gui.querySelector('#kp-close');
+    const minBtn = gui.querySelector('#kp-min');
     const header = gui.querySelector('.kp-header');
 
     function renderPresets() {
@@ -865,7 +865,19 @@ const PRESETS_KEY = 'keno-presets';
         renderPresets();
     };
 
-    closeBtn.onclick = () => gui.remove();
+    /* Collapse to a draggable pill instead of removing the panel. Closing it
+       needed a page reload to get back, and the × sat right next to the drag
+       handle — easy to hit by accident on a tool you had left running. Done with
+       inline styles rather than a CSS rule because each site themes this panel
+       separately and the collapse should not have to be restyled three times. */
+    minBtn.onclick = () => {
+        const body = gui.querySelector('.kp-content');
+        const mini = gui.classList.toggle('kp-mini');
+        if (body) body.style.display = mini ? 'none' : '';
+        gui.style.width = mini ? 'auto' : '';
+        minBtn.textContent = mini ? '+' : '−';
+        minBtn.title = mini ? 'Restore' : 'Minimise';
+    };
 
     // Track user clicks on tiles — our pick set is the source of truth.
     // Nuts tiles are identified by content (number inside a span), so we map
@@ -886,7 +898,7 @@ const PRESETS_KEY = 'keno-presets';
     // Drag
     let isDragging = false, dx = 0, dy = 0;
     header.addEventListener('mousedown', (e) => {
-        if (e.target.closest('.kp-close')) return;
+        if (e.target.closest('.kp-min')) return;
         isDragging = true;
         const rect = gui.getBoundingClientRect();
         dx = e.clientX - rect.left; dy = e.clientY - rect.top;
@@ -1006,7 +1018,7 @@ const PRESETS_KEY = 'keno-presets';
         if (tool_keno_hotspot._booted) return;
         tool_keno_hotspot._booted = true;
 
-        var KH_VERSION   = '1.20';
+        var KH_VERSION   = '1.25';
         var MAX_PICKS    = 10;   // every one of the three caps a ticket at 10
         var DRAWS_CAP    = 2000; // rolling history cap (~100KB of JSON)
         var POLL_MS      = 400;
@@ -1116,13 +1128,22 @@ const PRESETS_KEY = 'keno-presets';
         /* `selSigs` is what this site's tiles look like once YOU have tapped
            them. Learned, never hardcoded, and remembered across sessions — see
            the BOARD READING notes. */
-        var store = { draws: [], window: 100, selSigs: [] };
+        /* Store version. A v1 store can hold a selSigs list poisoned by the
+           learning bug fixed in 1.21: a tap that landed while a reveal was in
+           flight taught the tool that the DRAWN state was your selection, after
+           which every draw containing one of your picks came up short of
+           `expect` and was thrown away — permanently, silently, and surviving
+           "Reset draws" because that only ever cleared the history. The recorded
+           draws are still good, so an upgrade keeps them and drops only the
+           calibration; one tap re-learns it. */
+        var KH_STORE_V = 2;
+        var store = { v: KH_STORE_V, draws: [], window: 100, selSigs: [] };
         try {
             var raw = JSON.parse(localStorage.getItem(SITE.key) || 'null');
             if (raw && Array.isArray(raw.draws)) {
                 store.draws = raw.draws;
                 if (raw.window != null) store.window = raw.window;
-                if (Array.isArray(raw.selSigs)) store.selSigs = raw.selSigs;
+                if (Array.isArray(raw.selSigs) && raw.v === KH_STORE_V) store.selSigs = raw.selSigs;
             }
         } catch (e) {}
         var storeDirty = false;
@@ -1138,7 +1159,46 @@ const PRESETS_KEY = 'keno-presets';
             if (store.draws.length > DRAWS_CAP) store.draws.shift();
             saveStore();
         }
-        function resetStore() { store.draws = []; saveStore(); render(); paintTiles(); }
+        /* Clears the CALIBRATION as well as the history.
+
+           Someone pressing this is saying that what the tool believes is wrong,
+           and the thing most likely to be wrong is the learned selected
+           signature — while that is wrong nothing is recorded at all. Wiping
+           only the draws left them watching a counter that never moved again,
+           which is exactly how this was reported: "reset stats breaks the
+           hotspot". One tap re-learns it and the status line asks for it. */
+        /* Clears the HISTORY and nothing else. It does NOT touch the learned
+           selected signature.
+
+           An earlier cut of this wiped the calibration too, on the theory that
+           someone pressing Reset is telling the tool its beliefs are wrong. That
+           was worse than the bug it was meant to fix: uncalibrated, the tool
+           records nothing until you tap a tile, and after a reset your numbers
+           are usually already on the board — so there is no reason to tap one,
+           and the counter simply never moves again. Reported as "reset draws
+           still fucks it up", and correctly.
+
+           Nothing is lost by keeping the calibration: a poisoned one from before
+           1.21 is already dropped by the store-version migration, new poisoning
+           is prevented by the tap guard in sample(), and if a calibration ever
+           does go bad the odd-reveal check below now clears it on its own. */
+        function resetStore() {
+            /* ONLY the history. Every one of the capture latches is deliberately
+               left alone.
+
+               Clearing them was a second, quieter bug: `revealed` is what stops
+               the reveal currently on screen from being banked twice, and
+               `lastBankedSig` is the belt-and-braces behind it. Resetting both
+               re-opened the finished round sitting right there on the board, so
+               pressing Reset immediately banked a phantom draw and the counter
+               read "1 draw" a second after you cleared it. Measured. `prevSig`
+               is re-armed by paintTiles() below anyway. */
+            store.draws = [];
+            oddLatched = false;
+            oddReveals = 0;
+            setStatus('');
+            saveStore(); render(); paintTiles();
+        }
 
         /* ---------------------------------------------------------------
            STATS
@@ -1302,6 +1362,188 @@ const PRESETS_KEY = 'keno-presets';
         }
 
         /* ---------------------------------------------------------------
+           API CAPTURE — the authoritative source, when it is available.
+
+           Reading pixels was always the fallback plan. The site states the
+           result outright; a bet response carries both halves of the round:
+
+             {"kenoBet":{ "id":"914ea109-…", "game":"keno",
+               "state":{ "drawnNumbers":[27,8,24,38,37,36,26,32,39,1],
+                         "selectedNumbers":[4,2,12,23,15,27,29,28,22,35] }}}
+
+           Captured live from stake.us 2026-08-08. Everything the DOM reader has
+           to infer is simply given: which ten came up, which ten were yours, and
+           an `id` to deduplicate on. So with the API running there is no settled
+           test to lose a fast round, no fade to misread, and NO CALIBRATION —
+           the tap that people kept having to be told about stops mattering.
+
+           The hook is installed at tool boot rather than document-start because
+           a late hook demonstrably works here: this exact payload was captured
+           from the console long after the page had loaded. fetch AND XHR are
+           both wrapped, since that console test could not say which one carried
+           it and the cost of covering both is nil.
+
+           The DOM reader below is NOT removed. It still runs whenever the API
+           has gone quiet — a page opened before the script, a payload change,
+           a site that does not expose one — and it is what drives the heat tint
+           in every case.
+           --------------------------------------------------------------- */
+        var apiQueue    = [];      // draws captured, waiting to be banked
+        var apiSeen     = {};      // bet id -> true
+        var apiSeenAge  = [];      // insertion order, so the id set stays bounded
+        var API_ID_CAP  = 400;
+        var apiLastAt   = 0;       // when the API last produced a draw
+        var apiPicks    = null;    // selectedNumbers from the latest bet
+        var API_TRUST_MS = 45000;  // treat the API as live for this long after one
+
+        /** True while the API is carrying the round, so the DOM must not also bank. */
+        function apiLive() { return apiLastAt > 0 && (Date.now() - apiLastAt) < API_TRUST_MS; }
+
+        function apiRemember(key) {
+            apiSeen[key] = true;
+            apiSeenAge.push(key);
+            while (apiSeenAge.length > API_ID_CAP) delete apiSeen[apiSeenAge.shift()];
+        }
+
+        function apiPush(id, drawn, selected) {
+            var nums = [], i, v;
+            for (i = 0; i < drawn.length; i++) {
+                v = +drawn[i];
+                if (isFinite(v) && v >= 1) nums.push(v);
+            }
+            /* Same completeness rule as the DOM path: a partial set is a biased
+               sample, not a smaller one. */
+            if (nums.length !== SITE.expect) return;
+            nums.sort(function (a, b) { return a - b; });
+            /* Dedupe on the bet id — exact, and far better than the DOM path's
+               "same ten twice in a row inside 15s" heuristic. Responses do get
+               replayed: the same bet can arrive again in a history query. */
+            var key = id ? ('i' + id) : ('n' + nums.join(','));
+            if (apiSeen[key]) return;
+            apiRemember(key);
+            if (Array.isArray(selected)) {
+                apiPicks = selected.map(Number).filter(function (n) { return isFinite(n) && n >= 1; });
+            }
+            apiQueue.push(nums);
+        }
+
+        /* ONLY YOUR OWN BETS. This allowlist is the whole safety of the feature.
+
+           Both sites publish other people's play in a byte-identical shape —
+           Nuts has Live Games and Big Wins beside My Games, Stake has its public
+           bet feeds. A scanner that matched on shape alone would happily fold
+           strangers' draws into your history, and the numbers would look fine
+           while meaning nothing. So a bet counts only when it was reached under
+           a key that means "mine":
+
+             kenoBet   Stake — the response to your own bet mutation
+             myGames   Nuts  — the socket feed of your own games
+                              (the Nuts frame observed 2026-08-08 arrives as
+                               payload.data.myGames[].details)
+
+           Fails closed: if either site renames its key, capture stops and the
+           DOM reader takes over, rather than quietly recording the wrong thing. */
+        var API_OWN_KEYS = { kenoBet: 1, kenoBets: 1, myGames: 1 };
+
+        /** Depth-first: the bet's position inside the envelope is not assumed —
+         *  it is wrapped in `data`, sometimes batched, and shaped differently per
+         *  site. `ownKey` tracks whether we are inside one of the containers
+         *  above. Bounded depth so a huge payload cannot turn this into a stall. */
+        function apiScan(node, depth, ownKey) {
+            if (!node || typeof node !== 'object' || depth > 8) return;
+            if (Array.isArray(node)) {
+                for (var i = 0; i < node.length && i < 200; i++) apiScan(node[i], depth + 1, ownKey);
+                return;
+            }
+            /* Stake puts the numbers on `state`, Nuts on `details`. */
+            var st = node.state || node.details;
+            if (ownKey && st && Array.isArray(st.drawnNumbers) && st.drawnNumbers.length) {
+                /* Reject a sibling game that happens to ride the same feed.
+                   Nuts tags it (`KenoGameDetails`), Stake names it (`game`). */
+                var tn = st.__typename || node.__typename || node.game;
+                if (tn === undefined || /keno/i.test(String(tn))) {
+                    apiPush(node.id, st.drawnNumbers, st.selectedNumbers);
+                }
+            }
+            for (var k in node) {
+                if (!Object.prototype.hasOwnProperty.call(node, k)) continue;
+                apiScan(node[k], depth + 1, ownKey || !!API_OWN_KEYS[k]);
+            }
+        }
+
+        function apiHandleText(text) {
+            /* Cheap gate first. Every response and socket frame on the site
+               passes through here, so parsing them all would be wasteful; only a
+               keno bet can contain this key. */
+            if (typeof text !== 'string' || !text || text.length > 400000) return;
+            if (text.indexOf('drawnNumbers') < 0) return;
+            try { apiScan(JSON.parse(text), 0, false); } catch (e) {}
+        }
+
+        function installApiTap() {
+            var W = (typeof unsafeWindow !== 'undefined' && unsafeWindow) ? unsafeWindow : window;
+            if (W.__kenoHotspotTap) return;      // one wrap per page, whatever mounts us
+            W.__kenoHotspotTap = true;
+            try {
+                var of = W.fetch;
+                if (of) {
+                    W.fetch = function () {
+                        var p = of.apply(this, arguments);
+                        try {
+                            p.then(function (res) {
+                                try { res.clone().text().then(apiHandleText).catch(function () {}); } catch (e) {}
+                            }).catch(function () {});
+                        } catch (e) {}
+                        return p;
+                    };
+                }
+            } catch (e) {}
+            try {
+                var oSend = W.XMLHttpRequest.prototype.send;
+                W.XMLHttpRequest.prototype.send = function () {
+                    var self = this;
+                    try {
+                        this.addEventListener('load', function () {
+                            try { apiHandleText(self.responseText); } catch (e) {}
+                        });
+                    } catch (e) {}
+                    return oSend.apply(this, arguments);
+                };
+            } catch (e) {}
+            /* WebSocket — this is how Nuts delivers a bet result. Attaching from
+               `send` rather than from the constructor is deliberate and is the
+               same trick the bundle's existing Nuts hook uses: it catches a
+               socket that was ALREADY OPEN before we loaded, because the page
+               keeps sending on it. Wrapping only the constructor would miss the
+               live socket entirely on a late mount. */
+            try {
+                var oWsSend = W.WebSocket.prototype.send;
+                W.WebSocket.prototype.send = function () {
+                    try {
+                        if (!this.__kenoHotspotPeek) {
+                            this.__kenoHotspotPeek = true;
+                            this.addEventListener('message', function (ev) {
+                                try { apiHandleText(ev.data); } catch (e) {}
+                            });
+                        }
+                    } catch (e) {}
+                    return oWsSend.apply(this, arguments);
+                };
+            } catch (e) {}
+        }
+
+        /** Bank whatever the API has handed us since the last tick. */
+        function drainApi() {
+            if (!apiQueue.length) return;
+            while (apiQueue.length) {
+                recordDraw(apiQueue.shift());
+                apiLastAt = Date.now();
+            }
+            render();
+            paintTiles();
+        }
+
+        /* ---------------------------------------------------------------
            BOARD READING
 
            A tile's "signature" is however the site renders its state: an
@@ -1405,6 +1647,9 @@ const PRESETS_KEY = 'keno-presets';
         var lastBankedSig = '';   // the last set banked, to reject a re-read
         var lastBankedAt = 0;
         var DUPE_WINDOW_MS = 15000;
+        var oddReveals = 0;       // consecutive rounds whose reveal was discarded
+        var oddLatched = false;   // this reveal has already been counted as odd
+        var ODD_REVEAL_WARN = 5;  // rounds of that before saying so out loud
 
         function learnSelected(sig) {
             if (!sig || store.selSigs.indexOf(sig) >= 0) return;
@@ -1434,6 +1679,9 @@ const PRESETS_KEY = 'keno-presets';
         function calibrated() { return store.selSigs.length > 0; }
 
         function sample() {
+            /* The API is exact; the DOM is an inference. When both are running,
+               the DOM must not also bank or every round lands twice. */
+            if (apiLive()) return;
             var sig = readSignatures();
             if (!sig) return;
             var prev = prevSig;
@@ -1450,12 +1698,37 @@ const PRESETS_KEY = 'keno-presets';
             var rest = restingSig(settled);
             if (rest === null) return;
 
+            /* A TAP MOVES ONE TILE. A REVEAL MOVES TEN.
+
+               That is the whole of the guard below, and without it the tool can
+               be taught a lie it never recovers from. Tap a number while a round
+               is resolving and that same tile comes back as a HIT; the tap is
+               still pending, the hit signature is settled and not resting, so it
+               was learned as "selected". From then on every draw containing one
+               of your picks is one tile short of `expect` and is discarded —
+               reproduced here on a mock Stake board: one mid-round tap, then ten
+               clean rounds, zero recorded. It persists to localStorage, so it
+               outlives a reload, and "Reset draws" used to leave it in place.
+
+               So a tap only teaches while nothing else is moving: no UNTAPPED
+               tile may be sitting in an unknown state. If one is, the pending
+               tap simply waits — when the board clears, the tile settles back to
+               your real selected colour and teaches the right thing instead. */
+            var strangers = 0;
+            for (k in settled) {
+                if (!Object.prototype.hasOwnProperty.call(settled, k)) continue;
+                if (settled[k] === rest) continue;
+                if (store.selSigs.indexOf(settled[k]) >= 0) continue;
+                if (pendingClick[k] !== undefined) continue;
+                strangers++;
+            }
+
             /* Learn what "selected" looks like from a tile you just tapped, once
                it has stopped moving. A tap that only DESELECTS lands back on the
                resting signature and teaches nothing, which is correct. */
             for (k in pendingClick) {
                 if (!Object.prototype.hasOwnProperty.call(pendingClick, k)) continue;
-                if (settled[k] !== undefined && settled[k] !== rest) {
+                if (!strangers && settled[k] !== undefined && settled[k] !== rest) {
                     learnSelected(settled[k]);
                     delete pendingClick[k];
                 } else if (now - pendingClick[k] > CLICK_LEARN_MS) {
@@ -1477,12 +1750,40 @@ const PRESETS_KEY = 'keno-presets';
 
             /* The result stays on screen until the next round, so the latch is
                released by the board going clear rather than by a timer. */
-            if (!drawn.length) { revealed = false; return; }
+            if (!drawn.length) { revealed = false; oddLatched = false; return; }
             if (revealed) return;
             /* Only a complete reveal. A partial one is not a smaller sample, it
                is a biased one — the tiles most likely to be missed are the ones
-               you picked, whose flash is shortest. */
-            if (drawn.length !== SITE.expect) return;
+               you picked, whose flash is shortest.
+
+               Throwing one away is routine: it is usually a frame caught
+               mid-animation. Throwing away every round is not — that is what a
+               wrong calibration looks like from the outside, and it used to
+               happen in complete silence, which is why the only symptom anyone
+               could report was "it stopped working". Count them once per round
+               and say so when it is plainly no longer animation. */
+            if (drawn.length !== SITE.expect) {
+                if (!oddLatched && drawn.length >= SITE.expect - 3) {
+                    oddLatched = true;
+                    /* Round after round of near-misses means the learned selected
+                       signature is wrong — a tile the tool thinks is your pick is
+                       really part of the draw, so every reveal lands short. Drop
+                       the calibration and re-learn rather than telling the player
+                       to go and press a button: they should not have to know what
+                       a signature is, and the old advice pointed at Reset, which
+                       no longer clears it. */
+                    if (++oddReveals >= ODD_REVEAL_WARN) {
+                        store.selSigs = [];
+                        oddReveals = 0;
+                        saveStore();
+                        setStatus('Kept reading ' + drawn.length + ' revealed tiles where ' + SITE.expect +
+                                  ' are expected — relearning this site’s colours. Click any number once.');
+                    }
+                }
+                return;
+            }
+            oddReveals = 0;
+            oddLatched = false;
 
             drawn.sort(function (a, b) { return a - b; });
             /* Belt and braces on top of the latch: never the same ten twice in a
@@ -1504,13 +1805,46 @@ const PRESETS_KEY = 'keno-presets';
            revert well inside one 400ms tick, so a poll never sees it. The ticker
            still calls sample() as a safety net for anything that changes without
            mutating the subtree. */
-        var mo = null, moRoot = null, sampleQueued = false;
+        var mo = null, moRoot = null, sampleQueued = false, confirmTimer = null;
+        /* How long after the board stops changing to take a second look. The
+           settled test needs the SAME signature twice running, and until this
+           existed the only two sources of samples were the mutation itself (one
+           look, at the instant of the change) and the POLL_MS tick. Anything
+           that came and went inside one poll was therefore seen exactly once and
+           thrown away as unsettled.
+
+           That is precisely what a site's own autoplay does. Measured on a mock
+           board before this was added: one round every 2000ms captured 10 of 10,
+           800ms captured 7, 520ms captured 4, and 320ms captured 1 of 10. The
+           player sees a counter that barely moves and reasonably concludes the
+           tool has stopped recognising the board — reported after a Reset, where
+           a stalled count from zero is most obvious.
+
+           Debounced, so a run of mutations (an animation) pushes it back and it
+           fires once things are actually still — which is the moment worth
+           reading. Cheap: it only runs when the board has changed. */
+        /* Per site, because the risk it trades against is per site. The delay
+           exists so a fade cannot be read twice and mistaken for a settled
+           state — but only Nuts actually fades: its signature is a COMPUTED
+           COLOUR, and one click there was measured walking REST > 64,73,93 >
+           92,64,147 > 141,49,238 > PURPLE. Stake's signature is the discrete
+           `data-game-tile-status` attribute and Shuffle's is a class list; both
+           flip atomically, with no in-between value to catch. So they can
+           confirm much sooner and keep up with faster autoplay, while Nuts keeps
+           the long window that its colour transition needs. */
+        var CONFIRM_MS = (SITE === SITES.nuts) ? 140 : (SITE === SITES.shuffle ? 80 : 60);
         function scheduleSample() {
-            if (sampleQueued) return;
-            sampleQueued = true;
-            var run = function () { sampleQueued = false; try { sample(); } catch (e) {} };
-            if (typeof requestAnimationFrame === 'function') requestAnimationFrame(run);
-            else setTimeout(run, 0);
+            if (!sampleQueued) {
+                sampleQueued = true;
+                var run = function () { sampleQueued = false; try { sample(); } catch (e) {} };
+                if (typeof requestAnimationFrame === 'function') requestAnimationFrame(run);
+                else setTimeout(run, 0);
+            }
+            if (confirmTimer) clearTimeout(confirmTimer);
+            confirmTimer = setTimeout(function () {
+                confirmTimer = null;
+                try { sample(); } catch (e) {}
+            }, CONFIRM_MS);
         }
         function watchBoard() {
             var all = tiles();
@@ -1639,7 +1973,11 @@ const PRESETS_KEY = 'keno-presets';
                changing. Putting a class or an outline on the tile BUTTON would
                change the signature on Shuffle, where the signature is the button's
                class list — the tool would then read its own highlight as a draw. */
-            var ring = pickRingColour(), picked = {}, pk = currentPicks(), pi;
+            /* Your ticket, straight from the bet response when we have one —
+               `selectedNumbers` needs no learned signature to interpret, so the
+               pick ring keeps working even on a board that was never calibrated. */
+            var ring = pickRingColour(), picked = {}, pi;
+            var pk = (apiLive() && apiPicks) ? apiPicks : currentPicks();
             for (pi = 0; pi < pk.length; pi++) picked[pk[pi]] = true;
 
             for (var i = 0; i < all.length; i++) {
@@ -1757,6 +2095,7 @@ const PRESETS_KEY = 'keno-presets';
         var sect = null, elHot = null, elCold = null, elStat = null, elSpots = null, elCount = null, elRep = null;
         var elLegend = null;
         var showHeat = true, showCounts = true;
+        var CALIB_MSG = 'Click any number once so I can learn this site’s selected colour — until then draws are not recorded.';
         function setStatus(t) { if (elStat) elStat.textContent = t || ''; }
 
         /** Where the section lives: the preset panel's content column. */
@@ -1900,9 +2239,20 @@ const PRESETS_KEY = 'keno-presets';
                 (heat.rounds !== store.draws.length ? ' (' + heat.rounds + ' in window)' : '');
             /* Say so rather than sitting there recording nothing. The old version
                silently banked whatever it saw; this one waits to be shown what a
-               selected tile looks like, and has to admit it is waiting. */
-            if (!calibrated() && elStat && !elStat.textContent)
-                setStatus('Click any number once so I can learn this site’s selected colour — until then draws are not recorded.');
+               selected tile looks like, and has to admit it is waiting.
+
+               Cleared again once it no longer applies: it used to be written the
+               once and left there, so the panel went on insisting draws were not
+               being recorded for the rest of the session after they were. */
+            /* Only ask for a tap when the tap is actually needed. With the bet
+               response coming through, calibration is irrelevant — the payload
+               already separates the draw from the ticket — so the prompt would
+               be asking for something that changes nothing. */
+            if (!calibrated() && !apiLive()) {
+                if (elStat && !elStat.textContent) setStatus(CALIB_MSG);
+            } else if (elStat && elStat.textContent === CALIB_MSG) {
+                setStatus('');
+            }
         }
 
         /* ---------------------------------------------------------------
@@ -1923,10 +2273,15 @@ const PRESETS_KEY = 'keno-presets';
                 if (!sect) sect = buildSection();
                 if (sect.parentNode !== slot) { slot.appendChild(sect); render(); }
                 watchBoard();
+                drainApi();
                 sample();
                 paintTiles();
             } catch (e) { /* never let one tick kill the ticker */ }
         }, POLL_MS);
+
+        /* Installed before anything else the tool does, so the very next bet is
+           captured rather than the one after it. */
+        try { installApiTap(); } catch (e) {}
 
         console.log('%c[Keno Hotspot] v' + KH_VERSION + ' on ' + SITE.label + ' — ' +
                     store.draws.length + ' draws stored', 'color:#f87171;font-weight:700');
@@ -2140,7 +2495,9 @@ const PRESETS_KEY = 'keno-presets';
                 '<small id="ut-count">' + matching.length + ' available on this page</small>' +
             '</div>' +
             '<div>' +
-                '<button class="ut-header-btn" id="ut-collapse" title="Collapse">×</button>' +
+                // Glyph is a minus, not a cross: this only collapses the panel,
+                // and a × on it read as "close the tools".
+                '<button class="ut-header-btn" id="ut-collapse" title="Collapse">−</button>' +
             '</div>' +
         '</div>' +
         '<div class="ut-body">';

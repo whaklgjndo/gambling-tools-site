@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Shuffle Limbo — Desktop
 // @namespace    http://tampermonkey.net/
-// @version      3.39
+// @version      3.40
 // @description  Standalone single-tool build, extracted from the unified bundle.
 // @author       .
 // @match        https://shuffle.com/*
@@ -17,7 +17,7 @@
 (function () {
     'use strict';
 
-    console.log('%cShuffle Limbo — Desktop — standalone build v3.39', 'color:#17c7b8;font-weight:800;font-size:13px');
+    console.log('%cShuffle Limbo — Desktop — standalone build v3.40', 'color:#17c7b8;font-weight:800;font-size:13px');
 
     /* =========================================================
        IOW/SMART → STATS BRIDGE
@@ -904,6 +904,65 @@ let ACTIVE_MODE = 'smart';
     let lossStreakReset = 3;
     let winsBeforeReset = 5;
     let autoStopBalance = null;
+    /* How many decimals THIS site accepts on a bet, read from the bet field's
+       own `step` rather than assumed.
+
+       This HUD was written for stake.us, where SC is 2dp and 0.01 is the real
+       minimum, and it hardcoded .toFixed(2) everywhere. On stake.com the same
+       field is SOL at 8dp, so every bet was being rounded up to 0.01 SOL —
+       about 74 cents — or down to 0.00. Reported 2026-08-03: "your bet field
+       only goes to 0.00" and "it tries to bet .01 solana".
+
+       Reading the site's own step means a coin Stake adds next month works
+       without touching this, and it is right in fiat display mode too: the
+       field still takes the COIN amount whatever the header is showing. */
+    function betDp() {
+        try {
+            const inp = document.querySelector('input[data-testid="input-game-amount"]') ||
+                        document.querySelector('input[data-testid="bet-amount"]');
+            const step = inp && inp.getAttribute('step');
+            /* MEASURED ON stake.com, 2026-08-07: the field reports
+
+                   step="1e-8"
+
+               and NOT "0.00000001", which is what this function was written to
+               expect. The first cut matched the step as a STRING against
+               /^0\.(0*)1$/, so exponent notation missed every branch and fell
+               through to the 2dp fallback — meaning the fix for "it tries to bet
+               .01 solana" did not actually change anything on .com. Verified by
+               running this function's own shipped source against the real value.
+
+               Parse the number and ask how many places it needs instead, which
+               is notation-agnostic and also right for a step like 0.05. */
+            const n = (step === null || step === '') ? NaN : parseFloat(step);
+            if (isFinite(n) && n > 0) {
+                for (let d = 0; d <= 12; d++) {
+                    const scaled = n * Math.pow(10, d);
+                    if (Math.abs(scaled - Math.round(scaled)) < 1e-9) return d;
+                }
+                return 12;
+            }
+        } catch (e) {}
+        return 2;                                        // stake.us default
+    }
+    /** A bet amount as a string the site will actually accept. */
+    function fmtBet(v) { return Number(v).toFixed(betDp()); }
+    /** The smallest bet this site allows, i.e. one unit in its last place. */
+    function siteMinBet() { return Math.pow(10, -betDp()); }
+    /** A step attribute string for `dp` places. Must be built by hand:
+     *  String(1e-8) is "1e-8", which a number input rejects outright. */
+    function stepStrFor(dp) { return dp <= 0 ? '1' : '0.' + '0'.repeat(dp - 1) + '1'; }
+    function betStepStr() { return stepStrFor(betDp()); }
+    /* minBaseBet is the floor every bet is clamped to. It was a flat 0.01,
+       which on stake.com is ~74c of SOL and made micro-betting impossible.
+       Only ever LOWER it to the site's own minimum — a floor the user raised
+       deliberately is theirs to keep. Called from updateUI so it settles once
+       the bet field exists, since betDp() needs the DOM. */
+    function syncMinBaseBet() {
+        const m = siteMinBet();
+        if (isFinite(m) && m > 0 && m < minBaseBet) minBaseBet = m;
+    }
+
     let minBaseBet = 0.01;
     let maxBaseBet = 99999999999999;
     let lastBetId = null;
@@ -1980,7 +2039,7 @@ let ACTIVE_MODE = 'smart';
                                     <label style="color:#94a3b8;font-size:10px;font-weight:800;white-space:nowrap;">Base bet</label>
 
                                     <div class="input-group">
-                                        <input id="h-base" type="number" step="0.01" value="${baseBet.toFixed(2)}">
+                                        <input id="h-base" type="number" step="${betStepStr()}" value="${fmtBet(baseBet)}">
 
          <button id="h-double-base" class="quick-btn">2x</button>
                                         <button id="h-half-base" class="quick-btn">1/2</button>
@@ -2175,7 +2234,7 @@ class="hud-row"><span class="hud-label">Momentum Window</span><span id="h-hot" c
                         <div class="hud-control-group">
                             <label>Bet</label>
                             <div class="input-group">
-                                <input id="h-manual-bet" type="number" step="0.01" min="0.01" value="${manualBet.toFixed(2)}" style="width: 76px; flex: 0 0 auto;">
+                                <input id="h-manual-bet" type="number" step="${betStepStr()}" min="${betStepStr()}" value="${fmtBet(manualBet)}" style="width: 76px; flex: 0 0 auto;">
                                 <button id="h-manual-double" class="quick-btn">2x</button>
                                 <button id="h-manual-half" class="quick-btn">1/2</button>
                             </div>
@@ -2321,15 +2380,15 @@ Bets</span><span id="h-total-bets" class="hud-val">0</span></div>
             const baseInp = document.getElementById('h-base');
             if (baseInp) {
                 baseInp.addEventListener('input', () => { baseBet = parseFloat(baseInp.value) || minBaseBet; });
-                baseInp.addEventListener('blur', () => { let v = parseFloat(baseInp.value) || minBaseBet; baseInp.value = v.toFixed(2); baseBet = v; });
+                baseInp.addEventListener('blur', () => { let v = parseFloat(baseInp.value) || minBaseBet; baseInp.value = fmtBet(v); baseBet = v; });
             }
             const doubleBtn = document.getElementById('h-double-base');
             if (doubleBtn) doubleBtn.addEventListener('click', () => {
-                let val = parseFloat(document.getElementById('h-base').value) || minBaseBet; val *= 2; document.getElementById('h-base').value = val.toFixed(2); baseBet = val;
+                let val = parseFloat(document.getElementById('h-base').value) || minBaseBet; val *= 2; document.getElementById('h-base').value = fmtBet(val); baseBet = val;
             });
             const halfBtn = document.getElementById('h-half-base');
             if (halfBtn) halfBtn.addEventListener('click', () => {
-                let val = parseFloat(document.getElementById('h-base').value) || minBaseBet; val *= 0.5; val = Math.max(minBaseBet, val); document.getElementById('h-base').value = val.toFixed(2); baseBet = val;
+                let val = parseFloat(document.getElementById('h-base').value) || minBaseBet; val *= 0.5; val = Math.max(minBaseBet, val); document.getElementById('h-base').value = fmtBet(val); baseBet = val;
             });
             const winInc = document.getElementById('h-win-inc'); if (winInc) winInc.addEventListener('input', () => { winIncreasePercent = parseFloat(winInc.value) || 125; });
             const lossReset = document.getElementById('h-loss-reset');
@@ -2418,7 +2477,7 @@ Bets</span><span id="h-total-bets" class="hud-val">0</span></div>
         if (isRapidFiring) stopRapidFire();
         if (ACTIVE_MODE === 'iow') {
             const baseInp = document.getElementById('h-base');
-            if (baseInp) baseInp.value = baseBet.toFixed(2);
+            if (baseInp) baseInp.value = fmtBet(baseBet);
         } else if (ACTIVE_MODE === 'smart') {
             const aggInp = document.getElementById('h-agg');
             if (aggInp) aggInp.value = aggressionLevel.toFixed(1);
@@ -2522,7 +2581,7 @@ Bets</span><span id="h-total-bets" class="hud-val">0</span></div>
         // IOW is owned by the dice tool and doesn't write through the HUD.
         if (ACTIVE_MODE !== 'iow' && ACTIVE_MODE !== 'manual') return false;
         if (!isFinite(amount) || amount < 0) return false;
-        const targetStr = Math.min(amount, maxBaseBet).toFixed(2);
+        const targetStr = fmtBet(Math.min(amount, maxBaseBet));
         if (isShuffle()) {
             const input = document.querySelector('input[data-testid="bet-amount"], input[placeholder*="Amount"], input[placeholder*="Bet"], input[type="text"][inputmode="decimal"]');
             if (!input) return false;
@@ -3009,6 +3068,7 @@ Bets</span><span id="h-total-bets" class="hud-val">0</span></div>
     }
 
     function updateUI() {
+        syncMinBaseBet();
         syncTrackedMultiplier();
         const balance = getCurrentBalance();
         const profit = balance - initialBalance;
@@ -3037,7 +3097,7 @@ Bets</span><span id="h-total-bets" class="hud-val">0</span></div>
         }
         if (ACTIVE_MODE === 'iow') {
             const targetEl = document.getElementById('h-target');
-            if (targetEl) targetEl.innerHTML = `base bet: ${baseBet.toFixed(2)} | Wins: <span style="color:#00ff9d">${counter}</span> | LossStreak: <span style="color:#f87171">${lossStreak}</span>`;
+            if (targetEl) targetEl.innerHTML = `base bet: ${fmtBet(baseBet)} | Wins: <span style="color:#00ff9d">${counter}</span> | LossStreak: <span style="color:#f87171">${lossStreak}</span>`;
             populateAdvancedStats();
         } else if (ACTIVE_MODE === 'smart') {
             const streaksEl = document.getElementById('h-streaks');
@@ -3155,7 +3215,7 @@ Bets</span><span id="h-total-bets" class="hud-val">0</span></div>
         let targetBet = (sessionPeak / dynamicDivisor) * aggressionLevel;
         const maxBetPct = Math.min(0.18, 0.05 + aggressionLevel * 0.04);
         targetBet = Math.max(minBaseBet, Math.min(targetBet, balance * maxBetPct));
-        const betStr = targetBet.toFixed(2);
+        const betStr = fmtBet(targetBet);
         if (betStr !== lastAmount) {
             lastAmount = betStr;
             const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
@@ -3557,7 +3617,9 @@ Bets</span><span id="h-total-bets" class="hud-val">0</span></div>
                 '<small id="ut-count">' + matching.length + ' available on this page</small>' +
             '</div>' +
             '<div>' +
-                '<button class="ut-header-btn" id="ut-collapse" title="Collapse">×</button>' +
+                // Glyph is a minus, not a cross: this only collapses the panel,
+                // and a × on it read as "close the tools".
+                '<button class="ut-header-btn" id="ut-collapse" title="Collapse">−</button>' +
             '</div>' +
         '</div>' +
         '<div class="ut-body">';

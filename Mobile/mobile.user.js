@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mobile
 // @namespace    https://whaklgjndo.github.io/gambling-tools/
-// @version      6.10
+// @version      6.11
 // @description  .
 // @author       .
 // @match        https://stake.com/*
@@ -289,6 +289,25 @@
         defaultEnabled: true
     });
 
+    // ---- Snakes partial autoplay (Stake + Nuts; one body, branches on host) ----
+    register({
+        id: 'stake-snakes', name: 'Stake Snakes', group: 'Stake',
+        description: 'Auto-rolls the first 1-4 rolls, then hands the board back so the cashout call is yours.',
+        matches: ['https://stake.com/casino/games/snakes*', 'https://stake.us/casino/games/snakes*',
+                  'https://stake.bet/casino/games/snakes*', 'https://stake.games/casino/games/snakes*',
+                  'https://staketr.com/casino/games/snakes*', 'https://staketr2.com/casino/games/snakes*',
+                  'https://staketr3.com/casino/games/snakes*', 'https://staketr4.com/casino/games/snakes*',
+                  'https://stake.bz/casino/games/snakes*', 'https://stake.pet/casino/games/snakes*',
+                  'https://stake.jp/casino/games/snakes*'],
+        defaultEnabled: true
+    });
+    register({
+        id: 'nuts-snakes', name: 'Nuts Snakes', group: 'Nuts',
+        description: 'Auto-rolls the first 1-4 rolls, then hands the board back so the cashout call is yours.',
+        matches: ['https://nuts.gg/snakes*', 'https://*.nuts.gg/snakes*'],
+        defaultEnabled: true
+    });
+
     /** Returns the toolId for the current page's matching tool of the given
      *  type (keno/mines/autovault/iow-smart). Mobile boots tools generically;
      *  this maps to the correct per-platform registration id for the panel /
@@ -538,13 +557,59 @@
         if (!isFinite(raw)) return fallback;
         return isNuts() ? displayToSol(raw) : raw;
     }
+    /* How many decimals THIS site accepts on a bet, read from the bet field's
+       own `step` rather than assumed from the hostname.
+
+       The Stake path was a flat 2dp because it was written for stake.us, where
+       SC really is 2dp. On stake.com the same field is SOL at 8dp, so every bet
+       was rounded up to 0.01 SOL (~74c) or down to 0.00. Reported 2026-08-03:
+       "your bet field only goes to 0.00", "it tries to bet .01 solana".
+
+       Reading the site's own step covers any coin Stake adds later, and it is
+       right in fiat display mode too — the field still takes the COIN amount
+       whatever the header happens to be showing. */
+    function betDp() {
+        try {
+            const inp = document.querySelector('input[data-testid="input-game-amount"]') ||
+                        document.querySelector('input[data-testid="bet-amount"]');
+            const step = inp && inp.getAttribute('step');
+            /* MEASURED ON stake.com, 2026-08-07: the field reports
+
+                   step="1e-8"
+
+               and NOT "0.00000001", which is what this function was written to
+               expect. The first cut matched the step as a STRING against
+               /^0\.(0*)1$/, so exponent notation missed every branch and fell
+               through to the 2dp fallback — meaning the fix for "it tries to bet
+               .01 solana" did not actually change anything on .com. Verified by
+               running this function's own shipped source against the real value.
+
+               Parse the number and ask how many places it needs instead, which
+               is notation-agnostic and also right for a step like 0.05. */
+            const n = (step === null || step === '') ? NaN : parseFloat(step);
+            if (isFinite(n) && n > 0) {
+                for (let d = 0; d <= 12; d++) {
+                    const scaled = n * Math.pow(10, d);
+                    if (Math.abs(scaled - Math.round(scaled)) < 1e-9) return d;
+                }
+                return 12;
+            }
+        } catch (e) {}
+        return isNuts() ? 8 : 2;
+    }
+    /** A step attribute string for `dp` places — never "1e-8", which is invalid. */
+    function stepStrFor(dp) { return dp <= 0 ? '1' : '0.' + '0'.repeat(dp - 1) + '1'; }
     function formatCurrencyInput(amount) {
         if (!isFinite(amount)) return '';
-        return isNuts() ? formatBetForInput(amount) : amount.toFixed(2);
+        // Nuts keeps its own path: it also converts SOL <-> the fiat display.
+        return isNuts() ? formatBetForInput(amount) : amount.toFixed(betDp());
     }
     function currencyInputStep() {
-        return isNuts() && !isUSDDisplayMode() ? '0.00000001' : '0.01';
+        if (isNuts()) return isUSDDisplayMode() ? '0.01' : '0.00000001';
+        return stepStrFor(betDp());
     }
+    /** The smallest bet this site allows, i.e. one unit in its last place. */
+    function siteMinBet() { return Math.pow(10, -betDp()); }
     function typeIntoInput(inp, value) {
         /* Focus is unavoidable: execCommand('insertText') only produces the real
            input events a React-controlled field needs if the field is focused.
@@ -809,6 +874,14 @@
     let winsBeforeReset = 5;
     let autoStopBalance = null;
     let minBaseBet = isNuts() ? 0.00000001 : 0.01;
+    /* minBaseBet is the floor every bet is clamped to. A flat 0.01 is ~74c of
+       SOL on stake.com and made micro-betting impossible. Only ever LOWER it to
+       the site's own minimum; a floor the user raised deliberately is theirs.
+       Runs from updateUI so it settles once the bet field exists. */
+    function syncMinBaseBet() {
+        const m = siteMinBet();
+        if (isFinite(m) && m > 0 && m < minBaseBet) minBaseBet = m;
+    }
     let maxBaseBet = 99999999999999;
     let lastBetId = null;
     let lossStreak = 0;
@@ -2294,7 +2367,7 @@
             typeIntoInput(inp, formatBetForInput(clamped));
             return true;
         }
-        const targetStr = Math.min(amount, maxBaseBet).toFixed(2);
+        const targetStr = formatCurrencyInput(Math.min(amount, maxBaseBet));
         if (isShuffle()) {
             const input = document.querySelector('input[data-testid="bet-amount"], input[placeholder*="Amount"], input[placeholder*="Bet"], input[type="text"][inputmode="decimal"]');
             if (!input) return false;
@@ -5159,6 +5232,7 @@ ${MOB_NU} table.dt-stats td:first-child { color: #aab6c9 !important; }`;
        UI UPDATER
        ============================================================ */
     function updateUI() {
+        syncMinBaseBet();
         syncTrackedMultiplier();
         const balance = getCurrentBalance();
         const profit = balance - initialBalance;
@@ -5376,7 +5450,7 @@ ${MOB_NU} table.dt-stats td:first-child { color: #aab6c9 !important; }`;
         let targetBet = (sessionPeak / dynamicDivisor) * aggressionLevel;
         const maxBetPct = Math.min(0.18, 0.05 + aggressionLevel * 0.04);
         targetBet = Math.max(minBaseBet, Math.min(targetBet, balance * maxBetPct));
-        const betStr = isNuts() ? formatBetForInput(targetBet) : targetBet.toFixed(2);
+        const betStr = formatCurrencyInput(targetBet);
         if (betStr !== lastAmount) {
             lastAmount = betStr;
             const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
@@ -10365,7 +10439,9 @@ self.onmessage = async (e) => {
                 '<small id="ut-count">' + matching.length + ' available on this page</small>' +
             '</div>' +
             '<div>' +
-                '<button class="ut-header-btn" id="ut-collapse" title="Collapse">×</button>' +
+                // Glyph is a minus, not a cross: this only collapses the panel,
+                // and a × on it read as "close the tools".
+                '<button class="ut-header-btn" id="ut-collapse" title="Collapse">−</button>' +
             '</div>' +
         '</div>' +
         '<div class="ut-body">';
@@ -10566,6 +10642,14 @@ self.onmessage = async (e) => {
         if (isShuffle()) return /\/games\/originals\/keno(?:\/|$|\?|#)/i.test(path);
         if (isNuts()) return /\/keno(?:\/|$|\?|#)/i.test(path);
         return /\/casino\/games\/keno(?:\/|$|\?|#)/i.test(path);
+    }
+
+    /** Snakes exists on Stake and Nuts only — Shuffle has no equivalent. */
+    function isOnSnakesPage() {
+        const path = location.pathname || '';
+        if (isShuffle()) return false;
+        if (isNuts()) return /\/snakes(?:\/|$|\?|#)/i.test(path);
+        return /\/casino\/games\/snakes(?:\/|$|\?|#)/i.test(path);
     }
 
     function tool_keno() {
@@ -10865,7 +10949,6 @@ self.onmessage = async (e) => {
                so the header stays "title on the left, buttons on the right"
                instead of space-between spreading three children apart. */
             #keno-preset-gui .kp-actions { display: flex; align-items: center; gap: 2px; flex: 0 0 auto; }
-            #keno-preset-gui .kp-close,
             #keno-preset-gui .kp-min {
                 background: none; border: none; color: #94a3b8;
                 cursor: pointer; padding: 4px 10px; font-size: 20px;
@@ -10873,7 +10956,6 @@ self.onmessage = async (e) => {
                 -webkit-tap-highlight-color: transparent;
                 touch-action: manipulation;
             }
-            #keno-preset-gui .kp-close:active,
             #keno-preset-gui .kp-min:active { color: #fff; background: rgba(255, 255, 255, 0.08); }
             /* Minimised: the header alone remains, still draggable, so the panel
                parks as a title bar instead of covering the board. */
@@ -10945,7 +11027,6 @@ self.onmessage = async (e) => {
                 <span class="kp-title">${TITLE}</span>
                 <span class="kp-actions">
                     <button class="kp-min" id="kp-min" title="Minimise">−</button>
-                    <button class="kp-close" id="kp-close" title="Close">×</button>
                 </span>
             </div>
             <div class="kp-content">
@@ -10965,7 +11046,6 @@ self.onmessage = async (e) => {
         const loadBtn = gui.querySelector('#kp-load');
         const saveBtn = gui.querySelector('#kp-save');
         const deleteBtn = gui.querySelector('#kp-delete');
-        const closeBtn = gui.querySelector('#kp-close');
         const minBtn = gui.querySelector('#kp-min');
         const header = gui.querySelector('.kp-header');
 
@@ -11054,8 +11134,6 @@ self.onmessage = async (e) => {
             savePresets(loadPresets().filter(p => p.name !== name));
             renderPresets();
         });
-
-        closeBtn.addEventListener('click', () => gui.remove());
 
         /* ---- Tile click capture — drives userPicks ---- */
         // Stake/Shuffle: tiles have stable testid we can map back. Nuts: index
@@ -11157,6 +11235,583 @@ self.onmessage = async (e) => {
         tool_keno_hotspot();
     }
 
+
+    /* === source: snakes-partial-autoplay (Stake / Nuts) === */
+    /**
+     * Snakes — partial autoplay.
+     *
+     * Snakes is a climb. You Bet, then Roll up a spiral of multipliers, and any
+     * roll can end the round. The game caps a round at five rolls.
+     *
+     * This tool plays the OPENING of each round and then gets out of the way.
+     * You choose how many rolls it takes for you (1-4); it bets, takes exactly
+     * that many, then stops and hands the board back, so the decision that
+     * actually matters — roll again or cash out — stays yours. IT NEVER CASHES
+     * OUT FOR YOU. The only buttons it ever presses are Bet and Roll.
+     *
+     * It re-arms for the next round as soon as the current one ends, however it
+     * ends: a bust, your cashout, or running out the five-roll cap. Once it has
+     * handed over it stays hands-off for the rest of that round no matter how
+     * many more times you roll.
+     *
+     * Site differences that shape the code below, both measured live 2026-08-07:
+     *
+     *   Stake — stable data-testids. The Bet button is REPLACED by a Cashout
+     *           button while a round is live, so "a Bet button exists" is a
+     *           reliable "no round in progress".
+     *   Nuts  — a visual clone with NO data-testid anywhere (styled-components
+     *           hashes only), so its controls are found by their text: PLAY and
+     *           roll. Its round-live markup could not be observed (the account
+     *           had no balance), so the round-over test is written as "a button
+     *           labelled PLAY is present and enabled", which is correct whether
+     *           Nuts hides that button mid-round the way Stake does or merely
+     *           relabels it.
+     */
+    function tool_snakes() {
+        'use strict';
+        if (tool_snakes._booted) return;
+        tool_snakes._booted = true;
+
+        var SNK_VERSION  = '1.01';
+        /* Tuned to play as fast as the site will let it. The pace is set by the
+           GAME, not by us: a control is pressed the instant it becomes usable
+           again. A fixed cooldown would either be slower than the game or race
+           it, so instead each click waits to see its own control go busy and
+           then free — with FALLBACK_MS as the escape hatch, because a round that
+           resolves inside one poll never shows the busy frame and the first cut
+           of this wedged forever waiting for it. */
+        var POLL_MS      = 60;
+        var GAME_MAX     = 5;      // the game's own cap — five pips under the board
+        var STALL_MS     = 20000;  // nothing moved for this long: stop and say so
+        var SETTLE_MS    = 120;    // after a round ends, before opening the next
+        var MIN_GAP_MS   = 40;     // never two clicks inside a frame
+        var FALLBACK_MS  = 500;    // act anyway if the busy frame was never seen
+
+        function buttons() { return Array.prototype.slice.call(document.querySelectorAll('button')); }
+        function btnByText(re) {
+            var b = buttons(), i, t;
+            for (i = 0; i < b.length; i++) {
+                t = (b[i].textContent || '').trim();
+                if (t && re.test(t)) return b[i];
+            }
+            return null;
+        }
+
+        var SITES = {
+            stake: {
+                label: 'Stake',
+                onPage: function () { return /casino\/games\/snakes(?:\/|$|\?|#)/i.test(location.pathname || ''); },
+                start:   function () { return document.querySelector('[data-testid="bet-button"]'); },
+                roll:    function () { return document.querySelector('[data-testid="game-next"]'); },
+                /* Read only, never clicked — it is how we show you the round is
+                   yours now, and it is what tells a bust from a cashout. */
+                cashout: function () { return document.querySelector('[data-testid="cashout-button"]'); },
+                mult:    function () {
+                    var m = (document.body.innerText || '').match(/Total Profit \(([\d.]+)\s*×\)/);
+                    return m ? parseFloat(m[1]) : null;
+                },
+                multMeansOutcome: true   // a bust zeroes it; a cashout leaves it
+            },
+            nuts: {
+                label: 'Nuts',
+                onPage: function () { return /\/snakes(?:\/|$|\?|#)/i.test(location.pathname || ''); },
+                start:   function () { return btnByText(/^play$/i); },
+                roll:    function () { return btnByText(/^roll$/i); },
+                cashout: function () { return btnByText(/cash\s*out/i); },
+                /* Supplied from the live page 2026-08-08:
+                     <div class="snakes-module__3yTeBG__rollMultiplier"
+                          style="--color: var(--color-green-500);">1.11x</div>
+                   Matched on the stable tail of the CSS-module class, never the
+                   whole thing — `3yTeBG` is a build hash and will change the next
+                   time Nuts ships. Takes the LAST match: if the page renders one
+                   of these per roll rather than a single live figure, the last is
+                   the current one. */
+                mult:    function () {
+                    var els = document.querySelectorAll('[class*="rollMultiplier"]');
+                    if (!els.length) return null;
+                    var txt = (els[els.length - 1].textContent || '').trim();
+                    var m = txt.match(/([\d.]+)\s*x/i) || txt.match(/([\d.]+)/);
+                    if (!m) return null;
+                    var v = parseFloat(m[1]);
+                    return isFinite(v) ? v : null;
+                },
+                /* Stake zeroes its multiplier on a bust, which is how the status
+                   line tells a bust from a cashout. Whether Nuts does the same is
+                   unconfirmed, so outcomes here stay worded as a plain "round
+                   over" rather than risk announcing a cashout that never was. */
+                multMeansOutcome: false
+            }
+        };
+        function detectSite() {
+            return /(^|\.)nuts\.gg$/i.test(location.hostname) ? SITES.nuts : SITES.stake;
+        }
+        var SITE    = detectSite();
+        var TOOL_ID = (SITE === SITES.nuts ? 'nuts' : 'stake') + '-snakes';
+
+        function onPage()  { try { return SITE.onPage(); } catch (e) { return false; } }
+        function enabled() { try { return isToolIdEnabled(TOOL_ID); } catch (e) { return true; } }
+
+        /* ---------------------------------------------------------------
+           SETTINGS
+           --------------------------------------------------------------- */
+        var KEY = 'snakes-partial-autoplay-v1';
+        /* `target` is an optional auto-cashout: the one case where the tool DOES
+           take the money off the table for you. If the multiplier reaches it
+           during the auto rolls the round is closed there and then, including on
+           the very last auto roll — a 50× on roll two of three is not something
+           to hand back and hope about. 0 means off, which is the default. */
+        var cfg = { rolls: 2, target: 0 };
+        try {
+            var raw = JSON.parse(localStorage.getItem(KEY) || 'null');
+            if (raw && raw.rolls >= 1 && raw.rolls <= GAME_MAX - 1) cfg.rolls = raw.rolls | 0;
+            if (raw && isFinite(raw.target) && raw.target >= 0) cfg.target = +raw.target;
+        } catch (e) {}
+        function saveCfg() { try { localStorage.setItem(KEY, JSON.stringify(cfg)); } catch (e) {} }
+
+        /* ---------------------------------------------------------------
+           STATE MACHINE
+
+           Deliberately driven by what the BUTTONS say rather than by a timer or
+           a bet count. Every transition below is one of the states measured on
+           a live Stake board:
+
+             idle        Bet present + enabled          -> no round
+             betting     we clicked Bet, waiting        -> Bet goes away
+             rolling     Roll enabled, under the target -> click Roll
+             handover    target reached                 -> hands off, yours
+             (any)       Bet comes back                 -> round over, re-arm
+
+           A roll in flight shows as Roll present but DISABLED, which is why the
+           click path waits to see it disabled and then enabled again rather
+           than counting its own clicks — a click that the page drops must not
+           be counted as a roll taken.
+           --------------------------------------------------------------- */
+        var running     = false;  // is the tool armed
+        var phase       = 'idle'; // idle | rolling | handover — for the status line only
+        var rollsDone   = 0;
+        var handedOver  = false;
+        var roundActive = false;
+        var rounds      = 0;
+        /* Counted because the status line is transient — at full speed a round
+           can finish and the next one start before you have read what happened. */
+        var targetHits  = 0;
+        var lastChange  = Date.now();
+        var cooldown    = 0;      // set only after a round ends
+        var clickAt     = 0;      // when we last pressed something
+        var sawBusy     = false;  // that control has since gone disabled
+        var multAtRoll  = null;   // the multiplier when we last pressed Roll
+        var lastSig     = '';
+        var statusText  = 'Idle.';
+        /* NO-BET SAFETY GATE — not a setting.
+
+           Its job is narrow: stop a run that CANNOT place a bet, the usual cause
+           being an empty balance. Left alone that state loops on the Bet button
+           forever. It is deliberately not exposed in the panel, because a safety
+           gate you can set to zero is not a safety gate.
+
+           IT DOES NOT RUN WHILE THE BOARD IS YOURS. Once the tool has handed
+           over it is waiting on a human decision, and there is no such thing as
+           taking too long over it — the clock is held at the current time for
+           the whole of the handover and only starts again between rounds, which
+           is the only window where the tool is the one failing to act.
+
+           Same hidden-tab rule as the dice HUD's rapid-fire watchdog: a
+           backgrounded tab is not a stalled run. Browsers throttle and often
+           suspend timers when the tab is hidden or the phone is locked, so the
+           gate is paused while hidden and given a full fresh window on return —
+           without that it becomes the "it stops at random" bug. */
+        var NO_BET_STOP_MS = 90000;
+        var lastBetAt      = 0;
+        var visibleAgainAt = 0;
+        function noteActivity() { lastBetAt = Date.now(); }
+
+        function setStatus(t) { statusText = t; paint(); }
+
+        function click(el) {
+            if (!el || el.disabled) return false;
+            el.click();
+            clickAt = Date.now();
+            sawBusy = false;
+            return true;
+        }
+        /** True once the thing we pressed has finished. Fast path: we watched it
+         *  go busy and come back. Safety net: FALLBACK_MS, so a transition that
+         *  happens between two polls can never wedge the loop. */
+        function settled(control) {
+            var since = Date.now() - clickAt;
+            if (since < MIN_GAP_MS) return false;
+            if (sawBusy) return !!(control && !control.disabled);
+            return since >= FALLBACK_MS;
+        }
+
+        function stop(why) {
+            running = false;
+            phase = 'idle';
+            setStatus(why || 'Stopped.');
+        }
+
+        function tick() {
+            if (!onPage() || !enabled()) return;
+            var startB = SITE.start();
+            var rollB  = SITE.roll();
+            var coB    = null;
+            try { coB = SITE.cashout(); } catch (e) {}
+
+            var atIdle  = !!(startB && !startB.disabled);
+            var canRoll = !!(rollB && !rollB.disabled);
+            /* A round is live when the start button has gone (Stake replaces it
+               with Cashout), or a Cashout control exists, or Roll is offering
+               itself. Any one of those is enough, which is what lets the same
+               code cover Nuts without having seen its mid-round markup. */
+            var live = (!startB) || !!coB || canRoll;
+            if (live) roundActive = true;
+
+            var sig = (startB ? (startB.disabled ? 'S0' : 'S1') : 'S-') +
+                      (rollB  ? (rollB.disabled  ? 'R0' : 'R1') : 'R-') + rollsDone;
+            if (sig !== lastSig) { lastSig = sig; lastChange = Date.now(); }
+
+            /* Watch for the pressed control going busy — that is what lets the
+               next action fire the moment it comes back, rather than waiting out
+               a fixed delay. */
+            if (!sawBusy && clickAt &&
+                ((rollB && rollB.disabled) || (!startB && !rollB) || (startB && startB.disabled))) {
+                sawBusy = true;
+            }
+
+            /* ---- the round ended, however it ended ---- */
+            if (roundActive && !live && atIdle) {
+                var m = null;
+                try { m = SITE.mult(); } catch (e) {}
+                rounds++;
+                /* A bust zeroes the multiplier; a cashout leaves the one you
+                   walked away with on screen. Nuts does not expose it, so there
+                   the outcome is reported plainly as "round over". */
+                var how = (m === null || !SITE.multMeansOutcome) ? 'round over'
+                        : (m > 0 ? 'cashed out at ' + m.toFixed(2) + '×' : 'busted');
+                roundActive = false;
+                rollsDone   = 0;
+                noteActivity();
+                handedOver  = false;
+                multAtRoll  = null;
+                phase       = 'idle';
+                cooldown    = Date.now() + SETTLE_MS;
+                setStatus(running ? ('Round ' + rounds + ': ' + how + ' — re-arming…')
+                                  : ('Round ' + rounds + ': ' + how + '.'));
+            }
+
+            if (!running) return;
+
+            /* ---- no-bet safety gate ---- */
+            var nowT = Date.now();
+            if (handedOver || document.hidden) {
+                /* Your decision time, and time the tab spent in the background,
+                   are both held rather than counted. Holding the stamp (instead
+                   of just skipping the test) is what gives a full fresh window
+                   the moment the tool is answerable again. */
+                lastBetAt = nowT;
+                if (document.hidden) visibleAgainAt = 0;
+            } else {
+                if (!visibleAgainAt) visibleAgainAt = nowT;
+                if (!lastBetAt) lastBetAt = nowT;
+                if (nowT - Math.max(lastBetAt, visibleAgainAt) > NO_BET_STOP_MS) {
+                    stop('Stopped: could not place a bet for ' +
+                         Math.round(NO_BET_STOP_MS / 1000) + 's — check your balance.');
+                    return;
+                }
+            }
+
+            if (Date.now() < cooldown) return;
+
+            /* ---- start a round ---- */
+            if (atIdle) {
+                if (clickAt && !settled(startB)) return;
+                if (click(startB)) {
+                    noteActivity();
+                    phase = 'rolling';
+                    setStatus('Betting…');
+                } else if (Date.now() - lastChange > STALL_MS) {
+                    stop('Stopped: could not press ' + (SITE === SITES.nuts ? 'PLAY' : 'Bet') + '.');
+                }
+                return;
+            }
+
+            if (!settled(rollB)) return;
+
+            /* ---- take our share of the rolls ----
+
+               Guarded twice on purpose. The button being enabled is the primary
+               signal, but the FIRST cut of this waited to observe the button go
+               disabled and then enabled again, and a roll that resolves inside
+               one poll interval never shows that transition — the tool wedged
+               after a single roll and sat there forever. A cooldown cannot wedge.
+               Where a multiplier is readable it is checked too: unchanged since
+               the last press means the previous roll has not landed yet. */
+            var nowMult = null;
+            try { nowMult = SITE.mult(); } catch (e) {}
+
+            /* ---- auto-cashout target ----
+
+               Checked the moment a roll has landed, BEFORE deciding whether to
+               roll again or hand over — so it fires whether the target is hit
+               early (50× on roll two of three) or on the very last auto roll.
+               Only during the auto phase: once the board is yours it stays
+               yours. Needs a readable multiplier, which Nuts does not yet give
+               us, so there the field is disabled rather than quietly inert. */
+            /* `nowMult !== multAtRoll` is the "this roll actually landed" test —
+               multAtRoll holds the reading from just before the last press. It
+               matters most on Nuts, where the multiplier is matched by class and
+               could in principle be a per-roll list that outlives the round: a
+               stale carry-over reads as unchanged and so cannot trip the target
+               on the first roll of a fresh round. */
+            if (canRoll && !handedOver && rollsDone > 0 &&
+                cfg.target > 0 && nowMult !== null && nowMult !== multAtRoll &&
+                nowMult >= cfg.target) {
+                var co = null;
+                try { co = SITE.cashout(); } catch (e) {}
+                if (co && !co.disabled) {
+                    click(co);
+                    targetHits++;
+                    setStatus('Hit ' + nowMult.toFixed(2) + '× (target ' + cfg.target + '×) — cashed out.');
+                    return;
+                }
+                /* Target hit but no cashout control to press: stop rolling and
+                   say so rather than rolling past it. */
+                if (!handedOver) {
+                    handedOver = true;
+                    phase = 'handover';
+                    setStatus('Hit ' + nowMult.toFixed(2) + '× but could not find Cashout — cash out by hand.');
+                }
+                return;
+            }
+
+            if (canRoll && !handedOver && rollsDone < cfg.rolls) {
+                if (rollsDone > 0 && nowMult !== null && multAtRoll !== null && nowMult === multAtRoll) return;
+                multAtRoll = nowMult;
+                if (click(rollB)) {
+                    noteActivity();
+                    rollsDone++;
+                    phase = 'rolling';
+                    setStatus('Rolled ' + rollsDone + ' of ' + cfg.rolls + '…');
+                }
+                return;
+            }
+
+            /* ---- hand the board back ---- */
+            if (canRoll && rollsDone >= cfg.rolls && !handedOver) {
+                handedOver = true;
+                phase = 'handover';
+                setStatus('YOUR MOVE — ' + rollsDone + ' roll' + (rollsDone === 1 ? '' : 's') +
+                          ' taken. Roll again or cash out.');
+            }
+        }
+
+        /* ---------------------------------------------------------------
+           PANEL — small, draggable, same language as the Mines/Moles huds.
+           --------------------------------------------------------------- */
+        /* Per-site skin, matching the rest of the bundle: Stake slate, Nuts neon.
+           Same colours the Nuts Keno panel already uses, so the two sit together
+           on the page instead of one looking like it wandered in from Stake. */
+        var THEME = (SITE === SITES.nuts) ? {
+            panel:  'background:rgba(16,20,30,.72);backdrop-filter:blur(16px);' +
+                    '-webkit-backdrop-filter:blur(16px);border:1px solid rgba(0,255,255,.15);' +
+                    'border-top:1px solid rgba(0,255,255,.3);border-left:1px solid rgba(0,255,255,.3);' +
+                    'border-radius:14px;color:#e0ffff;' +
+                    'box-shadow:0 8px 32px rgba(0,0,0,.35),inset 0 0 20px rgba(0,255,255,.05)',
+            headBorder: 'rgba(0,255,255,.15)',
+            headText:   '#00ffff;letter-spacing:1px;text-shadow:0 0 10px rgba(0,255,255,.6)',
+            field:      'background:rgba(0,0,0,.35);border:1px solid rgba(0,255,255,.25);color:#e0ffff',
+            accent:     '#19f3ff',
+            onInk:      '#04121a',
+            haltBg:     'rgba(0,255,255,.12);color:#bffcff'
+        } : {
+            panel:  'background:#0f212e;border:1px solid #2f4553;border-radius:8px;color:#b1bad3;' +
+                    'box-shadow:0 8px 28px rgba(0,0,0,.45)',
+            headBorder: '#2f4553',
+            headText:   '#fff',
+            field:      'background:#213743;border:1px solid #2f4553;color:#e2e8f0',
+            accent:     '#1fff20',
+            onInk:      '#0f212e',
+            haltBg:     '#2f4553;color:#e2e8f0'
+        };
+        var CSS =
+            '#snakes-auto-gui{position:fixed;z-index:2147483000;top:72px;right:8px;width:190px;touch-action:none;' +
+              THEME.panel + ';' +
+              'font:12px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;' +
+              'user-select:none}' +
+            '#snakes-auto-gui .sk-head{display:flex;align-items:center;justify-content:space-between;' +
+              'padding:8px 10px;border-bottom:1px solid ' + THEME.headBorder + ';cursor:grab;' +
+              'font-weight:700;color:' + THEME.headText + '}' +
+            '#snakes-auto-gui .sk-head:active{cursor:grabbing}' +
+            '#snakes-auto-gui .sk-body{padding:10px;display:flex;flex-direction:column;gap:8px}' +
+            '#snakes-auto-gui .sk-row{display:flex;align-items:center;justify-content:space-between;gap:8px}' +
+            '#snakes-auto-gui .sk-pills{display:flex;gap:4px}' +
+            '#snakes-auto-gui .sk-pill{flex:1;' + THEME.field + ';' +
+              'border-radius:5px;padding:5px 0;text-align:center;cursor:pointer;font-weight:700}' +
+            '#snakes-auto-gui .sk-pill.on{background:' + THEME.accent + ';border-color:' + THEME.accent +
+              ';color:' + THEME.onInk + '}' +
+            '#snakes-auto-gui .sk-target{width:60px;' + THEME.field + ';' +
+              'border-radius:5px;padding:4px 6px;text-align:right;font-weight:700;' +
+              'font-size:12px;margin-right:3px}' +
+            '#snakes-auto-gui .sk-target:disabled{opacity:.4;cursor:not-allowed}' +
+            '#snakes-auto-gui .sk-btn{flex:1;border:0;border-radius:5px;padding:7px 0;cursor:pointer;' +
+              'font-weight:700;font-size:12px;padding:10px 0}' +
+            '#snakes-auto-gui .sk-go{background:' + THEME.accent + ';color:' + THEME.onInk + '}' +
+            '#snakes-auto-gui .sk-halt{background:' + THEME.haltBg + '}' +
+            '#snakes-auto-gui .sk-status{font-size:11px;line-height:1.35;min-height:2.4em;opacity:.85}' +
+            '#snakes-auto-gui .sk-status.yours{color:' + THEME.accent + ';font-weight:700;opacity:1}' +
+            '#snakes-auto-gui .sk-foot{display:flex;justify-content:space-between;opacity:.45;font-size:10px;' +
+              'padding:0 10px 8px}';
+
+        var gui = null, elStatus = null, elPills = null, elGo = null, elRounds = null;
+
+        function injectCss() {
+            if (document.getElementById('snakes-auto-css')) return;
+            var viaGM = false;
+            try { if (typeof GM_addStyle === 'function') { GM_addStyle(CSS); viaGM = true; } } catch (e) {}
+            var marker = document.createElement(viaGM ? 'meta' : 'style');
+            marker.id = 'snakes-auto-css';
+            if (!viaGM) marker.textContent = CSS;
+            (document.head || document.documentElement).appendChild(marker);
+        }
+
+        function build() {
+            var el = document.createElement('div');
+            el.id = 'snakes-auto-gui';
+            var pills = '';
+            for (var n = 1; n <= GAME_MAX - 1; n++)
+                pills += '<div class="sk-pill" data-sk="' + n + '">' + n + '</div>';
+            el.innerHTML =
+                '<div class="sk-head"><span>Snakes</span>' +
+                  '<span data-sk="min" title="Minimise" style="cursor:pointer;opacity:.6;padding:0 4px">−</span></div>' +
+                '<div class="sk-body">' +
+                  '<div class="sk-row"><span>Auto rolls</span></div>' +
+                  '<div class="sk-pills">' + pills + '</div>' +
+                  '<div class="sk-row"><span>Cash out at</span>' +
+                    '<span><input class="sk-target" type="number" min="0" step="0.01" ' +
+                      'data-sk="target" placeholder="off">&times;</span></div>' +
+                  '<div class="sk-row">' +
+                    '<button class="sk-btn sk-go" data-sk="go">START</button>' +
+                    '<button class="sk-btn sk-halt" data-sk="halt">STOP</button>' +
+                  '</div>' +
+                  '<div class="sk-status"></div>' +
+                '</div>' +
+                '<div class="sk-foot"><span>v' + SNK_VERSION + '</span><span data-sk="rounds">0 rounds</span></div>';
+
+            elStatus = el.querySelector('.sk-status');
+            elPills  = el.querySelector('.sk-pills');
+            elGo     = el.querySelector('[data-sk="go"]');
+            elRounds = el.querySelector('[data-sk="rounds"]');
+
+            var elTarget = el.querySelector('[data-sk="target"]');
+            if (cfg.target > 0) elTarget.value = cfg.target;
+            /* The target needs a readable multiplier. Both sites have one now,
+               but Nuts' only exists once a round is in progress — so the field is
+               left enabled and the check below simply never trips while there is
+               nothing to read, rather than being greyed out on a cold page. */
+            elTarget.addEventListener('change', function () {
+                var v = parseFloat(this.value);
+                cfg.target = (isFinite(v) && v > 0) ? v : 0;
+                if (!cfg.target) this.value = '';
+                saveCfg();
+                paint();
+            });
+
+
+            elPills.addEventListener('click', function (e) {
+                var p = e.target.closest ? e.target.closest('.sk-pill') : null;
+                if (!p) return;
+                cfg.rolls = parseInt(p.getAttribute('data-sk'), 10) || 1;
+                saveCfg();
+                paint();
+            });
+            el.querySelector('[data-sk="go"]').addEventListener('click', function () {
+                if (running) return;
+                running = true;
+                rollsDone = 0; handedOver = false; roundActive = false; multAtRoll = null;
+                phase = 'idle'; cooldown = 0; lastChange = Date.now();
+                lastBetAt = Date.now(); visibleAgainAt = 0;
+                setStatus('Armed — ' + cfg.rolls + ' auto roll' + (cfg.rolls === 1 ? '' : 's') + ' per round.');
+            });
+            el.querySelector('[data-sk="halt"]').addEventListener('click', function () {
+                stop('Stopped. The current round is yours to finish.');
+            });
+            /* Collapses to a draggable pill — the header stays, which is also the
+               drag handle. There is deliberately no close: removing the panel
+               would need a reload to get it back, and stopping the tool is what
+               STOP is for. */
+            el.querySelector('[data-sk="min"]').addEventListener('click', function () {
+                var body = el.querySelector('.sk-body');
+                var foot = el.querySelector('.sk-foot');
+                var mini = el.classList.toggle('sk-mini');
+                if (body) body.style.display = mini ? 'none' : '';
+                if (foot) foot.style.display = mini ? 'none' : '';
+                el.style.width = mini ? 'auto' : '';
+                this.textContent = mini ? '+' : '−';
+                this.title = mini ? 'Restore' : 'Minimise';
+            });
+            makeDraggableSnk(el, el.querySelector('.sk-head'));
+            return el;
+        }
+
+        function makeDraggableSnk(panel, handle) {
+            var dragging = false, dx = 0, dy = 0, pid = null;
+            handle.addEventListener('pointerdown', function (e) {
+                if (e.target && e.target.getAttribute && e.target.getAttribute('data-sk') === 'min') return;
+                dragging = true; pid = e.pointerId;
+                var r = panel.getBoundingClientRect();
+                dx = e.clientX - r.left; dy = e.clientY - r.top;
+                try { handle.setPointerCapture(pid); } catch (err) {}
+                e.preventDefault();
+            });
+            handle.addEventListener('pointermove', function (e) {
+                if (!dragging || e.pointerId !== pid) return;
+                panel.style.left = Math.max(0, Math.min(window.innerWidth - 60, e.clientX - dx)) + 'px';
+                panel.style.top  = Math.max(0, Math.min(window.innerHeight - 40, e.clientY - dy)) + 'px';
+                panel.style.right = 'auto';
+                e.preventDefault();
+            });
+            var end = function (e) {
+                if (!dragging) return;
+                dragging = false;
+                try { handle.releasePointerCapture(pid); } catch (err) {}
+            };
+            handle.addEventListener('pointerup', end);
+            handle.addEventListener('pointercancel', end);
+        }
+
+        function paint() {
+            if (!gui || !gui.isConnected) return;
+            var pills = elPills.querySelectorAll('.sk-pill'), i;
+            for (i = 0; i < pills.length; i++)
+                pills[i].classList.toggle('on', parseInt(pills[i].getAttribute('data-sk'), 10) === cfg.rolls);
+            elStatus.textContent = statusText;
+            elStatus.classList.toggle('yours', phase === 'handover');
+            elGo.textContent = running ? 'RUNNING' : 'START';
+            elGo.style.opacity = running ? '.55' : '1';
+            elRounds.textContent = rounds + ' round' + (rounds === 1 ? '' : 's') +
+                                   (targetHits ? ' · ' + targetHits + ' hit target' : '');
+        }
+
+        setInterval(function () {
+            try {
+                if (!onPage() || !enabled()) {
+                    if (gui && gui.parentNode) { running = false; gui.remove(); }
+                    return;
+                }
+                injectCss();
+                if (!gui || !gui.isConnected) { gui = build(); document.body.appendChild(gui); paint(); }
+                tick();
+                paint();
+            } catch (e) { /* never let one tick kill the loop */ }
+        }, POLL_MS);
+
+        try { markToolRan(TOOL_ID); } catch (e) {}
+        console.log('%c[Snakes] partial autoplay v' + SNK_VERSION + ' on ' + SITE.label,
+                    'color:#1fff20;font-weight:700');
+    }
+    /* === end body: snakes === */
+
+
     /* === source: keno-hotspot (Stake / Shuffle / Nuts) === */
     /**
      * Keno Hotspot — hot/cold heatmap for Stake, Shuffle and Nuts.
@@ -11173,14 +11828,14 @@ self.onmessage = async (e) => {
      * The tool never decides which signature means "drawn". A reveal is the set
      * of tiles whose signature differs from what it was just before the reveal
      * started. That is deliberate: Nuts' drawn colour is documented nowhere and
-     * was guessed wrong twice. Instead the tool learns, from a tile you tap, what
-     * SELECTED looks like on this site, and reads every other settled state as
-     * part of the reveal. Mutations drive the sampling, because a flash can begin
-     * and end well inside one polling tick.
+     * was guessed wrong twice, and a hit there flashes green then reverts to the
+     * picked colour, so no single frame — first, last or settled — contains the
+     * whole draw. Baseline comparison needs neither the palette nor a lucky
+     * frame. Mutations drive the sampling, because a flash can begin and end
+     * well inside one polling tick.
      *
-     * Only settled signatures count — identical to the previous sample. Nuts
-     * fades between colours and every frame of that fade is "not resting", so
-     * without this the animation itself reads as a draw.
+     * Your own picks move a signature too, so clicks are tracked and a clicked
+     * tile is folded back into the baseline instead of counted.
      *
      * A reveal is banked only when it reaches exactly the expected count. A
      * partial reveal is not a smaller sample but a biased one — the numbers
@@ -11199,7 +11854,7 @@ self.onmessage = async (e) => {
         if (tool_keno_hotspot._booted) return;
         tool_keno_hotspot._booted = true;
 
-        var KH_VERSION   = '1.20';
+        var KH_VERSION   = '1.25';
         var MAX_PICKS    = 10;   // every one of the three caps a ticket at 10
         var DRAWS_CAP    = 2000; // rolling history cap (~100KB of JSON)
         var POLL_MS      = 400;
@@ -11309,13 +11964,22 @@ self.onmessage = async (e) => {
         /* `selSigs` is what this site's tiles look like once YOU have tapped
            them. Learned, never hardcoded, and remembered across sessions — see
            the BOARD READING notes. */
-        var store = { draws: [], window: 100, selSigs: [] };
+        /* Store version. A v1 store can hold a selSigs list poisoned by the
+           learning bug fixed in 1.21: a tap that landed while a reveal was in
+           flight taught the tool that the DRAWN state was your selection, after
+           which every draw containing one of your picks came up short of
+           `expect` and was thrown away — permanently, silently, and surviving
+           "Reset draws" because that only ever cleared the history. The recorded
+           draws are still good, so an upgrade keeps them and drops only the
+           calibration; one tap re-learns it. */
+        var KH_STORE_V = 2;
+        var store = { v: KH_STORE_V, draws: [], window: 100, selSigs: [] };
         try {
             var raw = JSON.parse(localStorage.getItem(SITE.key) || 'null');
             if (raw && Array.isArray(raw.draws)) {
                 store.draws = raw.draws;
                 if (raw.window != null) store.window = raw.window;
-                if (Array.isArray(raw.selSigs)) store.selSigs = raw.selSigs;
+                if (Array.isArray(raw.selSigs) && raw.v === KH_STORE_V) store.selSigs = raw.selSigs;
             }
         } catch (e) {}
         var storeDirty = false;
@@ -11331,7 +11995,46 @@ self.onmessage = async (e) => {
             if (store.draws.length > DRAWS_CAP) store.draws.shift();
             saveStore();
         }
-        function resetStore() { store.draws = []; saveStore(); render(); paintTiles(); }
+        /* Clears the CALIBRATION as well as the history.
+
+           Someone pressing this is saying that what the tool believes is wrong,
+           and the thing most likely to be wrong is the learned selected
+           signature — while that is wrong nothing is recorded at all. Wiping
+           only the draws left them watching a counter that never moved again,
+           which is exactly how this was reported: "reset stats breaks the
+           hotspot". One tap re-learns it and the status line asks for it. */
+        /* Clears the HISTORY and nothing else. It does NOT touch the learned
+           selected signature.
+
+           An earlier cut of this wiped the calibration too, on the theory that
+           someone pressing Reset is telling the tool its beliefs are wrong. That
+           was worse than the bug it was meant to fix: uncalibrated, the tool
+           records nothing until you tap a tile, and after a reset your numbers
+           are usually already on the board — so there is no reason to tap one,
+           and the counter simply never moves again. Reported as "reset draws
+           still fucks it up", and correctly.
+
+           Nothing is lost by keeping the calibration: a poisoned one from before
+           1.21 is already dropped by the store-version migration, new poisoning
+           is prevented by the tap guard in sample(), and if a calibration ever
+           does go bad the odd-reveal check below now clears it on its own. */
+        function resetStore() {
+            /* ONLY the history. Every one of the capture latches is deliberately
+               left alone.
+
+               Clearing them was a second, quieter bug: `revealed` is what stops
+               the reveal currently on screen from being banked twice, and
+               `lastBankedSig` is the belt-and-braces behind it. Resetting both
+               re-opened the finished round sitting right there on the board, so
+               pressing Reset immediately banked a phantom draw and the counter
+               read "1 draw" a second after you cleared it. Measured. `prevSig`
+               is re-armed by paintTiles() below anyway. */
+            store.draws = [];
+            oddLatched = false;
+            oddReveals = 0;
+            setStatus('');
+            saveStore(); render(); paintTiles();
+        }
 
         /* ---------------------------------------------------------------
            STATS
@@ -11495,23 +12198,206 @@ self.onmessage = async (e) => {
         }
 
         /* ---------------------------------------------------------------
+           API CAPTURE — the authoritative source, when it is available.
+
+           Reading pixels was always the fallback plan. The site states the
+           result outright; a bet response carries both halves of the round:
+
+             {"kenoBet":{ "id":"914ea109-…", "game":"keno",
+               "state":{ "drawnNumbers":[27,8,24,38,37,36,26,32,39,1],
+                         "selectedNumbers":[4,2,12,23,15,27,29,28,22,35] }}}
+
+           Captured live from stake.us 2026-08-08. Everything the DOM reader has
+           to infer is simply given: which ten came up, which ten were yours, and
+           an `id` to deduplicate on. So with the API running there is no settled
+           test to lose a fast round, no fade to misread, and NO CALIBRATION —
+           the tap that people kept having to be told about stops mattering.
+
+           The hook is installed at tool boot rather than document-start because
+           a late hook demonstrably works here: this exact payload was captured
+           from the console long after the page had loaded. fetch AND XHR are
+           both wrapped, since that console test could not say which one carried
+           it and the cost of covering both is nil.
+
+           The DOM reader below is NOT removed. It still runs whenever the API
+           has gone quiet — a page opened before the script, a payload change,
+           a site that does not expose one — and it is what drives the heat tint
+           in every case.
+           --------------------------------------------------------------- */
+        var apiQueue    = [];      // draws captured, waiting to be banked
+        var apiSeen     = {};      // bet id -> true
+        var apiSeenAge  = [];      // insertion order, so the id set stays bounded
+        var API_ID_CAP  = 400;
+        var apiLastAt   = 0;       // when the API last produced a draw
+        var apiPicks    = null;    // selectedNumbers from the latest bet
+        var API_TRUST_MS = 45000;  // treat the API as live for this long after one
+
+        /** True while the API is carrying the round, so the DOM must not also bank. */
+        function apiLive() { return apiLastAt > 0 && (Date.now() - apiLastAt) < API_TRUST_MS; }
+
+        function apiRemember(key) {
+            apiSeen[key] = true;
+            apiSeenAge.push(key);
+            while (apiSeenAge.length > API_ID_CAP) delete apiSeen[apiSeenAge.shift()];
+        }
+
+        function apiPush(id, drawn, selected) {
+            var nums = [], i, v;
+            for (i = 0; i < drawn.length; i++) {
+                v = +drawn[i];
+                if (isFinite(v) && v >= 1) nums.push(v);
+            }
+            /* Same completeness rule as the DOM path: a partial set is a biased
+               sample, not a smaller one. */
+            if (nums.length !== SITE.expect) return;
+            nums.sort(function (a, b) { return a - b; });
+            /* Dedupe on the bet id — exact, and far better than the DOM path's
+               "same ten twice in a row inside 15s" heuristic. Responses do get
+               replayed: the same bet can arrive again in a history query. */
+            var key = id ? ('i' + id) : ('n' + nums.join(','));
+            if (apiSeen[key]) return;
+            apiRemember(key);
+            if (Array.isArray(selected)) {
+                apiPicks = selected.map(Number).filter(function (n) { return isFinite(n) && n >= 1; });
+            }
+            apiQueue.push(nums);
+        }
+
+        /* ONLY YOUR OWN BETS. This allowlist is the whole safety of the feature.
+
+           Both sites publish other people's play in a byte-identical shape —
+           Nuts has Live Games and Big Wins beside My Games, Stake has its public
+           bet feeds. A scanner that matched on shape alone would happily fold
+           strangers' draws into your history, and the numbers would look fine
+           while meaning nothing. So a bet counts only when it was reached under
+           a key that means "mine":
+
+             kenoBet   Stake — the response to your own bet mutation
+             myGames   Nuts  — the socket feed of your own games
+                              (the Nuts frame observed 2026-08-08 arrives as
+                               payload.data.myGames[].details)
+
+           Fails closed: if either site renames its key, capture stops and the
+           DOM reader takes over, rather than quietly recording the wrong thing. */
+        var API_OWN_KEYS = { kenoBet: 1, kenoBets: 1, myGames: 1 };
+
+        /** Depth-first: the bet's position inside the envelope is not assumed —
+         *  it is wrapped in `data`, sometimes batched, and shaped differently per
+         *  site. `ownKey` tracks whether we are inside one of the containers
+         *  above. Bounded depth so a huge payload cannot turn this into a stall. */
+        function apiScan(node, depth, ownKey) {
+            if (!node || typeof node !== 'object' || depth > 8) return;
+            if (Array.isArray(node)) {
+                for (var i = 0; i < node.length && i < 200; i++) apiScan(node[i], depth + 1, ownKey);
+                return;
+            }
+            /* Stake puts the numbers on `state`, Nuts on `details`. */
+            var st = node.state || node.details;
+            if (ownKey && st && Array.isArray(st.drawnNumbers) && st.drawnNumbers.length) {
+                /* Reject a sibling game that happens to ride the same feed.
+                   Nuts tags it (`KenoGameDetails`), Stake names it (`game`). */
+                var tn = st.__typename || node.__typename || node.game;
+                if (tn === undefined || /keno/i.test(String(tn))) {
+                    apiPush(node.id, st.drawnNumbers, st.selectedNumbers);
+                }
+            }
+            for (var k in node) {
+                if (!Object.prototype.hasOwnProperty.call(node, k)) continue;
+                apiScan(node[k], depth + 1, ownKey || !!API_OWN_KEYS[k]);
+            }
+        }
+
+        function apiHandleText(text) {
+            /* Cheap gate first. Every response and socket frame on the site
+               passes through here, so parsing them all would be wasteful; only a
+               keno bet can contain this key. */
+            if (typeof text !== 'string' || !text || text.length > 400000) return;
+            if (text.indexOf('drawnNumbers') < 0) return;
+            try { apiScan(JSON.parse(text), 0, false); } catch (e) {}
+        }
+
+        function installApiTap() {
+            var W = (typeof unsafeWindow !== 'undefined' && unsafeWindow) ? unsafeWindow : window;
+            if (W.__kenoHotspotTap) return;      // one wrap per page, whatever mounts us
+            W.__kenoHotspotTap = true;
+            try {
+                var of = W.fetch;
+                if (of) {
+                    W.fetch = function () {
+                        var p = of.apply(this, arguments);
+                        try {
+                            p.then(function (res) {
+                                try { res.clone().text().then(apiHandleText).catch(function () {}); } catch (e) {}
+                            }).catch(function () {});
+                        } catch (e) {}
+                        return p;
+                    };
+                }
+            } catch (e) {}
+            try {
+                var oSend = W.XMLHttpRequest.prototype.send;
+                W.XMLHttpRequest.prototype.send = function () {
+                    var self = this;
+                    try {
+                        this.addEventListener('load', function () {
+                            try { apiHandleText(self.responseText); } catch (e) {}
+                        });
+                    } catch (e) {}
+                    return oSend.apply(this, arguments);
+                };
+            } catch (e) {}
+            /* WebSocket — this is how Nuts delivers a bet result. Attaching from
+               `send` rather than from the constructor is deliberate and is the
+               same trick the bundle's existing Nuts hook uses: it catches a
+               socket that was ALREADY OPEN before we loaded, because the page
+               keeps sending on it. Wrapping only the constructor would miss the
+               live socket entirely on a late mount. */
+            try {
+                var oWsSend = W.WebSocket.prototype.send;
+                W.WebSocket.prototype.send = function () {
+                    try {
+                        if (!this.__kenoHotspotPeek) {
+                            this.__kenoHotspotPeek = true;
+                            this.addEventListener('message', function (ev) {
+                                try { apiHandleText(ev.data); } catch (e) {}
+                            });
+                        }
+                    } catch (e) {}
+                    return oWsSend.apply(this, arguments);
+                };
+            } catch (e) {}
+        }
+
+        /** Bank whatever the API has handed us since the last tick. */
+        function drainApi() {
+            if (!apiQueue.length) return;
+            while (apiQueue.length) {
+                recordDraw(apiQueue.shift());
+                apiLastAt = Date.now();
+            }
+            render();
+            paintTiles();
+        }
+
+        /* ---------------------------------------------------------------
            BOARD READING
 
            A tile's "signature" is however the site renders its state: an
            attribute on Stake, a class on Shuffle, a colour on Nuts. The tool
-           still does NOT know which signature means "drawn" — it works out which
-           means SELECTED, by watching what a tile becomes when you tap it, and
-           treats every other settled state as part of the reveal.
+           deliberately does NOT know which signature means "drawn". A reveal is
+           just the set of tiles whose signature changed from what it was
+           immediately before that reveal began.
 
-           That is what makes Nuts work. Its drawn colour is documented nowhere
-           and was guessed twice here, wrong both times; one tap teaches the tool
-           the only fact it needs, and the same mechanism retires the hardcoded
-           state names on Stake and Shuffle too.
+           That is what makes Nuts work. Its hits flash green and then revert to
+           the picked colour, and its drawn colour is documented nowhere — it was
+           guessed twice here and wrong both times. Comparing against a baseline
+           needs neither fact, and it retires the last hardcoded state names on
+           Stake and Shuffle too.
 
-           What it replaced: comparing every tile against a baseline. That has no
-           notion of WHY a tile changed, so your ticket and the draw were the same
-           event to it, and the site's own Auto pick — ten tiles changing at once
-           with no click to notice — was banked as a draw outright.
+           Your own picks change a signature as well, and would otherwise read as
+           part of a draw. Clicks are watched to exclude them: a tile you (or
+           Pick hottest) click is folded straight back into the baseline; a tile
+           the game reveals is not.
            --------------------------------------------------------------- */
         function tiles() { try { return SITE.tiles() || []; } catch (e) { return []; } }
         function boardSize() { var n = tiles().length; return n || 40; }
@@ -11597,6 +12483,9 @@ self.onmessage = async (e) => {
         var lastBankedSig = '';   // the last set banked, to reject a re-read
         var lastBankedAt = 0;
         var DUPE_WINDOW_MS = 15000;
+        var oddReveals = 0;       // consecutive rounds whose reveal was discarded
+        var oddLatched = false;   // this reveal has already been counted as odd
+        var ODD_REVEAL_WARN = 5;  // rounds of that before saying so out loud
 
         function learnSelected(sig) {
             if (!sig || store.selSigs.indexOf(sig) >= 0) return;
@@ -11626,6 +12515,9 @@ self.onmessage = async (e) => {
         function calibrated() { return store.selSigs.length > 0; }
 
         function sample() {
+            /* The API is exact; the DOM is an inference. When both are running,
+               the DOM must not also bank or every round lands twice. */
+            if (apiLive()) return;
             var sig = readSignatures();
             if (!sig) return;
             var prev = prevSig;
@@ -11642,12 +12534,37 @@ self.onmessage = async (e) => {
             var rest = restingSig(settled);
             if (rest === null) return;
 
+            /* A TAP MOVES ONE TILE. A REVEAL MOVES TEN.
+
+               That is the whole of the guard below, and without it the tool can
+               be taught a lie it never recovers from. Tap a number while a round
+               is resolving and that same tile comes back as a HIT; the tap is
+               still pending, the hit signature is settled and not resting, so it
+               was learned as "selected". From then on every draw containing one
+               of your picks is one tile short of `expect` and is discarded —
+               reproduced here on a mock Stake board: one mid-round tap, then ten
+               clean rounds, zero recorded. It persists to localStorage, so it
+               outlives a reload, and "Reset draws" used to leave it in place.
+
+               So a tap only teaches while nothing else is moving: no UNTAPPED
+               tile may be sitting in an unknown state. If one is, the pending
+               tap simply waits — when the board clears, the tile settles back to
+               your real selected colour and teaches the right thing instead. */
+            var strangers = 0;
+            for (k in settled) {
+                if (!Object.prototype.hasOwnProperty.call(settled, k)) continue;
+                if (settled[k] === rest) continue;
+                if (store.selSigs.indexOf(settled[k]) >= 0) continue;
+                if (pendingClick[k] !== undefined) continue;
+                strangers++;
+            }
+
             /* Learn what "selected" looks like from a tile you just tapped, once
                it has stopped moving. A tap that only DESELECTS lands back on the
                resting signature and teaches nothing, which is correct. */
             for (k in pendingClick) {
                 if (!Object.prototype.hasOwnProperty.call(pendingClick, k)) continue;
-                if (settled[k] !== undefined && settled[k] !== rest) {
+                if (!strangers && settled[k] !== undefined && settled[k] !== rest) {
                     learnSelected(settled[k]);
                     delete pendingClick[k];
                 } else if (now - pendingClick[k] > CLICK_LEARN_MS) {
@@ -11669,12 +12586,40 @@ self.onmessage = async (e) => {
 
             /* The result stays on screen until the next round, so the latch is
                released by the board going clear rather than by a timer. */
-            if (!drawn.length) { revealed = false; return; }
+            if (!drawn.length) { revealed = false; oddLatched = false; return; }
             if (revealed) return;
             /* Only a complete reveal. A partial one is not a smaller sample, it
                is a biased one — the tiles most likely to be missed are the ones
-               you picked, whose flash is shortest. */
-            if (drawn.length !== SITE.expect) return;
+               you picked, whose flash is shortest.
+
+               Throwing one away is routine: it is usually a frame caught
+               mid-animation. Throwing away every round is not — that is what a
+               wrong calibration looks like from the outside, and it used to
+               happen in complete silence, which is why the only symptom anyone
+               could report was "it stopped working". Count them once per round
+               and say so when it is plainly no longer animation. */
+            if (drawn.length !== SITE.expect) {
+                if (!oddLatched && drawn.length >= SITE.expect - 3) {
+                    oddLatched = true;
+                    /* Round after round of near-misses means the learned selected
+                       signature is wrong — a tile the tool thinks is your pick is
+                       really part of the draw, so every reveal lands short. Drop
+                       the calibration and re-learn rather than telling the player
+                       to go and press a button: they should not have to know what
+                       a signature is, and the old advice pointed at Reset, which
+                       no longer clears it. */
+                    if (++oddReveals >= ODD_REVEAL_WARN) {
+                        store.selSigs = [];
+                        oddReveals = 0;
+                        saveStore();
+                        setStatus('Kept reading ' + drawn.length + ' revealed tiles where ' + SITE.expect +
+                                  ' are expected — relearning this site’s colours. Tap any number once.');
+                    }
+                }
+                return;
+            }
+            oddReveals = 0;
+            oddLatched = false;
 
             drawn.sort(function (a, b) { return a - b; });
             /* Belt and braces on top of the latch: never the same ten twice in a
@@ -11696,13 +12641,46 @@ self.onmessage = async (e) => {
            revert well inside one 400ms tick, so a poll never sees it. The ticker
            still calls sample() as a safety net for anything that changes without
            mutating the subtree. */
-        var mo = null, moRoot = null, sampleQueued = false;
+        var mo = null, moRoot = null, sampleQueued = false, confirmTimer = null;
+        /* How long after the board stops changing to take a second look. The
+           settled test needs the SAME signature twice running, and until this
+           existed the only two sources of samples were the mutation itself (one
+           look, at the instant of the change) and the POLL_MS tick. Anything
+           that came and went inside one poll was therefore seen exactly once and
+           thrown away as unsettled.
+
+           That is precisely what a site's own autoplay does. Measured on a mock
+           board before this was added: one round every 2000ms captured 10 of 10,
+           800ms captured 7, 520ms captured 4, and 320ms captured 1 of 10. The
+           player sees a counter that barely moves and reasonably concludes the
+           tool has stopped recognising the board — reported after a Reset, where
+           a stalled count from zero is most obvious.
+
+           Debounced, so a run of mutations (an animation) pushes it back and it
+           fires once things are actually still — which is the moment worth
+           reading. Cheap: it only runs when the board has changed. */
+        /* Per site, because the risk it trades against is per site. The delay
+           exists so a fade cannot be read twice and mistaken for a settled
+           state — but only Nuts actually fades: its signature is a COMPUTED
+           COLOUR, and one click there was measured walking REST > 64,73,93 >
+           92,64,147 > 141,49,238 > PURPLE. Stake's signature is the discrete
+           `data-game-tile-status` attribute and Shuffle's is a class list; both
+           flip atomically, with no in-between value to catch. So they can
+           confirm much sooner and keep up with faster autoplay, while Nuts keeps
+           the long window that its colour transition needs. */
+        var CONFIRM_MS = (SITE === SITES.nuts) ? 140 : (SITE === SITES.shuffle ? 80 : 60);
         function scheduleSample() {
-            if (sampleQueued) return;
-            sampleQueued = true;
-            var run = function () { sampleQueued = false; try { sample(); } catch (e) {} };
-            if (typeof requestAnimationFrame === 'function') requestAnimationFrame(run);
-            else setTimeout(run, 0);
+            if (!sampleQueued) {
+                sampleQueued = true;
+                var run = function () { sampleQueued = false; try { sample(); } catch (e) {} };
+                if (typeof requestAnimationFrame === 'function') requestAnimationFrame(run);
+                else setTimeout(run, 0);
+            }
+            if (confirmTimer) clearTimeout(confirmTimer);
+            confirmTimer = setTimeout(function () {
+                confirmTimer = null;
+                try { sample(); } catch (e) {}
+            }, CONFIRM_MS);
         }
         function watchBoard() {
             var all = tiles();
@@ -11766,7 +12744,7 @@ self.onmessage = async (e) => {
            --------------------------------------------------------------- */
         /* Banded rather than one continuous ramp. A smooth gradient makes
            "slightly above expectation" and "well above" two similar oranges you
-           cannot tell apart on a phone; discrete steps give each degree its own
+           cannot tell apart at a glance; discrete steps give each degree its own
            colour, so a mild lean reads as pale yellow and only a genuine outlier
            reaches red. Thresholds are in standard deviations, so they mean the
            same thing at 50 draws or 500. */
@@ -11831,7 +12809,11 @@ self.onmessage = async (e) => {
                changing. Putting a class or an outline on the tile BUTTON would
                change the signature on Shuffle, where the signature is the button's
                class list — the tool would then read its own highlight as a draw. */
-            var ring = pickRingColour(), picked = {}, pk = currentPicks(), pi;
+            /* Your ticket, straight from the bet response when we have one —
+               `selectedNumbers` needs no learned signature to interpret, so the
+               pick ring keeps working even on a board that was never calibrated. */
+            var ring = pickRingColour(), picked = {}, pi;
+            var pk = (apiLive() && apiPicks) ? apiPicks : currentPicks();
             for (pi = 0; pi < pk.length; pi++) picked[pk[pi]] = true;
 
             for (var i = 0; i < all.length; i++) {
@@ -11899,7 +12881,7 @@ self.onmessage = async (e) => {
             '#keno-preset-gui .kh-scan{margin-left:6px;background:rgba(255,255,255,.09);' +
               'border:1px solid rgba(255,255,255,.16);color:inherit;border-radius:4px;' +
               'font-size:9px;padding:1px 6px;cursor:pointer;text-transform:none;letter-spacing:0}' +
-            '#keno-preset-gui .kh-scan:active{background:rgba(255,255,255,.2)}' +
+            '#keno-preset-gui .kh-scan:hover{background:rgba(255,255,255,.2)}' +
             '#keno-preset-gui .kh-k{display:block;opacity:.5;text-transform:uppercase;font-size:9px;' +
             'letter-spacing:.5px;margin-bottom:2px}' +
             /* Legend. The swatch is the tint composited over a tile-dark base, so
@@ -11949,6 +12931,7 @@ self.onmessage = async (e) => {
         var sect = null, elHot = null, elCold = null, elStat = null, elSpots = null, elCount = null, elRep = null;
         var elLegend = null;
         var showHeat = true, showCounts = true;
+        var CALIB_MSG = 'Tap any number once so I can learn this site’s selected colour — until then draws are not recorded.';
         function setStatus(t) { if (elStat) elStat.textContent = t || ''; }
 
         /** Where the section lives: the preset panel's content column. */
@@ -11974,7 +12957,7 @@ self.onmessage = async (e) => {
                 '<div class="kh-list kh-cold"><span class="kh-k">Coldest</span><span data-kh="cold">—</span></div>' +
                 /* Scanned on demand rather than every draw: enumerating every
                    pair, trio and quad in the window is far too much work to
-                   repeat on each round, especially at speed on a phone. */
+                   repeat on each round. */
                 '<div class="kh-list kh-rep"><span class="kh-k">Repeat groups' +
                   '<button class="kh-scan" type="button" data-kh="scan">Scan</button></span>' +
                   '<span data-kh="rep">press Scan</span></div>' +
@@ -12092,9 +13075,20 @@ self.onmessage = async (e) => {
                 (heat.rounds !== store.draws.length ? ' (' + heat.rounds + ' in window)' : '');
             /* Say so rather than sitting there recording nothing. The old version
                silently banked whatever it saw; this one waits to be shown what a
-               selected tile looks like, and has to admit it is waiting. */
-            if (!calibrated() && elStat && !elStat.textContent)
-                setStatus('Tap any number once so I can learn this site’s selected colour — until then draws are not recorded.');
+               selected tile looks like, and has to admit it is waiting.
+
+               Cleared again once it no longer applies: it used to be written the
+               once and left there, so the panel went on insisting draws were not
+               being recorded for the rest of the session after they were. */
+            /* Only ask for a tap when the tap is actually needed. With the bet
+               response coming through, calibration is irrelevant — the payload
+               already separates the draw from the ticket — so the prompt would
+               be asking for something that changes nothing. */
+            if (!calibrated() && !apiLive()) {
+                if (elStat && !elStat.textContent) setStatus(CALIB_MSG);
+            } else if (elStat && elStat.textContent === CALIB_MSG) {
+                setStatus('');
+            }
         }
 
         /* ---------------------------------------------------------------
@@ -12115,10 +13109,15 @@ self.onmessage = async (e) => {
                 if (!sect) sect = buildSection();
                 if (sect.parentNode !== slot) { slot.appendChild(sect); render(); }
                 watchBoard();
+                drainApi();
                 sample();
                 paintTiles();
             } catch (e) { /* never let one tick kill the ticker */ }
         }, POLL_MS);
+
+        /* Installed before anything else the tool does, so the very next bet is
+           captured rather than the one after it. */
+        try { installApiTap(); } catch (e) {}
 
         console.log('%c[Keno Hotspot] v' + KH_VERSION + ' on ' + SITE.label + ' — ' +
                     store.draws.length + ' draws stored', 'color:#f87171;font-weight:700');
@@ -12607,14 +13606,12 @@ self.onmessage = async (e) => {
                so the header stays "title on the left, buttons on the right"
                instead of space-between spreading three children apart. */
             #mines-auto-gui .mn-actions { display: flex; align-items: center; gap: 2px; flex: 0 0 auto; }
-            #mines-auto-gui .mn-close,
             #mines-auto-gui .mn-minbtn {
                 background: none; border: none; color: #94a3b8;
                 cursor: pointer; padding: 4px 10px; font-size: 20px;
                 line-height: 1; border-radius: 6px; min-height: 32px;
                 -webkit-tap-highlight-color: transparent; touch-action: manipulation;
             }
-            #mines-auto-gui .mn-close:active,
             #mines-auto-gui .mn-minbtn:active { color: #fff; background: rgba(255, 255, 255, 0.08); }
             /* Minimised: the header alone remains, still draggable, so the panel
                parks as a title bar instead of covering the board. */
@@ -12713,7 +13710,6 @@ self.onmessage = async (e) => {
                      getElementById the button instead of the field. -->
                 <span class="mn-actions">
                     <button class="mn-minbtn" id="mn-minimise" title="Minimise">−</button>
-                    <button class="mn-close" id="mn-close" title="Close">×</button>
                 </span>
             </div>
             <div class="mn-content">
@@ -12772,7 +13768,6 @@ self.onmessage = async (e) => {
         const toggleBtn = gui.querySelector('#mn-toggle');
         const statusEl = gui.querySelector('#mn-status');
         const runsEl = gui.querySelector('#mn-runs');
-        const closeBtn = gui.querySelector('#mn-close');
         // Live stats refs
         const multEl = gui.querySelector('#mn-mult');
         const payoutEl = gui.querySelector('#mn-payout');
@@ -12887,10 +13882,6 @@ self.onmessage = async (e) => {
             if (isRunning) stopBot();
             else startBot();
         });
-        closeBtn.addEventListener('click', () => {
-            stopBot();
-            gui.remove();
-        });
         ['input'].forEach(ev => {
             minInp.addEventListener(ev, updateInfo);
             maxInp.addEventListener(ev, updateInfo);
@@ -12938,6 +13929,7 @@ self.onmessage = async (e) => {
         header.addEventListener('pointerup', endDrag);
         header.addEventListener('pointercancel', endDrag);
     }
+
 
     /* ============================================================
        ===========================================================
@@ -20382,6 +21374,37 @@ function tool_stake_7day_tracker() {
             checkInterval: 30000
         };
 
+        /* Presets — the same three names as the desktop panels, so "Balanced"
+           means the same thing wherever you meet it. One body serves all three
+           sites and mobile's bigWinThreshold is a balance MULTIPLE on every one
+           of them, so unlike desktop Shuffle a single table is correct here. */
+        const AV_PRESETS = {
+            /* Slots: a long grind punctuated by a spike. Skim little on the way,
+               take a big bite when the balance actually jumps, and do not bother
+               looking often — nothing happens between hits. */
+            slots:     { saveAmount: 0.10, bigWinThreshold: 3.0, bigWinMultiplier: 4, checkInterval: 120000 },
+            /* Fast paced (dice, limbo): profit arrives steadily and rarely spikes,
+               so the big-win branch is switched off (multiplier 1) and the ordinary
+               skim does the work. The interval is set just under the deposit rate
+               limit of 50/hour — 75s allows 48 — so it banks as often as the site
+               permits without ever tripping the cap. */
+            fast:      { saveAmount: 0.12, bigWinThreshold: 5.0, bigWinMultiplier: 1, checkInterval: 75000 },
+            /* Balanced: fires under most conditions, meaningful slice each time. */
+            balanced:  { saveAmount: 0.25, bigWinThreshold: 2.0, bigWinMultiplier: 2, checkInterval: 60000 },
+            /* Aggressive: bigger slices, and a low bar for calling something big. */
+            aggressive:{ saveAmount: 0.50, bigWinThreshold: 1.4, bigWinMultiplier: 2, checkInterval: 45000 }
+                };
+        function avPresetNameFor(c) {
+            for (const name in AV_PRESETS) {
+                const p = AV_PRESETS[name];
+                if (Math.abs((c.saveAmount || 0) - p.saveAmount) < 1e-9 &&
+                    Math.abs((c.bigWinThreshold || 0) - p.bigWinThreshold) < 1e-9 &&
+                    Math.abs((c.bigWinMultiplier || 0) - p.bigWinMultiplier) < 1e-9 &&
+                    Math.abs((c.checkInterval || 0) - p.checkInterval) < 1e-9) return name;
+            }
+            return 'custom';
+        }
+
         let cfg = Object.assign({}, DEFAULTS);
         try {
             const raw = localStorage.getItem(CONFIG_KEY);
@@ -20445,8 +21468,102 @@ function tool_stake_7day_tracker() {
             try { sessionStorage.setItem(SESSION_VAULTED_KEY, '0'); } catch {}
         }
 
-        /* ---- Balance read (reuses HUD's per-platform helper) ---- */
+        /* ---- Balance read (reuses HUD's per-platform helper) ----
+
+           ON STAKE THE API VALUE WINS, because it is the only one in COIN units.
+
+           The HUD helper reads the balance off the page, and on stake.com the
+           page routinely shows fiat — a $300 header for what is really a
+           fraction of a SOL. `createVaultDeposit` takes a coin amount, so the
+           displayed figure went in as one: 30% of an $81 profit asked Stake to
+           move 24.3 SOL instead of $24.30, and Stake answered "insufficient
+           balance" every time. Reported 2026-08-03. Desktop AutoVault was fixed
+           that day; mobile reads through the same broken path and was missed.
+
+           Polling Stake's own balances query makes display mode irrelevant
+           rather than something to detect and convert. The DOM read stays as the
+           fallback for the first seconds before the API answers, and for
+           Shuffle and Nuts, whose own paths were never in question — Nuts
+           already converts SOL properly.
+
+           Deliberately scoped to AutoVault. The HUD's getCurrentBalance also
+           feeds stop-loss and take-profit, whose stored values are in whatever
+           unit the user was looking at when they typed them; switching that
+           number under them is how the last balance change caused real damage. */
+        const stakeApiBalance = {};
+        const stakeVaultBalance = {};
+        let apiBalTimer = null;
+        async function refreshStakeApiBalance() {
+            if (PLATFORM !== 'stake') return;
+            try {
+                const token = getCookie('session');
+                if (!token) return;
+                const res = await fetch(window.location.origin + '/_api/graphql', {
+                    method: 'POST',
+                    credentials: 'include',
+                    headers: {
+                        'content-type': 'application/json',
+                        'x-access-token': token,
+                        'x-language': 'en',
+                        'x-operation-name': 'UserBalances'
+                    },
+                    body: JSON.stringify({
+                        // The VAULT side is what separates a withdrawal from a win:
+                        // both raise the available balance, only a withdrawal drops
+                        // the vault at the same time.
+                        query: 'query UserBalances {\n  user { id balances { available { amount currency } vault { amount currency } } }\n}',
+                        variables: {}
+                    }),
+                    mode: 'cors',
+                    cache: 'no-cache'
+                });
+                if (!res.ok) return;
+                const data = await res.json();
+                const list = data && data.data && data.data.user && data.data.user.balances;
+                if (!Array.isArray(list)) return;
+                for (const b of list) {
+                    const cur = b && b.available && b.available.currency;
+                    const amt = b && b.available && b.available.amount;
+                    const n = typeof amt === 'number' ? amt : parseFloat(amt);
+                    if (cur && isFinite(n) && n >= 0) stakeApiBalance[String(cur).toLowerCase()] = n;
+                    const vAmt = b && b.vault && b.vault.amount;
+                    const vn = typeof vAmt === 'number' ? vAmt : parseFloat(vAmt);
+                    if (cur && isFinite(vn) && vn >= 0) stakeVaultBalance[String(cur).toLowerCase()] = vn;
+                }
+            } catch (e) { /* leave the DOM read in charge */ }
+        }
+        function startApiBalancePolling() {
+            if (PLATFORM !== 'stake') return;
+            if (apiBalTimer) clearInterval(apiBalTimer);
+            apiBalTimer = setInterval(refreshStakeApiBalance, 5000);
+            refreshStakeApiBalance();
+        }
+        function stopApiBalancePolling() {
+            if (apiBalTimer) { clearInterval(apiBalTimer); apiBalTimer = null; }
+        }
+
+        /* False while the API is the source of truth but has nothing for the
+           ACTIVE currency yet - the seconds right after a currency switch. The
+           tick sits those out rather than acting on a figure whose units it
+           cannot vouch for. Same guard as the desktop twin. */
+        let balanceTrusted = true;
         function readBalance() {
+            if (PLATFORM === 'stake') {
+                const cur = detectStakeCurrency();
+                const api = stakeApiBalance[cur];
+                if (!stakeCurrencyIsGuess && typeof api === 'number' && api >= 0) {
+                    balanceTrusted = true;
+                    return api;
+                }
+                /* Once the API has answered for ANY currency it is the source,
+                   and the displayed number is fiat as often as not. An unknown
+                   currency means not-yet, never ask-the-page. */
+                if (Object.keys(stakeApiBalance).length) {
+                    balanceTrusted = false;
+                    try { return getCurrentBalance(); } catch (e) { return 0; }
+                }
+            }
+            balanceTrusted = true;
             try { return getCurrentBalance(); } catch (e) { return 0; }
         }
         function formatVaultAmount(amount) {
@@ -20463,18 +21580,25 @@ function tool_stake_7day_tracker() {
             const m = document.cookie.match('(^|;)\\s*' + name + '\\s*=\\s*([^;]+)');
             return m ? m.pop().replace(/"/g, '') : '';
         }
+        /* Set false whenever the currency below came from the page rather than
+           from the hostname guess. readBalance only trusts the API balance when
+           it knows which coin to look up: the guess is 'sc' on stake.us, and
+           handing back an SC figure to someone playing GC would be a new way of
+           reading the wrong number, which is the bug being fixed. */
+        let stakeCurrencyIsGuess = true;
         function detectStakeCurrency() {
             const el = document.querySelector('[data-active-currency]');
             if (el) {
                 const c = el.getAttribute('data-active-currency');
-                if (c) return c.toLowerCase();
+                if (c) { stakeCurrencyIsGuess = false; return c.toLowerCase(); }
             }
             const toggle = document.querySelector('[data-testid="coin-toggle"]') || document.querySelector('[data-testid="balance-toggle"]');
             if (toggle) {
                 const txt = (toggle.textContent || '').trim();
                 const m = txt.match(/\b[A-Z]{2,5}\b/);
-                if (m) return m[0].toLowerCase();
+                if (m) { stakeCurrencyIsGuess = false; return m[0].toLowerCase(); }
             }
+            stakeCurrencyIsGuess = true;
             return /stake\.(us|games)/.test(location.hostname) ? 'sc' : 'btc';
         }
         async function stakeDeposit(amount) {
@@ -20644,7 +21768,10 @@ function tool_stake_7day_tracker() {
             if (result && result.ok) {
                 recordVault();
                 addSessionVaulted(amount);
-                baseline = readBalance(); // re-baseline post-deposit to avoid drift
+                // Re-baseline post-deposit to avoid drift. Both halves together —
+                // our own deposit raises the vault, and leaving prevVaultBal
+                // behind would make that rise look like a withdrawal was owed.
+                rebaseline(readBalance());
                 const suffix = PLATFORM === 'nuts' ? '' : (result.currency || '');
                 logActivity(`Vaulted ${formatVaultAmount(amount)} ${suffix}`.trim(), 'success');
             } else {
@@ -20653,13 +21780,54 @@ function tool_stake_7day_tracker() {
             if (uiWidget) uiWidget.render();
         }
 
+        /* Moving money from the vault back to the balance looks identical to a
+           win from here, so AutoVault took its cut and put a slice straight back
+           — "the damn vaulter keeps vaulting my balance as soon as I move the
+           vault to my balance". The vault figure separates them: a win leaves
+           the vault alone, a withdrawal drops it by the amount the balance rose.
+           Our own deposits move it UP, so they can never read as a withdrawal.
+           Stake only — it is the one platform whose balances query gives it.
+
+           THE VAULT READING IS PAIRED WITH THE BALANCE, NOT WITH THE TICK. The
+           first cut advanced its own baseline on every tick, so a tick that did
+           nothing still consumed the drop, and by the time a later tick acted on
+           the balance rise the withdrawal had been forgotten and the money got
+           vaulted anyway. Measured: a 5 SOL withdrawal vaulted 1.41. `baseline`
+           and `prevVaultBal` now only ever move together. */
+        let prevVaultBal = null;
+        function currentVaultBal() {
+            if (PLATFORM !== 'stake') return null;
+            const v = stakeVaultBalance[detectStakeCurrency()];
+            return typeof v === 'number' ? v : null;
+        }
+        /** Re-baseline both halves of the observation at once. */
+        function rebaseline(bal) {
+            baseline = bal;
+            prevVaultBal = currentVaultBal();
+        }
+
         async function tick() {
             if (!cfg.isRunning) return;
             const cur = readBalance();
             if (!cur || cur <= 0) return;
-            if (baseline === null) { baseline = cur; lastBalance = cur; return; }
+            // Units unknown for the moment - re-baseline and wait for a good read.
+            if (!balanceTrusted) { rebaseline(cur); lastBalance = cur; return; }
+            const vaultNow = currentVaultBal();
+            if (baseline === null) { rebaseline(cur); lastBalance = cur; return; }
+            const withdrawn = (vaultNow !== null && prevVaultBal !== null)
+                ? Math.max(0, prevVaultBal - vaultNow) : 0;
             if (cur > baseline) {
-                const profit = cur - baseline;
+                /* Subtracted rather than ignored, so a tick holding BOTH a
+                   withdrawal and a real win still vaults the winnings. */
+                const profit = Math.max(0, (cur - baseline) - withdrawn);
+                if (profit <= 0) {
+                    if (withdrawn > 0) logActivity('Vault withdrawal — not counted as profit', 'info');
+                    rebaseline(cur);
+                    lastProfit = 0;
+                    lastBalance = cur;
+                    if (uiWidget) uiWidget.render();
+                    return;
+                }
                 lastProfit = profit;
                 // Big-win detection: post-bet balance is at least bigWinThreshold× the pre-bet balance.
                 // bigWinThreshold is a multiplier (e.g. 1.5 means 50% gain or more on the round).
@@ -20672,7 +21840,7 @@ function tool_stake_7day_tracker() {
             } else if (cur < baseline) {
                 // Loss — re-baseline so the next profit measurement is against the
                 // post-loss balance, not the pre-loss one.
-                baseline = cur;
+                rebaseline(cur);
                 lastProfit = 0;
             }
             lastBalance = cur;
@@ -20683,7 +21851,13 @@ function tool_stake_7day_tracker() {
             if (cfg.isRunning) return;
             cfg.isRunning = true;
             saveCfg();
-            baseline = readBalance();
+            startApiBalancePolling();
+            /* On Stake the very first read can still be the DOM's fiat figure
+               while every read after it is the API's coin figure, and comparing
+               those two is comparing dollars with SOL. Let the first tick set
+               the baseline instead, once the source has settled — tick() already
+               treats a null baseline as "establish it and return". */
+            baseline = PLATFORM === 'stake' ? null : readBalance();
             lastBalance = baseline;
             logActivity('AutoVault started — watching ' + PLATFORM.toUpperCase(), 'success');
             if (monitorTimer) clearInterval(monitorTimer);
@@ -20694,6 +21868,7 @@ function tool_stake_7day_tracker() {
             cfg.isRunning = false;
             saveCfg();
             if (monitorTimer) { clearInterval(monitorTimer); monitorTimer = null; }
+            stopApiBalancePolling();
             logActivity('AutoVault stopped', 'info');
             if (uiWidget) uiWidget.render();
         }
@@ -20875,7 +22050,6 @@ function tool_stake_7day_tracker() {
                 </div>
                 <div class="av-head-btns">
                     <button class="av-mini-btn" id="av-mini" title="Collapse">−</button>
-                    <button class="av-mini-btn" id="av-close" title="Close">×</button>
                 </div>
             </div>
             <div class="av-body">
@@ -20885,8 +22059,20 @@ function tool_stake_7day_tracker() {
                 <div class="av-stat-row"><span>Deposits this hour</span><span id="av-rate">0 / 50</span></div>
                 <div class="av-section-title">Settings</div>
                 <div class="av-config">
+                    <!-- A real percentage now. The label said "%" while the field
+                         took a FRACTION (max 1), so 0.2 meant 20% and typing 30
+                         for "30%" clamped to 1 and vaulted everything. Still
+                         STORED as a fraction; only the display changed. -->
+                    <label>Preset</label>
+                    <select id="av-preset">
+                        <option value="slots">Slots — big wins only</option>
+                        <option value="fast">Fast paced — dice / limbo</option>
+                        <option value="balanced">Balanced</option>
+                        <option value="aggressive">Aggressive</option>
+                        <option value="custom">Custom</option>
+                    </select>
                     <label>Save % of profit</label>
-                    <input type="number" id="av-save" min="0.01" max="1" step="0.05">
+                    <input type="number" id="av-save" min="0" max="100" step="1">
                     <label>Big-win threshold (×)</label>
                     <input type="number" id="av-bwt" min="1" step="0.1">
                     <label>Big-win multiplier</label>
@@ -20910,6 +22096,7 @@ function tool_stake_7day_tracker() {
         const vaultedEl = gui.querySelector('#av-vaulted');
         const profitEl = gui.querySelector('#av-profit');
         const rateEl = gui.querySelector('#av-rate');
+        const presetSel = gui.querySelector('#av-preset');
         const saveInp = gui.querySelector('#av-save');
         const bwtInp = gui.querySelector('#av-bwt');
         const bwmInp = gui.querySelector('#av-bwm');
@@ -20918,9 +22105,9 @@ function tool_stake_7day_tracker() {
         const resetBtn = gui.querySelector('#av-reset');
         const logEl = gui.querySelector('#av-log');
         const miniBtn = gui.querySelector('#av-mini');
-        const closeBtn = gui.querySelector('#av-close');
 
-        saveInp.value = cfg.saveAmount;
+        presetSel.value = avPresetNameFor(cfg);
+        saveInp.value = Math.round(cfg.saveAmount * 100);   // fraction -> percent for display
         bwtInp.value = cfg.bigWinThreshold;
         bwmInp.value = cfg.bigWinMultiplier;
         intInp.value = Math.round(cfg.checkInterval / 1000);
@@ -20966,9 +22153,33 @@ function tool_stake_7day_tracker() {
         renderLog();
 
         /* ---- UI events ---- */
-        saveInp.addEventListener('input', () => { cfg.saveAmount = parseFloat(saveInp.value) || DEFAULTS.saveAmount; saveCfg(); });
-        bwtInp.addEventListener('input', () => { cfg.bigWinThreshold = parseFloat(bwtInp.value) || DEFAULTS.bigWinThreshold; saveCfg(); });
-        bwmInp.addEventListener('input', () => { cfg.bigWinMultiplier = parseFloat(bwmInp.value) || DEFAULTS.bigWinMultiplier; saveCfg(); });
+        const avSyncPreset = () => { presetSel.value = avPresetNameFor(cfg); };
+        presetSel.addEventListener('change', () => {
+            const p = AV_PRESETS[presetSel.value];
+            if (!p) return;                        // Custom: change nothing
+            cfg.saveAmount = p.saveAmount;
+            cfg.bigWinThreshold = p.bigWinThreshold;
+            cfg.bigWinMultiplier = p.bigWinMultiplier;
+            cfg.checkInterval = p.checkInterval;
+            saveInp.value = Math.round(p.saveAmount * 100);
+            bwtInp.value = p.bigWinThreshold;
+            bwmInp.value = p.bigWinMultiplier;
+            intInp.value = Math.round(p.checkInterval / 1000);
+            saveCfg();
+            if (monitorTimer) { clearInterval(monitorTimer); monitorTimer = setInterval(tick, cfg.checkInterval); }
+        });
+
+        saveInp.addEventListener('input', () => {
+            // Typed as a percentage, stored as a fraction. Clamped so an empty or
+            // silly entry cannot quietly become "vault everything".
+            let pct = parseFloat(saveInp.value);
+            if (!isFinite(pct) || pct < 0) pct = DEFAULTS.saveAmount * 100;
+            if (pct > 100) pct = 100;
+            cfg.saveAmount = pct / 100;
+            saveCfg(); avSyncPreset();
+        });
+        bwtInp.addEventListener('input', () => { cfg.bigWinThreshold = parseFloat(bwtInp.value) || DEFAULTS.bigWinThreshold; saveCfg(); avSyncPreset(); });
+        bwmInp.addEventListener('input', () => { cfg.bigWinMultiplier = parseFloat(bwmInp.value) || DEFAULTS.bigWinMultiplier; saveCfg(); avSyncPreset(); });
         intInp.addEventListener('input', () => {
             const v = parseInt(intInp.value, 10);
             if (v >= 5) {
@@ -20990,10 +22201,6 @@ function tool_stake_7day_tracker() {
         miniBtn.addEventListener('click', () => {
             gui.classList.toggle('mini');
             miniBtn.textContent = gui.classList.contains('mini') ? '+' : '−';
-        });
-        closeBtn.addEventListener('click', () => {
-            stopMonitor();
-            gui.remove();
         });
 
         /* ---- Pointer Events drag ---- */
@@ -21092,6 +22299,12 @@ function tool_stake_7day_tracker() {
             } else {
                 const k = document.getElementById('keno-preset-gui');
                 if (k) k.remove();
+            }
+            if (isOnSnakesPage() && isToolIdEnabled(toolIdForCurrentSite('snakes'))) {
+                try { tool_snakes(); } catch (e) { console.error('[unified-mobile] tool_snakes failed:', e); }
+            } else {
+                const sk = document.getElementById('snakes-auto-gui');
+                if (sk) sk.remove();
             }
             if (isOnMinesPage() && isToolIdEnabled(toolIdForCurrentSite('mines'))) {
                 try { tool_mines(); markToolRan(toolIdForCurrentSite('mines')); } catch (e) { console.error('[unified-mobile] tool_mines failed:', e); }
@@ -21240,6 +22453,7 @@ function tool_stake_7day_tracker() {
             }
         }, 800);
     }
+
 
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', boot, { once: true });

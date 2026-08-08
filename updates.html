@@ -52,6 +52,31 @@
         <!-- ============ Add new releases above this line (newest first) ============ -->
         <article class="release latest" data-reveal>
           <div class="release-head">
+            <span class="ver-badge">v3.40</span>
+            <span class="chip">Desktop</span>
+            <span class="ver-badge">v6.11</span>
+            <span class="chip">Mobile</span>
+            <span class="rel-date">August 8, 2026</span>
+          </div>
+          <h2 class="rel-title">Snakes, an Auto-Vault that finally works on .com, and Keno reads the draws from the site</h2>
+          <ul class="changes">
+            <li><span class="tag added">Added</span><span class="ctxt"><b>Snakes &mdash; partial autoplay, on Stake and Nuts.</b> Choose how many rolls it takes for you (1&ndash;4, against the game's five-roll cap). It bets, takes exactly that many, then <b>hands the board back</b> with the multiplier already climbing &mdash; so the decision that actually matters, roll again or cash out, stays yours. The only buttons it ever presses are Bet and Roll. It re-arms on its own the moment a round ends, however it ended.</span></li>
+            <li><span class="tag added">Added</span><span class="ctxt"><b>Optional auto cash out for Snakes.</b> Set a target multiplier and it closes the round the moment that is reached during the auto rolls &mdash; early, or on the very last one. Off unless you set it.</span></li>
+            <li><span class="tag fixed">Fixed</span><span class="ctxt"><b>Auto-Vault on stake.com said &ldquo;insufficient balance&rdquo; and never vaulted anything.</b> The vault moves <i>coins</i>, but the tool was reading the <i>displayed</i> balance &mdash; and on .com that is usually dollars. Measured on a live account: the header showed <b>$5.57</b> while the real balance was <b>0.075 SOL</b>, so it was asking Stake to move 5.57 SOL, about 73&times; more than existed. It reads the true coin balance from the site now, so fiat or crypto display makes no difference at all.</span></li>
+            <li><span class="tag fixed">Fixed</span><span class="ctxt"><b>The same bug was still live on mobile.</b> The earlier desktop-only fix never reached the mobile bundle, which had been reading the displayed balance the whole time.</span></li>
+            <li><span class="tag fixed">Fixed</span><span class="ctxt"><b>Big wins essentially never fired.</b> The default asked your balance to <b>quintuple inside a single check window</b>. It is 1.5&times; now, and an old saved 5 is migrated once &mdash; if you deliberately set 5 afterwards it stays.</span></li>
+            <li><span class="tag fixed">Fixed</span><span class="ctxt"><b>Taking money out of your vault made the tool immediately vault some of it straight back.</b> A withdrawal raises your balance exactly like a win does. It tells them apart now, and if a withdrawal and a real win land in the same window only the win is vaulted.</span></li>
+            <li><span class="tag fixed">Fixed</span><span class="ctxt"><b>&ldquo;Save %&rdquo; was lying.</b> The field said percent but wanted a fraction, so 0.1 meant 10% and anyone typing 30 for &ldquo;30%&rdquo; was clamped to 1 and vaulted the entire win. It is a real 0&ndash;100 percentage now. Your existing setting carries over unchanged.</span></li>
+            <li><span class="tag added">Added</span><span class="ctxt"><b>Auto-Vault presets.</b> <b>Slots</b> (skim little, grab hard on a spike), <b>Fast paced</b> (dice and limbo &mdash; frequent small vaults, big-win handling off, tuned to sit just under the 50-deposits-an-hour cap), <b>Balanced</b>, <b>Aggressive</b>, and <b>Custom</b>. Editing any field by hand switches it to Custom on its own.</span></li>
+            <li><span class="tag changed">Changed</span><span class="ctxt">All four Auto-Vault panels mean the same thing by the same setting now. Shuffle's big-win threshold was a <i>percent of balance</i> while Stake's and Nuts' was a <i>balance multiple</i>; it is a multiple everywhere, and old Shuffle settings are reset once to the Balanced default.</span></li>
+            <li><span class="tag fixed">Fixed</span><span class="ctxt"><b>Bets were rounded to 2 decimal places on stake.com</b>, so anything under 0.01 SOL became 0.00 and micro-betting was impossible. It reads the bet field's own precision now. The previous attempt at this did not work: Stake reports its step as <code>1e-8</code>, not <code>0.00000001</code>, and the check missed it entirely.</span></li>
+            <li><span class="tag fixed">Fixed</span><span class="ctxt"><b>Keno Hotspot: &ldquo;Reset draws&rdquo; left the tool dead.</b> Reset was clearing the learned calibration along with the history, and without that nothing is recorded until you tap a number &mdash; which you would have no reason to do, since your picks are already on the board. It clears the history and nothing else now. It was also re-counting the reveal still on screen, so the counter read &ldquo;1 draw&rdquo; a second after you cleared it.</span></li>
+            <li><span class="tag changed">Changed</span><span class="ctxt"><b>Keno Hotspot reads the draws from the site itself now.</b> Watching the board could not keep up with autoplay &mdash; at one round a second it caught 7 in 10, and faster than that almost nothing. It takes the drawn numbers straight from the site's own bet result, which is exact at any speed and needs no calibration tap at all. Watching the board remains as a fallback. Only <i>your</i> games are recorded: the live-games and big-wins feeds carry other players' rounds in an identical shape, and are ignored.</span></li>
+            <li><span class="tag changed">Changed</span><span class="ctxt"><b>No tool panel has a close button any more.</b> Closing one needed a page reload to get it back, and the &times; sat right beside the drag handle on tools people leave running. Every draggable panel now has a <b>&minus;</b> that collapses it to a small draggable pill instead. To actually switch a tool off, use its toggle in the &#9881; panel.</span></li>
+          </ul>
+        </article>
+        <article class="release" data-reveal>
+          <div class="release-head">
             <span class="ver-badge">v3.39</span>
             <span class="chip">Desktop</span>
             <span class="ver-badge">v6.10</span>

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Shuffle Mines — Mobile
 // @namespace    http://tampermonkey.net/
-// @version      6.10
+// @version      6.11
 // @description  Standalone single-tool mobile build, extracted from the unified mobile bundle.
 // @author       .
 // @match        https://shuffle.com/*
@@ -16,7 +16,7 @@
 (function () {
     'use strict';
 
-    try { console.log('[Shuffle Mines — Mobile] standalone build v6.10'); } catch (e) {}
+    try { console.log('[Shuffle Mines — Mobile] standalone build v6.11'); } catch (e) {}
 
 
     try { console.log('[unified-mobile] boot v5.64 — DiceTool.exe replica UI for the dice tool (Calculator / Easy Mode / Strategy Finder / Results / Settings)'); } catch (e) {}
@@ -376,13 +376,59 @@
         if (!isFinite(raw)) return fallback;
         return isNuts() ? displayToSol(raw) : raw;
     }
+    /* How many decimals THIS site accepts on a bet, read from the bet field's
+       own `step` rather than assumed from the hostname.
+
+       The Stake path was a flat 2dp because it was written for stake.us, where
+       SC really is 2dp. On stake.com the same field is SOL at 8dp, so every bet
+       was rounded up to 0.01 SOL (~74c) or down to 0.00. Reported 2026-08-03:
+       "your bet field only goes to 0.00", "it tries to bet .01 solana".
+
+       Reading the site's own step covers any coin Stake adds later, and it is
+       right in fiat display mode too — the field still takes the COIN amount
+       whatever the header happens to be showing. */
+    function betDp() {
+        try {
+            const inp = document.querySelector('input[data-testid="input-game-amount"]') ||
+                        document.querySelector('input[data-testid="bet-amount"]');
+            const step = inp && inp.getAttribute('step');
+            /* MEASURED ON stake.com, 2026-08-07: the field reports
+
+                   step="1e-8"
+
+               and NOT "0.00000001", which is what this function was written to
+               expect. The first cut matched the step as a STRING against
+               /^0\.(0*)1$/, so exponent notation missed every branch and fell
+               through to the 2dp fallback — meaning the fix for "it tries to bet
+               .01 solana" did not actually change anything on .com. Verified by
+               running this function's own shipped source against the real value.
+
+               Parse the number and ask how many places it needs instead, which
+               is notation-agnostic and also right for a step like 0.05. */
+            const n = (step === null || step === '') ? NaN : parseFloat(step);
+            if (isFinite(n) && n > 0) {
+                for (let d = 0; d <= 12; d++) {
+                    const scaled = n * Math.pow(10, d);
+                    if (Math.abs(scaled - Math.round(scaled)) < 1e-9) return d;
+                }
+                return 12;
+            }
+        } catch (e) {}
+        return isNuts() ? 8 : 2;
+    }
+    /** A step attribute string for `dp` places — never "1e-8", which is invalid. */
+    function stepStrFor(dp) { return dp <= 0 ? '1' : '0.' + '0'.repeat(dp - 1) + '1'; }
     function formatCurrencyInput(amount) {
         if (!isFinite(amount)) return '';
-        return isNuts() ? formatBetForInput(amount) : amount.toFixed(2);
+        // Nuts keeps its own path: it also converts SOL <-> the fiat display.
+        return isNuts() ? formatBetForInput(amount) : amount.toFixed(betDp());
     }
     function currencyInputStep() {
-        return isNuts() && !isUSDDisplayMode() ? '0.00000001' : '0.01';
+        if (isNuts()) return isUSDDisplayMode() ? '0.01' : '0.00000001';
+        return stepStrFor(betDp());
     }
+    /** The smallest bet this site allows, i.e. one unit in its last place. */
+    function siteMinBet() { return Math.pow(10, -betDp()); }
     function typeIntoInput(inp, value) {
         /* Focus is unavoidable: execCommand('insertText') only produces the real
            input events a React-controlled field needs if the field is focused.
@@ -1189,7 +1235,9 @@
                 '<small id="ut-count">' + matching.length + ' available on this page</small>' +
             '</div>' +
             '<div>' +
-                '<button class="ut-header-btn" id="ut-collapse" title="Collapse">×</button>' +
+                // Glyph is a minus, not a cross: this only collapses the panel,
+                // and a × on it read as "close the tools".
+                '<button class="ut-header-btn" id="ut-collapse" title="Collapse">−</button>' +
             '</div>' +
         '</div>' +
         '<div class="ut-body">';
@@ -1860,14 +1908,12 @@
                so the header stays "title on the left, buttons on the right"
                instead of space-between spreading three children apart. */
             #mines-auto-gui .mn-actions { display: flex; align-items: center; gap: 2px; flex: 0 0 auto; }
-            #mines-auto-gui .mn-close,
             #mines-auto-gui .mn-minbtn {
                 background: none; border: none; color: #94a3b8;
                 cursor: pointer; padding: 4px 10px; font-size: 20px;
                 line-height: 1; border-radius: 6px; min-height: 32px;
                 -webkit-tap-highlight-color: transparent; touch-action: manipulation;
             }
-            #mines-auto-gui .mn-close:active,
             #mines-auto-gui .mn-minbtn:active { color: #fff; background: rgba(255, 255, 255, 0.08); }
             /* Minimised: the header alone remains, still draggable, so the panel
                parks as a title bar instead of covering the board. */
@@ -1966,7 +2012,6 @@
                      getElementById the button instead of the field. -->
                 <span class="mn-actions">
                     <button class="mn-minbtn" id="mn-minimise" title="Minimise">−</button>
-                    <button class="mn-close" id="mn-close" title="Close">×</button>
                 </span>
             </div>
             <div class="mn-content">
@@ -2025,7 +2070,6 @@
         const toggleBtn = gui.querySelector('#mn-toggle');
         const statusEl = gui.querySelector('#mn-status');
         const runsEl = gui.querySelector('#mn-runs');
-        const closeBtn = gui.querySelector('#mn-close');
         // Live stats refs
         const multEl = gui.querySelector('#mn-mult');
         const payoutEl = gui.querySelector('#mn-payout');
@@ -2140,10 +2184,6 @@
             if (isRunning) stopBot();
             else startBot();
         });
-        closeBtn.addEventListener('click', () => {
-            stopBot();
-            gui.remove();
-        });
         ['input'].forEach(ev => {
             minInp.addEventListener(ev, updateInfo);
             maxInp.addEventListener(ev, updateInfo);
@@ -2191,6 +2231,7 @@
         header.addEventListener('pointerup', endDrag);
         header.addEventListener('pointercancel', endDrag);
     }
+
 
     /* ============================================================
        ============================================================
@@ -2245,6 +2286,12 @@
             } else {
                 const k = document.getElementById('keno-preset-gui');
                 if (k) k.remove();
+            }
+            if (isOnSnakesPage() && isToolIdEnabled(toolIdForCurrentSite('snakes'))) {
+                try { tool_snakes(); } catch (e) { console.error('[unified-mobile] tool_snakes failed:', e); }
+            } else {
+                const sk = document.getElementById('snakes-auto-gui');
+                if (sk) sk.remove();
             }
             if (isOnMinesPage() && isToolIdEnabled(toolIdForCurrentSite('mines'))) {
                 try { tool_mines(); markToolRan(toolIdForCurrentSite('mines')); } catch (e) { console.error('[unified-mobile] tool_mines failed:', e); }
@@ -2394,6 +2441,7 @@
         }, 800);
     }
 
+
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', boot, { once: true });
     } else {
@@ -2404,6 +2452,8 @@
     function isOnKenoPage() { return false; }
     function isOnBlackjackPage() { return false; }
     function isOnMolesPage() { return false; }
+    function isOnSnakesPage() { return false; }
+    function tool_snakes() {}
     function isOnAnyCasinoPage() { return false; }
     function tool_keno() {}
     function tool_blackjack() {}

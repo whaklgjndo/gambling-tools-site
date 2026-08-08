@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Stake Auto-Vault — Desktop
 // @namespace    http://tampermonkey.net/
-// @version      3.39
+// @version      3.40
 // @description  Standalone single-tool build, extracted from the unified bundle.
 // @author       .
 // @match        https://stake.com/*
@@ -26,7 +26,7 @@
 (function () {
     'use strict';
 
-    console.log('%cStake Auto-Vault — Desktop — standalone build v3.39', 'color:#17c7b8;font-weight:800;font-size:13px');
+    console.log('%cStake Auto-Vault — Desktop — standalone build v3.40', 'color:#17c7b8;font-weight:800;font-size:13px');
 
     /* =========================================================
        UNIFIED LOADER — STORAGE KEYS & SETTINGS
@@ -562,21 +562,77 @@
         const saved = localStorage.getItem('autovault-config');
         if (saved) {
             try {
-                return JSON.parse(saved);
+                const cfg = JSON.parse(saved);
+                /* A saved threshold of exactly 5 is the OLD default, and the old
+                   default could not fire: the test is `balance >= oldBalance ×
+                   threshold`, so 5 asked the balance to QUINTUPLE inside a single
+                   check window (90s by default). Nobody chose that number, they
+                   just never changed it, and the consequence was that the
+                   big-win branch was dead code for every default install.
+
+                   Migrated once, to 1.5 — a 50% jump in one window, which is a
+                   real big win and actually happens. Marked so that anyone who
+                   deliberately types 5 afterwards keeps it. */
+                if (cfg.bigWinThreshold === 5 && !cfg.bigWinMigrated) {
+                    cfg.bigWinThreshold = 1.5;
+                    cfg.bigWinMigrated = true;
+                    try { localStorage.setItem('autovault-config', JSON.stringify(cfg)); } catch (e) {}
+                }
+                return cfg;
             } catch (e) {
                 log('Failed to load saved config:', e);
             }
         }
         return {
             saveAmount: 0.1,
-            bigWinThreshold: 5,
+            bigWinThreshold: 1.5,
             bigWinMultiplier: 3,
+            bigWinMigrated: true,
             checkInterval: 90000
         };
     }
 
     function saveConfig(config) {
         localStorage.setItem('autovault-config', JSON.stringify(config));
+    }
+
+    /* PRESETS — one coherent setup each, so the four numbers below do not have
+       to be understood in order to be used.
+
+       They differ in the obvious direction: the more you bank, the lower the bar
+       for calling something a big win and the more often it checks. Values are
+       stored exactly as a hand-typed setting would be, so a preset is only a way
+       of filling the fields — nothing downstream knows presets exist.
+
+       `saveAmount` is the stored FRACTION (0.1 = 10%); the field shows percent. */
+    const AV_PRESETS = {
+        /* Slots: a long grind punctuated by a spike. Skim little on the way,
+           take a big bite when the balance actually jumps, and do not bother
+           looking often — nothing happens between hits. */
+        slots:     { saveAmount: 0.10, bigWinThreshold: 3.0, bigWinMultiplier: 4, checkInterval: 120000 },
+        /* Fast paced (dice, limbo): profit arrives steadily and rarely spikes,
+           so the big-win branch is switched off (multiplier 1) and the ordinary
+           skim does the work. The interval is set just under the deposit rate
+           limit of 50/hour — 75s allows 48 — so it banks as often as the site
+           permits without ever tripping the cap. */
+        fast:      { saveAmount: 0.12, bigWinThreshold: 5.0, bigWinMultiplier: 1, checkInterval: 75000 },
+        /* Balanced: fires under most conditions, meaningful slice each time. */
+        balanced:  { saveAmount: 0.25, bigWinThreshold: 2.0, bigWinMultiplier: 2, checkInterval: 60000 },
+        /* Aggressive: bigger slices, and a low bar for calling something big. */
+        aggressive:{ saveAmount: 0.50, bigWinThreshold: 1.4, bigWinMultiplier: 2, checkInterval: 45000 }
+    };
+    /** Which preset a config matches, or 'custom'. Derived by comparison rather
+     *  than stored, so an existing config picks up the right label with no
+     *  migration and hand-typed values that happen to match are labelled too. */
+    function avPresetNameFor(cfg) {
+        for (const name in AV_PRESETS) {
+            const p = AV_PRESETS[name];
+            if (Math.abs((cfg.saveAmount || 0) - p.saveAmount) < 1e-9 &&
+                Math.abs((cfg.bigWinThreshold || 0) - p.bigWinThreshold) < 1e-9 &&
+                Math.abs((cfg.bigWinMultiplier || 0) - p.bigWinMultiplier) < 1e-9 &&
+                Math.abs((cfg.checkInterval || 0) - p.checkInterval) < 1e-9) return name;
+        }
+        return 'custom';
     }
 
     let config = loadConfig();
@@ -882,13 +938,49 @@
         return defaultCurr;
     }
 
+    /* False while the API is the source of truth but has no figure for the
+       ACTIVE currency yet — i.e. the seconds right after a currency switch.
+       checkBalanceChanges sits those out rather than acting on a number whose
+       units it cannot vouch for. */
+    let balanceTrusted = true;
+
     // --- Get balance from UI ---
     function getCurrentBalance() {
         const curCode = (activeCurrency || getCurrency() || '').toLowerCase();
-        const uiCode = (detectCurrencyFromBalanceBar() || '').toLowerCase();
-        if (curCode && uiCode && uiCode !== curCode) {
+        /* THE API VALUE WINS, always.
+
+           It is the balance in COIN units. The number on the page is whatever
+           the user set their display to, and on stake.com that is routinely
+           fiat — a $300 balance shown for what is really a fraction of a SOL.
+           The vault mutation takes a coin amount, so feeding it the displayed
+           figure asked to move 24.3 SOL when the user meant $24.30, and Stake
+           answered "insufficient balance". Reported 2026-08-03.
+
+           This used to be reached only when the UI currency disagreed with the
+           active one, which never happens in fiat mode — same coin, different
+           unit. Preferring the API outright makes display mode irrelevant
+           instead of trying to detect and convert it. The DOM read below stays
+           as the fallback for when the API has not answered yet. */
+        if (curCode) {
             const apiVal = getCurrentBalance._api?.[curCode];
-            if (typeof apiVal === 'number' && apiVal >= 0) return apiVal;
+            if (typeof apiVal === 'number' && apiVal >= 0) {
+                balanceTrusted = true;
+                return apiVal;
+            }
+        }
+        /* ONCE THE API HAS ANSWERED, THE DOM IS NEVER TRUSTED AGAIN.
+
+           The remaining hole in the fiat fix was a currency switch: change coin
+           mid-session and `_api[newCode]` is empty for a few seconds, so the
+           code below would hand back the DISPLAYED figure — dollars — and the
+           vault would be handed a fiat number again, which is the whole bug.
+
+           So if the API is known to work at all, an unknown currency means "not
+           yet", not "ask the page". The caller checks `balanceTrusted` and sits
+           the round out rather than acting on a number of unknown units. */
+        if (getCurrentBalance._api && Object.keys(getCurrentBalance._api).length) {
+            balanceTrusted = false;
+            return getCurrentBalance.lastKnownBalance || 0;
         }
         // Try each selector in order until we find a valid balance
         for (const selector of BALANCE_SELECTORS) {
@@ -903,6 +995,7 @@
                             log(`📍 Balance detected using selector: ${selector}`);
                         }
                         getCurrentBalance.lastKnownBalance = val;
+                        balanceTrusted = true;
                         return val;
                     }
                 }
@@ -1290,9 +1383,12 @@
                 <span>AutoVault</span>
             </div>
             <div class="av-header-btns">
+                <!-- No close button by design. Removing the panel needs a page
+                     reload to get it back, and it was sitting one pixel from
+                     Minimize. Use the ⚙ panel's toggle to actually disable the
+                     tool; − collapses it to a draggable pill. -->
                 <button class="av-header-btn" id="avMinBtn" title="Minimize">−</button>
                 <button class="av-header-btn" id="avStealthBtn" title="Stealth Mode">○</button>
-                <button class="av-header-btn" id="avCloseBtn" title="Close">×</button>
             </div>
         `;
         widget.appendChild(header);
@@ -1301,12 +1397,31 @@
         const content = document.createElement('div');
         content.className = 'av-content';
         content.innerHTML = `
+            <!-- Presets, because four interacting numbers is three too many for
+                 anyone who has not read the code. Each one is a whole coherent
+                 setup; the fields stay visible and editable, and touching any of
+                 them flips this to Custom rather than silently disagreeing with
+                 the label above it. -->
             <div class="av-row">
-                <span class="av-label">Save %</span>
-                <input type="number" id="vaultSaveAmount" min="0" max="1" step="0.01" value="${getParams().saveAmount}">
+                <span class="av-label" title="A ready-made set of the four values below">Preset</span>
+                <select id="vaultPreset">
+                    <option value="slots">Slots — big wins only</option>
+                    <option value="fast">Fast paced — dice / limbo</option>
+                    <option value="balanced">Balanced</option>
+                    <option value="aggressive">Aggressive</option>
+                    <option value="custom">Custom</option>
+                </select>
+            </div>
+            <!-- The field is a real percentage now. It used to be labelled
+                 "Save %" while accepting a FRACTION (min 0, max 1), so 0.1 meant
+                 10% and anyone typing 30 for "30%" was clamped to 1 and vaulted
+                 the lot. Stored as a fraction still; only the display changed. -->
+            <div class="av-row">
+                <span class="av-label" title="Percent of each profit moved to the vault">Save % of profit</span>
+                <input type="number" id="vaultSaveAmount" min="0" max="100" step="1" value="${Math.round(getParams().saveAmount * 100)}">
             </div>
             <div class="av-row">
-                <span class="av-label">Big Win Threshold</span>
+                <span class="av-label" title="Vault extra when the balance reaches this multiple of what it was at the last check">Big win at balance ×</span>
                 <input type="number" id="vaultBigWinThreshold" min="1" step="0.1" value="${getParams().bigWinThreshold}">
             </div>
             <div class="av-row">
@@ -1400,7 +1515,6 @@
         const statusDot = widget.querySelector('#avStatusDot');
         const minBtn = widget.querySelector('#avMinBtn');
         const stealthBtn = widget.querySelector('#avStealthBtn');
-        const closeBtn = widget.querySelector('#avCloseBtn');
 
         function setViewMode(mode) {
             currentViewMode = mode;
@@ -1434,10 +1548,6 @@
             minBtn.textContent = '−';
         };
 
-        closeBtn.onclick = () => {
-            widget.remove();
-            stealthDot.remove();
-        };
 
         // Drag logic (works on header)
         let isDragging = false, dragOffsetX = 0, dragOffsetY = 0;
@@ -1493,30 +1603,56 @@
         };
 
         // Parameter change handlers
+        /* Preset wiring. Selecting one fills every field; editing any field puts
+           the selector back to Custom, so the label can never claim a preset the
+           numbers no longer match. */
+        const presetSel = content.querySelector('#vaultPreset');
+        const syncPresetLabel = () => { presetSel.value = avPresetNameFor(getParams()); };
+        presetSel.onchange = function () {
+            const p = AV_PRESETS[this.value];
+            if (!p) return;                       // "Custom" selected: change nothing
+            setParams({
+                saveAmount: p.saveAmount,
+                bigWinThreshold: p.bigWinThreshold,
+                bigWinMultiplier: p.bigWinMultiplier,
+                checkInterval: p.checkInterval / 1000   // setParams takes seconds
+            });
+            content.querySelector('#vaultSaveAmount').value = Math.round(p.saveAmount * 100);
+            content.querySelector('#vaultBigWinThreshold').value = p.bigWinThreshold;
+            content.querySelector('#vaultBigWinMultiplier').value = p.bigWinMultiplier;
+            content.querySelector('#vaultCheckInterval').value = Math.round(p.checkInterval / 1000);
+        };
+        syncPresetLabel();
+
         content.querySelector('#vaultSaveAmount').onchange = function() {
-            let v = parseFloat(this.value);
-            if (isNaN(v) || v < 0) v = 0;
-            if (v > 1) v = 1;
-            setParams({saveAmount: v});
-            this.value = v;
+            // Typed as a percentage, stored as a fraction.
+            let pct = parseFloat(this.value);
+            if (isNaN(pct) || pct < 0) pct = 0;
+            if (pct > 100) pct = 100;
+            setParams({saveAmount: pct / 100});
+            this.value = pct;
+            syncPresetLabel();
         };
         content.querySelector('#vaultBigWinThreshold').onchange = function() {
             let v = parseFloat(this.value);
             if (isNaN(v) || v < 1) v = 1;
             setParams({bigWinThreshold: v});
             this.value = v;
+            syncPresetLabel();
         };
         content.querySelector('#vaultBigWinMultiplier').onchange = function() {
             let v = parseFloat(this.value);
             if (isNaN(v) || v < 1) v = 1;
             setParams({bigWinMultiplier: v});
             this.value = v;
+            syncPresetLabel();
         };
         content.querySelector('#vaultCheckInterval').onchange = function() {
             let v = parseInt(this.value, 10);
             if (isNaN(v) || v < 10) v = 10;
             setParams({checkInterval: v});
             this.value = v;
+            syncPresetLabel();
         };
 
         document.body.appendChild(widget);
@@ -1554,6 +1690,16 @@
             const balances = resp?.data?.user?.balances;
             if (!Array.isArray(balances)) return;
             const bal = balances.find(x => x?.available?.currency?.toLowerCase() === cur);
+            /* The VAULT side of the same response is what tells a withdrawal
+               apart from a win. Both raise the available balance; only a
+               withdrawal lowers the vault at the same time. Free to collect —
+               the query already asks for it. */
+            const vAmt = bal?.vault?.amount;
+            const vn = typeof vAmt === 'number' ? vAmt : parseFloat(vAmt);
+            if (!isNaN(vn) && vn >= 0) {
+                if (!getCurrentBalance._vault) getCurrentBalance._vault = {};
+                getCurrentBalance._vault[cur] = vn;
+            }
             const amt = bal?.available?.amount;
             const n = typeof amt === 'number' ? amt : parseFloat(amt);
             if (isNaN(n) || n < 0) return;
@@ -1652,8 +1798,11 @@
                 vaultDisplay.update(amount);
                 vaultActionTimestamps.push(Date.now());
                 saveRateLimitData(vaultActionTimestamps);
-                // Re-read balance after successful deposit to avoid drift
-                oldBalance = getCurrentBalance();
+                /* Re-read balance after successful deposit to avoid drift. Both
+                   halves together — our own deposit raises the vault, and
+                   leaving prevVaultBal behind would make that rise look like a
+                   withdrawal was owed on the next check. */
+                rebaseline(getCurrentBalance());
                 if (uiWidget && typeof uiWidget.updateVaultCount === "function") uiWidget.updateVaultCount();
                 logActivity(`Secured ${amount.toFixed(6)} ${activeCurrency.toUpperCase()}`, 'success');
             } else {
@@ -1722,9 +1871,44 @@
         return 0;
     }
 
+    /* How much came OUT of the vault since the last check.
+
+       Moving money from the vault back to your balance looks exactly like a win
+       to a balance watcher, so AutoVault took its cut of it and put a slice
+       straight back — reported as "the damn vaulter keeps vaulting my balance as
+       soon as I move the vault to my balance". The vault figure is the signal
+       that separates the two: a win raises the balance and leaves the vault
+       alone, a withdrawal raises the balance and drops the vault by the same
+       amount. Our own deposits move the vault UP, so they can never be mistaken
+       for a withdrawal here.
+
+       THE VAULT READING IS PAIRED WITH THE BALANCE, NOT WITH THE CHECK. An
+       earlier cut of this advanced its own baseline on every check, so a check
+       that did nothing still consumed the drop and the withdrawal was forgotten
+       before anything acted on the matching balance rise. Measured on the mobile
+       twin: a 5 SOL withdrawal still vaulted 1.41. `oldBalance` and
+       `prevVaultBal` now only ever move together, via rebaseline(). */
+    let prevVaultBal = null;
+    function currentVaultBal() {
+        const code = (activeCurrency || getCurrency() || '').toLowerCase();
+        const v = getCurrentBalance._vault ? getCurrentBalance._vault[code] : undefined;
+        return typeof v === 'number' ? v : null;
+    }
+    /** Move both halves of the observation at once. */
+    function rebaseline(bal) {
+        oldBalance = bal;
+        prevVaultBal = currentVaultBal();
+    }
+
     function checkBalanceChanges() {
         if (checkCurrencyChange()) return;
         const cur = getCurrentBalance();
+        /* Units unknown for the moment — see balanceTrusted. Skipping is safe:
+           the next tick re-baselines from a figure we can vouch for. */
+        if (!balanceTrusted) { rebaseline(cur); lastBalance = cur; return; }
+        const vaultNow = currentVaultBal();
+        const withdrawn = (vaultNow !== null && prevVaultBal !== null)
+            ? Math.max(0, prevVaultBal - vaultNow) : 0;
         if (!isInitialized) return updateCurrentBalance();
 
         let depositAmt = detectDepositEvent();
@@ -1734,16 +1918,27 @@
                 logActivity(`${pickFlavor(FLAVOR.deposit)} +${depositAmt.toFixed(4)} ${activeCurrency.toUpperCase()}`, 'info');
                 processDeposit(toVault, false);
                 lastVaultedDeposit = depositAmt;
-                oldBalance = cur;
+                rebaseline(cur);
             }
         } else if (cur > oldBalance) {
-            const profit = cur - oldBalance;
-            const isBig = cur > oldBalance * BIG_WIN_THRESHOLD;
-            const depAmt = profit * SAVE_AMOUNT * (isBig ? BIG_WIN_MULTIPLIER : 1);
-            processDeposit(depAmt, isBig);
-            oldBalance = cur;
+            /* Subtracted rather than ignored, so a window holding BOTH a
+               withdrawal and a genuine win still vaults the winnings. */
+            const profit = Math.max(0, (cur - oldBalance) - withdrawn);
+            if (profit <= 0) {
+                if (withdrawn > 0)
+                    logActivity(`Vault withdrawal of ${withdrawn.toFixed(8)} ${activeCurrency.toUpperCase()} — not counted as profit`, 'info');
+                rebaseline(cur);
+            } else {
+                /* `>=` so the threshold means what it says. Measured against the
+                   balance this window STARTED from, i.e. 1.5 = "the balance is
+                   half again what it was". */
+                const isBig = oldBalance > 0 && cur >= oldBalance * BIG_WIN_THRESHOLD;
+                const depAmt = profit * SAVE_AMOUNT * (isBig ? BIG_WIN_MULTIPLIER : 1);
+                processDeposit(depAmt, isBig);
+                rebaseline(cur);
+            }
         } else if (cur < oldBalance) {
-            oldBalance = cur;
+            rebaseline(cur);
         }
         lastBalance = cur;
         if (uiWidget && typeof uiWidget.updateVaultCount === "function") uiWidget.updateVaultCount();
@@ -2044,7 +2239,9 @@
                 '<small id="ut-count">' + matching.length + ' available on this page</small>' +
             '</div>' +
             '<div>' +
-                '<button class="ut-header-btn" id="ut-collapse" title="Collapse">×</button>' +
+                // Glyph is a minus, not a cross: this only collapses the panel,
+                // and a × on it read as "close the tools".
+                '<button class="ut-header-btn" id="ut-collapse" title="Collapse">−</button>' +
             '</div>' +
         '</div>' +
         '<div class="ut-body">';

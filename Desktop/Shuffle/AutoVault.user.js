@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Shuffle Auto-Vault — Desktop
 // @namespace    http://tampermonkey.net/
-// @version      3.39
+// @version      3.40
 // @description  Standalone single-tool build, extracted from the unified bundle.
 // @author       .
 // @match        https://shuffle.com/*
@@ -17,7 +17,7 @@
 (function () {
     'use strict';
 
-    console.log('%cShuffle Auto-Vault — Desktop — standalone build v3.39', 'color:#17c7b8;font-weight:800;font-size:13px');
+    console.log('%cShuffle Auto-Vault — Desktop — standalone build v3.40', 'color:#17c7b8;font-weight:800;font-size:13px');
 
     /* =========================================================
        UNIFIED LOADER — STORAGE KEYS & SETTINGS
@@ -557,14 +557,35 @@
         const MIN_DEPOSIT = 0.01;
         const MIN_BIG_WIN_PROFIT = 10;
         const DEFAULTS = {
-            saveAmount: 0.2,        // 20% of profit per deposit
-            bigWinThreshold: 5,     // big-win triggers when profit > N% of balance
-            bigWinMultiplier: 3,    // deposit N× saveAmount on big wins
-            checkInterval: 90000,   // 90 seconds between balance checks
+            saveAmount: 0.25,       // 25% of profit per deposit (Balanced preset)
+            bigWinThreshold: 2,     // BALANCE MULTIPLE, as on Stake and Nuts
+            bigWinMultiplier: 2,
+            checkInterval: 60000,
+            bigWinIsMultiple: true, // marks a config already migrated
             isRunning: false        // start paused (user clicks Start)
         };
         function loadConfig() {
-            try { const raw = localStorage.getItem(CONFIG_KEY); if (raw) return { ...DEFAULTS, ...JSON.parse(raw) }; } catch (e) {}
+            try {
+                const raw = localStorage.getItem(CONFIG_KEY);
+                if (raw) {
+                    const c = { ...DEFAULTS, ...JSON.parse(raw) };
+                    /* `bigWinThreshold` used to be a PERCENT OF BALANCE here and
+                       a balance MULTIPLE on the other two panels — the same
+                       number meaning two different things depending on which
+                       panel you had open, and no preset able to describe both.
+                       Unified on the multiple. An old value is a percent (the
+                       default was 5, i.e. "profit > 5% of balance"), which as a
+                       multiple would be a hair over 1 and fire on essentially
+                       every win, so it is reset to the Balanced default rather
+                       than converted. Flagged so it happens once. */
+                    if (!c.bigWinIsMultiple) {
+                        c.bigWinThreshold = DEFAULTS.bigWinThreshold;
+                        c.bigWinIsMultiple = true;
+                        try { localStorage.setItem(CONFIG_KEY, JSON.stringify(c)); } catch (e) {}
+                    }
+                    return c;
+                }
+            } catch (e) {}
             return { ...DEFAULTS };
         }
         function saveConfig(c) { localStorage.setItem(CONFIG_KEY, JSON.stringify(c)); }
@@ -890,6 +911,38 @@
         document.head.appendChild(style);
 
         const gui = document.createElement('div');
+        /* Presets. Same three names as the Stake and Nuts panels so they mean
+           the same thing to a user, but the big-win number here is a PERCENT OF
+           BALANCE (profit greater than N% of balance), not a balance multiple —
+           so heavier saving means a LOWER percentage, and the values cannot be
+           shared with the other two panels. */
+        const AV_PRESETS = {
+            /* Slots: a long grind punctuated by a spike. Skim little on the way,
+               take a big bite when the balance actually jumps, and do not bother
+               looking often — nothing happens between hits. */
+            slots:     { saveAmount: 0.10, bigWinThreshold: 3.0, bigWinMultiplier: 4, checkInterval: 120000 },
+            /* Fast paced (dice, limbo): profit arrives steadily and rarely spikes,
+               so the big-win branch is switched off (multiplier 1) and the ordinary
+               skim does the work. The interval is set just under the deposit rate
+               limit of 50/hour — 75s allows 48 — so it banks as often as the site
+               permits without ever tripping the cap. */
+            fast:      { saveAmount: 0.12, bigWinThreshold: 5.0, bigWinMultiplier: 1, checkInterval: 75000 },
+            /* Balanced: fires under most conditions, meaningful slice each time. */
+            balanced:  { saveAmount: 0.25, bigWinThreshold: 2.0, bigWinMultiplier: 2, checkInterval: 60000 },
+            /* Aggressive: bigger slices, and a low bar for calling something big. */
+            aggressive:{ saveAmount: 0.50, bigWinThreshold: 1.4, bigWinMultiplier: 2, checkInterval: 45000 }
+                };
+        function avPresetNameFor(c) {
+            for (const name in AV_PRESETS) {
+                const p = AV_PRESETS[name];
+                if (Math.abs((c.saveAmount || 0) - p.saveAmount) < 1e-9 &&
+                    Math.abs((c.bigWinThreshold || 0) - p.bigWinThreshold) < 1e-9 &&
+                    Math.abs((c.bigWinMultiplier || 0) - p.bigWinMultiplier) < 1e-9 &&
+                    Math.abs((c.checkInterval || 0) - p.checkInterval) < 1e-9) return name;
+            }
+            return 'custom';
+        }
+
         gui.id = 'autovault-floaty';
         gui.innerHTML = `
             <div class="av-header">
@@ -905,10 +958,19 @@
                 <div class="av-row"><span class="av-label">Last profit</span><span class="av-val" id="av-profit">—</span></div>
                 <div class="av-section-title">Settings</div>
                 <div class="av-config">
+                    <label>Preset</label>
+                    <select id="av-preset">
+                        <option value="slots">Slots — big wins only</option>
+                        <option value="fast">Fast paced — dice / limbo</option>
+                        <option value="balanced">Balanced</option>
+                        <option value="aggressive">Aggressive</option>
+                        <option value="custom">Custom</option>
+                    </select>
+                    <!-- A real percentage. It read "%" while taking a FRACTION. -->
                     <label>Save % of profit</label>
-                    <input type="number" id="av-save" min="0.01" max="1" step="0.05" value="${config.saveAmount}">
-                    <label>Big-win threshold (% balance)</label>
-                    <input type="number" id="av-bwt" min="0" step="0.5" value="${config.bigWinThreshold}">
+                    <input type="number" id="av-save" min="1" max="100" step="1" value="${Math.round(config.saveAmount * 100)}">
+                    <label>Big win at balance ×</label>
+                    <input type="number" id="av-bwt" min="1" step="0.1" value="${config.bigWinThreshold}">
                     <label>Big-win multiplier</label>
                     <input type="number" id="av-bwm" min="1" step="0.5" value="${config.bigWinMultiplier}">
                     <label>Check interval (sec)</label>
@@ -980,14 +1042,19 @@
             if (!config.isRunning) return;
             if (profit <= 0) return;
 
-            // Base deposit = saveAmount × profit. If profit exceeds
-            // bigWinThreshold% of the prior balance (and is above a small
-            // dust floor), treat it as a big win and scale the deposit by
-            // bigWinMultiplier.
+            /* Base deposit = saveAmount × profit; a big win scales it by
+               bigWinMultiplier.
+
+               `bigWinThreshold` is a BALANCE MULTIPLE here now, matching Stake
+               and Nuts. It used to be a percent-of-balance, which meant the same
+               number meant two different things depending on which panel you
+               were looking at and no preset could describe both. Migrated on
+               load. The dust floor stays: on a tiny balance almost any win is
+               technically a multiple. */
             const baseDeposit = profit * config.saveAmount;
-            const bigWinFrac = Math.max(0, Number(config.bigWinThreshold) || 0) / 100;
-            const isBigWin = bigWinFrac > 0
-                && profit > (lastBaseline * bigWinFrac)
+            const thr = Math.max(1, Number(config.bigWinThreshold) || 1);
+            const isBigWin = lastBaseline > 0
+                && (bal / lastBaseline) >= thr
                 && profit > MIN_BIG_WIN_PROFIT;
             const depositAmount = isBigWin ? baseDeposit * config.bigWinMultiplier : baseDeposit;
             if (depositAmount < MIN_DEPOSIT) return;
@@ -1049,22 +1116,44 @@
         };
 
         // Config inputs
+        const avPreset = document.getElementById('av-preset');
+        const avSyncPreset = () => { avPreset.value = avPresetNameFor(config); };
+        avPreset.onchange = (e) => {
+            const p = AV_PRESETS[e.target.value];
+            if (!p) return;                        // Custom: change nothing
+            config.saveAmount = p.saveAmount;
+            config.bigWinThreshold = p.bigWinThreshold;
+            config.bigWinMultiplier = p.bigWinMultiplier;
+            config.checkInterval = p.checkInterval;
+            document.getElementById('av-save').value = Math.round(p.saveAmount * 100);
+            document.getElementById('av-bwt').value = p.bigWinThreshold;
+            document.getElementById('av-bwm').value = p.bigWinMultiplier;
+            document.getElementById('av-int').value = Math.round(p.checkInterval / 1000);
+            saveConfig(config);
+            if (monitorTimer) { clearInterval(monitorTimer); monitorTimer = setInterval(tick, config.checkInterval); }
+        };
+        avSyncPreset();
+
         document.getElementById('av-save').oninput = (e) => {
-            const v = parseFloat(e.target.value);
-            if (!isNaN(v) && v > 0 && v <= 1) { config.saveAmount = v; saveConfig(config); }
+            // Typed as a percentage, stored as a fraction.
+            let pct = parseFloat(e.target.value);
+            if (isNaN(pct) || pct <= 0) return;
+            if (pct > 100) pct = 100;
+            config.saveAmount = pct / 100;
+            saveConfig(config); avSyncPreset();
         };
         document.getElementById('av-bwt').oninput = (e) => {
             const v = parseFloat(e.target.value);
-            if (!isNaN(v) && v >= 0) { config.bigWinThreshold = v; saveConfig(config); }
+            if (!isNaN(v) && v >= 1) { config.bigWinThreshold = v; saveConfig(config); avSyncPreset(); }
         };
         document.getElementById('av-bwm').oninput = (e) => {
             const v = parseFloat(e.target.value);
-            if (!isNaN(v) && v >= 1) { config.bigWinMultiplier = v; saveConfig(config); }
+            if (!isNaN(v) && v >= 1) { config.bigWinMultiplier = v; saveConfig(config); avSyncPreset(); }
         };
         document.getElementById('av-int').oninput = (e) => {
             const v = parseInt(e.target.value);
             if (!isNaN(v) && v >= 10) {
-                config.checkInterval = v * 1000; saveConfig(config);
+                config.checkInterval = v * 1000; saveConfig(config); avSyncPreset();
                 if (monitorTimer) { clearInterval(monitorTimer); monitorTimer = setInterval(tick, config.checkInterval); }
             }
         };
@@ -1338,7 +1427,9 @@
                 '<small id="ut-count">' + matching.length + ' available on this page</small>' +
             '</div>' +
             '<div>' +
-                '<button class="ut-header-btn" id="ut-collapse" title="Collapse">×</button>' +
+                // Glyph is a minus, not a cross: this only collapses the panel,
+                // and a × on it read as "close the tools".
+                '<button class="ut-header-btn" id="ut-collapse" title="Collapse">−</button>' +
             '</div>' +
         '</div>' +
         '<div class="ut-body">';
