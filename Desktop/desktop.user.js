@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Desktop
 // @namespace    http://tampermonkey.net/
-// @version      3.42
+// @version      3.43
 // @description  .
 // @author       .
 // @match        https://nuts.gg/*
@@ -23466,7 +23466,7 @@ function tool_stake_7day_tracker() {
         if (tool_snakes._booted) return;
         tool_snakes._booted = true;
 
-        var SNK_VERSION  = '1.04';
+        var SNK_VERSION  = '1.05';
         /* Tuned to play as fast as the site will let it. The pace is set by the
            GAME, not by us: a control is pressed the instant it becomes usable
            again. A fixed cooldown would either be slower than the game or race
@@ -23483,8 +23483,8 @@ function tool_stake_7day_tracker() {
            part way through it - pressing it there took the whole page down. The
            pause is per-site because only Nuts was seen doing this, and speed
            between rounds is the whole point of the tool everywhere else. */
-        var SETTLE_MS          = 200;   // Stake, and Nuts after a round that paid nothing
-        var NUTS_WIN_SETTLE_MS = 1200;  // Nuts after a WIN: long enough to clear the payout
+        var SETTLE_MS          = 200;   // Stake always; Nuts after the auto rolls bust
+        var NUTS_WIN_SETTLE_MS = 1200;  // Nuts when a payout is possible: outlasts the animation
         /* And a settling button is not a ready one: Bet/PLAY must have been
            quietly clickable for this long before it gets pressed. */
         var PLAY_STEADY_MS     = 200;
@@ -23621,6 +23621,7 @@ function tool_stake_7day_tracker() {
         var lastChange  = Date.now();
         var cooldown    = 0;      // set only after a round ends
         var idleSince   = 0;      // when Bet/PLAY became clickable and stayed that way
+        var weCashedOut = false;  // this round ended by OUR target cashout
         var clickAt     = 0;      // when we last pressed something
         var sawBusy     = false;  // that control has since gone disabled
         var multAtRoll  = null;   // the multiplier when we last pressed Roll
@@ -23739,18 +23740,28 @@ function tool_stake_7day_tracker() {
                    the outcome is reported plainly as "round over". */
                 var how = (m === null || !SITE.multMeansOutcome) ? 'round over'
                         : (m > 0 ? 'cashed out at ' + m.toFixed(2) + '×' : 'busted');
+                var endedInHandover = handedOver;
                 roundActive = false;
                 rollsDone   = 0;
                 targetPendingSince = 0;
                 handedOver  = false;
                 multAtRoll  = null;
                 phase       = 'idle';
-                /* Only a payout needs the long pause. m is the multiplier
-                   still on the board: 1 or less means the round paid nothing,
-                   and there is nothing to wait out. Unreadable counts as a
-                   payout, because being wrong the other way kills the page. */
-                var paid = (SITE === SITES.nuts) && (m === null || m > 1);
-                cooldown    = Date.now() + (paid ? NUTS_WIN_SETTLE_MS : SETTLE_MS);
+                /* Which rounds owe the payout pause? Not a question the board
+                   can answer: the chips are per-SURVIVED-roll, so a bust after
+                   roll 1 still shows 1.11x, and "unreadable counts as a win"
+                   caught the rest - every round paid the 1200ms, which is the
+                   slowness 1.04 shipped. The tool's own history knows. A round
+                   that ends during the AUTO rolls without our cashout can only
+                   be a bust (auto tops out at 4 of the game's 5, so it cannot
+                   reach the cap), and a fast re-bet after a bust is proven
+                   safe. A payout needs a cashout or the cap, and either means
+                   we cashed out ourselves or the board had been handed over -
+                   and after a handover the pause hides inside the seconds the
+                   player just spent deciding. */
+                var payout = (SITE === SITES.nuts) && (endedInHandover || weCashedOut);
+                weCashedOut = false;
+                cooldown    = Date.now() + (payout ? NUTS_WIN_SETTLE_MS : SETTLE_MS);
                 setStatus(running ? ('Round ' + rounds + ': ' + how + ' — re-arming…')
                                   : ('Round ' + rounds + ': ' + how + '.'));
             }
@@ -23834,6 +23845,7 @@ function tool_stake_7day_tracker() {
                 try { co = SITE.cashout(); } catch (e) {}
                 if (co && !co.disabled) {
                     click(co);
+                    weCashedOut = true;
                     targetHits++;
                     setStatus('Hit ' + nowMult.toFixed(2) + '× (target ' + cfg.target + '×) — cashed out.');
                     return;
@@ -24024,7 +24036,7 @@ function tool_stake_7day_tracker() {
                 if (running) return;
                 running = true;
                 rollsDone = 0; handedOver = false; roundActive = false; multAtRoll = null;
-                phase = 'idle'; cooldown = 0; idleSince = 0; lastChange = Date.now();
+                phase = 'idle'; cooldown = 0; idleSince = 0; weCashedOut = false; lastChange = Date.now();
                 goneSince = 0; visibleAgainAt = 0;
                 setStatus('Armed — ' + cfg.rolls + ' auto roll' + (cfg.rolls === 1 ? '' : 's') + ' per round.');
             });
