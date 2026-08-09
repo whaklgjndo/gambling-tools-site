@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mobile
 // @namespace    https://whaklgjndo.github.io/gambling-tools/
-// @version      6.12
+// @version      6.13
 // @description  .
 // @author       .
 // @match        https://stake.com/*
@@ -11272,7 +11272,7 @@ self.onmessage = async (e) => {
         if (tool_snakes._booted) return;
         tool_snakes._booted = true;
 
-        var SNK_VERSION  = '1.03';
+        var SNK_VERSION  = '1.04';
         /* Tuned to play as fast as the site will let it. The pace is set by the
            GAME, not by us: a control is pressed the instant it becomes usable
            again. A fixed cooldown would either be slower than the game or race
@@ -11282,7 +11282,18 @@ self.onmessage = async (e) => {
            of this wedged forever waiting for it. */
         var POLL_MS      = 60;
         var GAME_MAX     = 5;      // the game's own cap — five pips under the board
-        var SETTLE_MS    = 120;    // after a round ends, before opening the next
+        /* After a round ends, before opening the next.
+
+           120ms crashed nuts.gg. When the fifth roll wins, the site settles the
+           round itself and runs a payout animation, and PLAY becomes clickable
+           part way through it - pressing it there took the whole page down. The
+           pause is per-site because only Nuts was seen doing this, and speed
+           between rounds is the whole point of the tool everywhere else. */
+        var SETTLE_MS          = 200;   // Stake, and Nuts after a round that paid nothing
+        var NUTS_WIN_SETTLE_MS = 1200;  // Nuts after a WIN: long enough to clear the payout
+        /* And a settling button is not a ready one: Bet/PLAY must have been
+           quietly clickable for this long before it gets pressed. */
+        var PLAY_STEADY_MS     = 200;
         var MIN_GAP_MS   = 40;     // never two clicks inside a frame
         var FALLBACK_MS  = 500;    // act anyway if the busy frame was never seen
         var MULT_WAIT_MS     = 1000;  // wait this long for a roll's multiplier to render
@@ -11415,6 +11426,7 @@ self.onmessage = async (e) => {
         var targetHits  = 0;
         var lastChange  = Date.now();
         var cooldown    = 0;      // set only after a round ends
+        var idleSince   = 0;      // when Bet/PLAY became clickable and stayed that way
         var clickAt     = 0;      // when we last pressed something
         var sawBusy     = false;  // that control has since gone disabled
         var multAtRoll  = null;   // the multiplier when we last pressed Roll
@@ -11507,6 +11519,9 @@ self.onmessage = async (e) => {
                code cover Nuts without having seen its mid-round markup. */
             var live = (!startB) || !!coB || canRoll;
             if (live) roundActive = true;
+            /* Reset on every frame the button is not offering itself, so the
+               steadiness window only counts an uninterrupted run. */
+            if (atIdle) { if (!idleSince) idleSince = Date.now(); } else { idleSince = 0; }
 
             var sig = (startB ? (startB.disabled ? 'S0' : 'S1') : 'S-') +
                       (rollB  ? (rollB.disabled  ? 'R0' : 'R1') : 'R-') + rollsDone;
@@ -11516,7 +11531,7 @@ self.onmessage = async (e) => {
                next action fire the moment it comes back, rather than waiting out
                a fixed delay. */
             if (!sawBusy && clickAt &&
-                ((rollB && rollB.disabled) || (!startB && !rollB) || (startB && startB.disabled))) {
+                ((rollB && rollB.disabled) || !startB || startB.disabled)) {
                 sawBusy = true;
             }
 
@@ -11536,7 +11551,12 @@ self.onmessage = async (e) => {
                 handedOver  = false;
                 multAtRoll  = null;
                 phase       = 'idle';
-                cooldown    = Date.now() + SETTLE_MS;
+                /* Only a payout needs the long pause. m is the multiplier
+                   still on the board: 1 or less means the round paid nothing,
+                   and there is nothing to wait out. Unreadable counts as a
+                   payout, because being wrong the other way kills the page. */
+                var paid = (SITE === SITES.nuts) && (m === null || m > 1);
+                cooldown    = Date.now() + (paid ? NUTS_WIN_SETTLE_MS : SETTLE_MS);
                 setStatus(running ? ('Round ' + rounds + ': ' + how + ' — re-arming…')
                                   : ('Round ' + rounds + ': ' + how + '.'));
             }
@@ -11571,6 +11591,7 @@ self.onmessage = async (e) => {
             /* ---- start a round ---- */
             if (atIdle) {
                 if (clickAt && !settled(startB)) return;
+                if (nowT - idleSince < PLAY_STEADY_MS) return;
                 if (click(startB)) {
                     /* Deliberately NOT stamping the watchdog here. Pressing Bet
                        is not evidence a bet happened — with an empty balance the
@@ -11646,7 +11667,11 @@ self.onmessage = async (e) => {
                    was what let the whole round run ahead of the text. Bounded,
                    so a site whose multiplier cannot be read costs a beat per
                    roll instead of hanging. */
-                if (rollsDone > 0 && nowMult === multAtRoll &&
+                /* Only when a target is armed. The reading is what the target
+                   is checked against, so with no target there is nothing to
+                   keep in step and no reason to wait for it - and waiting
+                   anyway is what made 1.03 crawl. */
+                if (cfg.target > 0 && rollsDone > 0 && nowMult === multAtRoll &&
                     Date.now() - lastRollAt < MULT_WAIT_MS) return;
                 multAtRoll = nowMult;
                 if (click(rollB)) {
@@ -11805,7 +11830,7 @@ self.onmessage = async (e) => {
                 if (running) return;
                 running = true;
                 rollsDone = 0; handedOver = false; roundActive = false; multAtRoll = null;
-                phase = 'idle'; cooldown = 0; lastChange = Date.now();
+                phase = 'idle'; cooldown = 0; idleSince = 0; lastChange = Date.now();
                 goneSince = 0; visibleAgainAt = 0;
                 setStatus('Armed — ' + cfg.rolls + ' auto roll' + (cfg.rolls === 1 ? '' : 's') + ' per round.');
             });
