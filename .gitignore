@@ -1,4 +1,11 @@
-# Mobile Snakes standalones are built locally on request and deliberately not
-# published: the site offers Snakes on mobile through mobile.user.js only.
-Mobile/Stake/Snakes.user.js
-Mobile/Nuts/Snakes.user.js
+# The single-tool standalones are built locally and deliberately not published.
+# The site offers exactly two installs - Desktop/desktop.user.js and
+# Mobile/mobile.user.js - and nothing has ever linked to a standalone, but
+# every one of them was still committed and so still served at its direct URL.
+# They are built by "Build Scripts/build-standalones.js" whenever you need one.
+Desktop/Stake/*.user.js
+Desktop/Nuts/*.user.js
+Desktop/Shuffle/*.user.js
+Mobile/Stake/*.user.js
+Mobile/Nuts/*.user.js
+Mobile/Shuffle/*.user.js
