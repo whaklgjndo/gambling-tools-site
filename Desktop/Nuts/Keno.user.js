@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Nuts Keno — Desktop
 // @namespace    http://tampermonkey.net/
-// @version      3.40
+// @version      3.41
 // @description  Standalone single-tool build, extracted from the unified bundle.
 // @author       .
 // @match        https://nuts.gg/*
@@ -17,7 +17,7 @@
 (function () {
     'use strict';
 
-    console.log('%cNuts Keno — Desktop — standalone build v3.40', 'color:#17c7b8;font-weight:800;font-size:13px');
+    console.log('%cNuts Keno — Desktop — standalone build v3.41', 'color:#17c7b8;font-weight:800;font-size:13px');
 
     /* =========================================================
        UNIFIED LOADER — STORAGE KEYS & SETTINGS

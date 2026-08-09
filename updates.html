@@ -52,6 +52,22 @@
         <!-- ============ Add new releases above this line (newest first) ============ -->
         <article class="release latest" data-reveal>
           <div class="release-head">
+            <span class="ver-badge">v3.41</span>
+            <span class="chip">Desktop</span>
+            <span class="ver-badge">v6.12</span>
+            <span class="chip">Mobile</span>
+            <span class="rel-date">August 8, 2026</span>
+          </div>
+          <h2 class="rel-title">Snakes knows when to stop, Auto-Vault stays off until you turn it on</h2>
+          <ul class="changes">
+            <li><span class="tag fixed">Fixed</span><span class="ctxt"><b>Auto-Vault ran when you had never started it, and kept running after you switched it off.</b> Two separate faults. It remembered that you had once pressed Start and re-armed itself on every page load from then on. And turning the tool off in the &#9881; panel only hides the panel &mdash; it never stopped the loop, so it carried on depositing with nothing on screen at all. It now starts only when you press Start, on that page load, and it stops the moment the tool is switched off.</span></li>
+            <li><span class="tag fixed">Fixed</span><span class="ctxt"><b>Snakes hung instead of stopping.</b> Two ways, both seen in one session. The game froze mid-round &mdash; nothing on the board clickable &mdash; and the tool sat on &ldquo;Rolled 1 of 4&rdquo; for as long as it was left. Then the site's own page crashed, and because a missing Bet button is how the tool recognises &ldquo;a round is in progress&rdquo;, a page with no buttons at all looked the same as a round in flight and it sat on &ldquo;Betting&hellip;&rdquo; against a dead page. <b>It now stops after five seconds of nothing happening</b> and tells you which it was. Your own thinking time is never counted &mdash; once the board is yours the clock is held &mdash; and neither is a tab left in the background.</span></li>
+            <li><span class="tag fixed">Fixed</span><span class="ctxt"><b>Snakes did not always cash out when your target was reached.</b> If the target was hit on the last of your auto rolls, the tool handed the board back a moment before the multiplier on screen caught up, and once it has handed over it will not act again. Two goes at this: the roll now waits for the previous multiplier to appear, so the reading can never fall behind the rolls, and the handover waits with it.</span></li>
+            <li><span class="tag changed">Changed</span><span class="ctxt"><b>Auto-Vault presets are in a sensible order and readable.</b> Balanced, Big Wins, Fast Paced, Aggressive, Custom &mdash; and the dropdown is black on white on every site, instead of taking the panel's pale text into a pale menu where you could barely make the names out.</span></li>
+          </ul>
+        </article>
+        <article class="release" data-reveal>
+          <div class="release-head">
             <span class="ver-badge">v3.40</span>
             <span class="chip">Desktop</span>
             <span class="ver-badge">v6.11</span>

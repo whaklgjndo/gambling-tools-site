@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Desktop
 // @namespace    http://tampermonkey.net/
-// @version      3.40
+// @version      3.41
 // @description  .
 // @author       .
 // @match        https://nuts.gg/*

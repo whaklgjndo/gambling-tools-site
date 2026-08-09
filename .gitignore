@@ -1,0 +1,4 @@
+# Mobile Snakes standalones are built locally on request and deliberately not
+# published: the site offers Snakes on mobile through mobile.user.js only.
+Mobile/Stake/Snakes.user.js
+Mobile/Nuts/Snakes.user.js
