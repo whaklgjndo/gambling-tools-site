@@ -52,6 +52,20 @@
         <!-- ============ Add new releases above this line (newest first) ============ -->
         <article class="release latest" data-reveal>
           <div class="release-head">
+            <span class="ver-badge">v3.42</span>
+            <span class="chip">Desktop</span>
+            <span class="ver-badge">v6.13</span>
+            <span class="chip">Mobile</span>
+            <span class="rel-date">August 8, 2026</span>
+          </div>
+          <h2 class="rel-title">Snakes stops crashing the page on a cap win, and gets its speed back</h2>
+          <ul class="changes">
+            <li><span class="tag fixed">Fixed</span><span class="ctxt"><b>Winning on the fifth roll took the whole nuts.gg page down</b> &mdash; desktop and mobile both. The fifth roll is the game's cap, so the site settles the round itself and plays a payout animation, and the play button becomes clickable partway through it. The tool was re-betting 0.12s after round end, straight into that animation, and the site's own error page ate the game. Only a <i>win</i> has the animation, which is why a bust on roll five was always fine and the crash looked so random. It now waits out the payout before opening the next round; a round that paid nothing re-arms as fast as ever.</span></li>
+            <li><span class="tag fixed">Fixed</span><span class="ctxt"><b>Snakes had gotten slow.</b> A wait meant only for the auto cash out target was running on every roll even with no target set, and every bet was sitting out an extra half second waiting for a confirmation that could never arrive on Nuts. Both gone. The only pause left is the payout wait above, and only after a win.</span></li>
+          </ul>
+        </article>
+        <article class="release" data-reveal>
+          <div class="release-head">
             <span class="ver-badge">v3.41</span>
             <span class="chip">Desktop</span>
             <span class="ver-badge">v6.12</span>
