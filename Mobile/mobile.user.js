@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mobile
 // @namespace    https://whaklgjndo.github.io/gambling-tools/
-// @version      6.15
+// @version      6.16
 // @description  .
 // @author       .
 // @match        https://stake.com/*
@@ -114,6 +114,123 @@
     function register(definition) {
         TOOLS.push(definition);
     }
+
+    /* =====================================================================
+       GAME SPEED  - optional accelerator for the game's OWN animations.
+
+       Marker: === source: game-speed ===
+
+       The tools already press every button the instant the game allows; what
+       is left is the game's own animation time (the dice roll, the reveal, the
+       payout). This speeds the page timer clock so that animation runs faster
+       - the same trick the standalone "speed" userscripts use - and exposes it
+       as a row inside each GAME tool panel. Not AutoVault, not the Wager
+       Tracker: those are not games.
+
+         - Installed at document-start, before the site binds its own timers.
+         - Reads the LIVE multiplier on every call, so changing it needs no
+           reload.
+         - OFF by default (1.0x), which makes the override a no-op - the safe
+           baseline on pages that already crash on a timing mistake.
+         - Only JS-timed animation speeds up. CSS transitions and the server
+           round trip do not; it cannot make a bet resolve before the server
+           answers. A smoother/faster feel, not teleportation.
+         - The bundle @match already limits every hook to the supported domains
+           (Stake / Shuffle / Nuts), so no extra domain gate is needed.
+       ===================================================================== */
+    const GS_KEY = 'unified-game-speed';
+    const GS_MIN = 0.5, GS_MAX = 10, GS_STEP = 0.5;
+    let gsSpeed = 1;
+    try { const _v = parseFloat(localStorage.getItem(GS_KEY)); if (isFinite(_v) && _v >= GS_MIN && _v <= GS_MAX) gsSpeed = _v; } catch (e) {}
+
+    /* Keep a raw ref so our OWN housekeeping timer is not itself accelerated. */
+    const gsRawSetInterval = window.setInterval;
+    (function gsInstall() {
+        if (window.__unifiedGameSpeed) return;
+        window.__unifiedGameSpeed = true;
+        const oST = window.setTimeout, oSI = window.setInterval, oRAF = window.requestAnimationFrame;
+        if (typeof oST === 'function') window.setTimeout = function (cb, d, ...a) { return oST.call(this, cb, (gsSpeed > 0 && typeof d === 'number') ? d / gsSpeed : d, ...a); };
+        if (typeof oSI === 'function') window.setInterval = function (cb, d, ...a) { return oSI.call(this, cb, (gsSpeed > 0 && typeof d === 'number') ? d / gsSpeed : d, ...a); };
+        if (typeof oRAF === 'function') window.requestAnimationFrame = function (cb) { return oRAF.call(this, function (ts) { return cb(gsSpeed > 0 ? ts * gsSpeed : ts); }); };
+    })();
+
+    function gsSet(v) {
+        if (!isFinite(v)) return;
+        gsSpeed = Math.max(GS_MIN, Math.min(GS_MAX, Math.round(v / GS_STEP) * GS_STEP));
+        try { localStorage.setItem(GS_KEY, String(gsSpeed)); } catch (e) {}
+        gsPaint();
+    }
+    function gsPaint() {
+        document.querySelectorAll('.gs-val').forEach(el => { el.textContent = gsSpeed.toFixed(1) + '\u00d7'; });
+    }
+
+    /* Which panels get the row. body is where inside the panel it is appended
+       (so it hides when the panel minimises and inherits the theme), falling
+       back to the panel root when the panel has no body wrapper. */
+    const GS_PANELS = [
+        { root: 'snakes-auto-gui',          body: '.sk-body'          },
+        { root: 'mines-auto-gui',           body: null                },
+        { root: 'keno-preset-gui',          body: '.kp-content'       },
+        { root: 'moles-master-container',   body: '.hud-body'         },
+        { root: 'ratchet-master-container', body: '.hud-controls-deck' },
+        { root: 'bj-perfect-hud',           body: null                }
+    ];
+    const GS_CTL_HTML =
+        '<div class="gs-ctl">' +
+          '<span class="gs-lbl">Speed</span>' +
+          '<button type="button" data-gs="dec">&minus;</button>' +
+          '<span class="gs-val">1.0\u00d7</span>' +
+          '<button type="button" data-gs="inc">+</button>' +
+          '<button type="button" data-gs="max">MAX</button>' +
+          '<button type="button" data-gs="rst">RESET</button>' +
+        '</div>';
+    const GS_CSS =
+        '.gs-ctl{display:flex;align-items:center;gap:4px;margin-top:8px;padding-top:8px;'+'flex:1 1 100%;width:100%;box-sizing:border-box;' +
+          'border-top:1px solid rgba(255,255,255,.14);font-size:11px;flex-wrap:wrap}' +
+        '.gs-ctl .gs-lbl{opacity:.7;margin-right:auto;font-weight:600}' +
+        '.gs-ctl .gs-val{min-width:34px;text-align:center;font-weight:800}' +
+        '.gs-ctl button{background:transparent !important;color:inherit !important;' +
+          'border:1px solid currentColor !important;border-radius:4px !important;' +
+          'padding:2px 6px !important;margin:0 !important;font:700 11px/1 inherit !important;' +
+          'cursor:pointer !important;opacity:.78;min-width:0 !important;width:auto !important;' +
+          'height:auto !important;text-transform:none !important;letter-spacing:0 !important;box-shadow:none !important}' +
+        '.gs-ctl button:hover{opacity:1}';
+
+    function gsInject() {
+        if (document.head && !document.getElementById('gs-css')) {
+            const st = document.createElement('style'); st.id = 'gs-css'; st.textContent = GS_CSS;
+            document.head.appendChild(st);
+        }
+        for (const p of GS_PANELS) {
+            const root = document.getElementById(p.root);
+            if (!root || root.querySelector('.gs-ctl')) continue;
+            const host = (p.body && root.querySelector(p.body)) || root;
+            const tmp = document.createElement('div');
+            tmp.innerHTML = GS_CTL_HTML;
+            host.appendChild(tmp.firstChild);
+        }
+        gsPaint();
+    }
+
+    /* Clicks adjust the multiplier. Capture-phase + stop, and the same on
+       pointer-down, so a control sitting inside a draggable panel never starts
+       a drag. */
+    function gsOnDown(e) { if (e.target && e.target.closest && e.target.closest('.gs-ctl')) e.stopPropagation(); }
+    document.addEventListener('mousedown', gsOnDown, true);
+    document.addEventListener('touchstart', gsOnDown, true);
+    document.addEventListener('click', function (e) {
+        const b = e.target && e.target.closest && e.target.closest('.gs-ctl [data-gs]');
+        if (!b) return;
+        e.preventDefault(); e.stopPropagation();
+        const act = b.getAttribute('data-gs');
+        if (act === 'dec') gsSet(gsSpeed - GS_STEP);
+        else if (act === 'inc') gsSet(gsSpeed + GS_STEP);
+        else if (act === 'max') gsSet(GS_MAX);
+        else if (act === 'rst') gsSet(1);
+    }, true);
+
+    gsRawSetInterval(gsInject, 1200);
+    /* === end body: game-speed === */
 
     /** Mark a registered tool as having run (so the panel status flips to
      *  "Running"). Mobile's boot calls tools directly rather than via
