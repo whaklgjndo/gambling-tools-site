@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Desktop
 // @namespace    http://tampermonkey.net/
-// @version      3.54
+// @version      3.55
 // @description  .
 // @author       .
 // @match        https://nuts.gg/*
@@ -23948,11 +23948,15 @@ function tool_stake_7day_tracker() {
         /** True once the thing we pressed has finished. Fast path: we watched it
          *  go busy and come back. Safety net: FALLBACK_MS, so a transition that
          *  happens between two polls can never wedge the loop. */
+        /* Live game-speed multiplier (1..10), or 1 if the speed engine is
+           absent. The tool's own timing is divided by this so it keeps pace with
+           a sped-up game instead of polling at a fixed real-time rate. */
+        function gsp() { return (typeof gsSpeed === 'number' && gsSpeed > 0) ? Math.min(gsSpeed, 10) : 1; }
         function settled(control) {
             var since = Date.now() - clickAt;
-            if (since < MIN_GAP_MS) return false;
+            if (since < MIN_GAP_MS / gsp()) return false;
             if (sawBusy) return !!(control && !control.disabled);
-            return since >= FALLBACK_MS;
+            return since >= FALLBACK_MS / gsp();
         }
 
         function stop(why) {
@@ -24409,18 +24413,22 @@ function tool_stake_7day_tracker() {
                                    (targetHits ? ' · ' + targetHits + ' hit target' : '');
         }
 
-        setInterval(function () {
+        /* Self-rescheduling so the poll interval tracks the game-speed setting:
+           at 10x it polls ~10x faster, catching the freed roll button almost as
+           soon as the sped game frees it. Floor of 8ms so it can't runaway. */
+        (function loop() {
             try {
                 if (!onPage() || !enabled()) {
                     if (gui && gui.parentNode) { running = false; gui.remove(); }
-                    return;
+                } else {
+                    injectCss();
+                    if (!gui || !gui.isConnected) { gui = build(); document.body.appendChild(gui); paint(); }
+                    tick();
+                    paint();
                 }
-                injectCss();
-                if (!gui || !gui.isConnected) { gui = build(); document.body.appendChild(gui); paint(); }
-                tick();
-                paint();
             } catch (e) { /* never let one tick kill the loop */ }
-        }, POLL_MS);
+            setTimeout(loop, Math.max(8, POLL_MS / gsp()));
+        })();
 
         console.log('%c[Snakes] partial autoplay v' + SNK_VERSION + ' on ' + SITE.label,
                     'color:#1fff20;font-weight:700');
