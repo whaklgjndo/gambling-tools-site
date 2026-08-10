@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mobile
 // @namespace    https://whaklgjndo.github.io/gambling-tools/
-// @version      6.26
+// @version      6.28
 // @description  .
 // @author       .
 // @match        https://stake.com/*
@@ -11509,7 +11509,7 @@ self.onmessage = async (e) => {
         if (tool_snakes._booted) return;
         tool_snakes._booted = true;
 
-        var SNK_VERSION  = '1.09';
+        var SNK_VERSION  = '1.11';
         /* Tuned to play as fast as the site will let it. The pace is set by the
            GAME, not by us: a control is pressed the instant it becomes usable
            again. A fixed cooldown would either be slower than the game or race
@@ -11517,7 +11517,7 @@ self.onmessage = async (e) => {
            then free — with FALLBACK_MS as the escape hatch, because a round that
            resolves inside one poll never shows the busy frame and the first cut
            of this wedged forever waiting for it. */
-        var POLL_MS      = 40;     // tool poll cadence (sandbox timer, unaffected by game speed)
+        var POLL_MS      = 25;     // tool poll cadence (÷ game speed at runtime)
         var GAME_MAX     = 5;      // the game's own cap — five pips under the board
         /* After a round ends, before opening the next.
 
@@ -11529,13 +11529,29 @@ self.onmessage = async (e) => {
            first roll or two". The board itself says when it is ready - see the
            payout gate at the bet site. */
         var SETTLE_MS           = 200;  // Nuts re-arm pause (see site override below)
-        var NUTS_PAYOUT_HOLD_MS = 2500; // Nuts: longest hold waiting for the tile to reset
+        /* Nuts: longest hold after a PAYOUT round before re-betting, so PLAY is
+           not pressed into a still-running win animation (that crashed the page).
+           Was 2500 — but on the current board the mult chips stay on screen >1x
+           until the next bet, so the tile-reset early-release never fires and it
+           sat the FULL hold on every cashout ("huge delay at the end of a
+           cashout"). Cut to 1200, the value the original win-only pause proved
+           safe. Kept as a real-time floor, NOT ÷ game speed: the win animation
+           may not be one the speed engine can compress, so shrinking the hold
+           with speed could re-bet into it and re-crash the page. */
+        var NUTS_PAYOUT_HOLD_MS = 1200; // Nuts: longest hold waiting for the win animation to finish
+        /* And never re-bet within this of a payout, even if no animation was
+           seen: the crash was a re-bet ~120ms into the payout; measured live
+           2026-08-10 the real Nuts payout runs ~470ms (finite anims 5→0, the
+           balance counter ticking), with a safe re-bet observed at ~670ms. This
+           floor clears the early, risky part; the observe-path above ends the
+           wait the instant the animation is actually done (~470ms typical). */
+        var NUTS_PAYOUT_MIN_MS  = 300;
         /* And a settling button is not a ready one: Bet/PLAY must have been
            quietly clickable for this long before it gets pressed. */
         var PLAY_STEADY_MS     = 200;
         var MIN_GAP_MS   = 25;     // never two clicks inside a frame
         var FALLBACK_MS  = 500;    // act anyway if the busy frame was never seen
-        var MULT_WAIT_MS     = 1000;  // fallback only; releases the instant the multiplier changes (target reads)
+        var MULT_WAIT_MS     = 1000;  // fallback only; normally releases the instant .actual-roll-holder moves (target reads); ÷ game speed. Kept >= worst render lag so a target on the last roll is never missed
         var MULT_SETTLE_MS   = 1500;  // grace for the profit text to catch up with the button
         var CASHOUT_GRACE_MS = 4000;  // keep retrying Cashout for this long once a target is hit
 
@@ -11567,6 +11583,23 @@ self.onmessage = async (e) => {
                         '[data-testid="cashout-button"],[data-testid="game-next"]');
                 },
                 mult:    function () {
+                    /* The current cumulative multiplier — what a cashout pays now.
+                       The old "Total Profit (N×)" text was removed in Stake's 2026
+                       board redesign (verified live 2026-08-10: it no longer exists,
+                       so this read null every tick — which silently killed the
+                       auto-cashout target AND, because null === null, made the
+                       between-rolls "wait for the multiplier to move" gate wait out
+                       its full timeout on EVERY roll: the delay reported as the tool
+                       rolling slower than a human). It now lives in the centre tile's
+                       `.actual-roll-holder` (a plain, un-hashed class; the sibling
+                       `svelte-xxxxxx` is a build hash and is deliberately not matched).
+                       Falls back to the legacy text for any older build. */
+                    var el = document.querySelector('.center-tile .actual-roll-holder') ||
+                             document.querySelector('.actual-roll-holder');
+                    if (el) {
+                        var t = (el.textContent || '').trim().match(/([\d.]+)\s*x/i);
+                        if (t) { var v = parseFloat(t[1]); if (isFinite(v)) return v; }
+                    }
                     var m = (document.body.innerText || '').match(/Total Profit \(([\d.]+)\s*×\)/);
                     return m ? parseFloat(m[1]) : null;
                 },
@@ -11676,10 +11709,18 @@ self.onmessage = async (e) => {
         var roundEndedAt   = 0;   // when the last round settled - bounds the payout gate
         var weCashedOut    = false; // this round ended by our own target cashout
         var roundWasPayout = false; // last round could pay out -> wait for its animation
+        var sawPayoutAnim  = false; // saw a real win animation running during the hold
         var clickAt     = 0;      // when we last pressed something
         var sawBusy     = false;  // that control has since gone disabled
         var multAtRoll  = null;   // the multiplier when we last pressed Roll
         var lastRollAt  = 0;      // when the last Roll was pressed
+        /* How many DISTINCT multiplier readings have shown this round, and the
+           last one seen. The handover waits until this reaches the number of
+           rolls taken, so a reading that lags the button by more than a roll
+           (Nuts on a slow render) can't hand over on a stale, below-target
+           value and lock out the real final one. */
+        var multsSeen   = 0;
+        var lastMultSeen = null;
         var targetPendingSince = 0; // target reached, waiting for Cashout to free up
         var lastSig     = '';
         var statusText  = 'Idle.';
@@ -11817,6 +11858,9 @@ self.onmessage = async (e) => {
                 weCashedOut = false;
                 handedOver  = false;
                 multAtRoll  = null;
+                multsSeen   = 0;
+                lastMultSeen = null;
+                sawPayoutAnim = false;
                 phase       = 'idle';
                 roundEndedAt = Date.now();
                 cooldown     = Date.now() + SETTLE_MS;
@@ -11864,11 +11908,37 @@ self.onmessage = async (e) => {
                    bounded, so a tile that never resets costs one hold not a
                    wedge. A bust never reaches here - it pays nothing and re-arms
                    at SETTLE_MS, which is what 1.07 broke by gating every round. */
-                if (roundWasPayout && roundEndedAt &&
-                    nowT - roundEndedAt < NUTS_PAYOUT_HOLD_MS) {
+                if (roundWasPayout && roundEndedAt) {
+                    var held = nowT - roundEndedAt;
                     var tile = null;
                     try { tile = SITE.mult(); } catch (e) {}
-                    if (tile !== null && tile > 1) return;
+                    var tileReset = (tile === null || tile <= 1);
+                    if (!tileReset && held < NUTS_PAYOUT_HOLD_MS) {
+                        /* Re-bet the instant the WIN ANIMATION ends, not on a flat
+                           timer. While a real animation (finite, not an ambient
+                           loop, long enough to matter, not our own UI) is playing
+                           we wait; the moment none is running we go - usually well
+                           under the cap. If we NEVER see one, the site drew the win
+                           some way getAnimations can't observe, so we hold the full
+                           proven-safe cap rather than risk re-betting into an
+                           animation we can't see and crashing the page. */
+                        var animating = false;
+                        try {
+                            animating = document.getAnimations().some(function (a) {
+                                if (a.playState !== 'running') return false;
+                                var ct; try { ct = a.effect.getComputedTiming(); } catch (e) { return false; }
+                                if (ct.iterations === Infinity) return false;      // ambient loop
+                                if ((ct.activeDuration || 0) < 120) return false;  // hover / micro-transition
+                                var el = a.effect && a.effect.target;
+                                if (el && el.closest && el.closest('#snakes-auto-gui')) return false; // our HUD
+                                return true;
+                            });
+                        } catch (e) { animating = true; }
+                        if (animating) { sawPayoutAnim = true; return; } // still playing
+                        if (held < NUTS_PAYOUT_MIN_MS) return;            // clear the payout's early, risky part
+                        if (!sawPayoutAnim) return;                       // never observed one -> hold the cap
+                        /* observed the animation and it has now ended -> safe to re-bet */
+                    }
                 }
                 if (click(startB)) {
                     roundWasPayout = false;
@@ -11897,6 +11967,14 @@ self.onmessage = async (e) => {
                the last press means the previous roll has not landed yet. */
             var nowMult = null;
             try { nowMult = SITE.mult(); } catch (e) {}
+            /* Tally each fresh reading so the handover can tell "the last roll's
+               multiplier hasn't rendered yet" from "it has, and it's below the
+               target". Only while auto-rolling; once the board is yours the
+               player's own rolls must not inflate it. */
+            if (nowMult !== null && nowMult !== lastMultSeen) {
+                if (!handedOver && rollsDone > 0) multsSeen++;
+                lastMultSeen = nowMult;
+            }
 
             /* ---- auto-cashout target ----
 
@@ -11940,19 +12018,13 @@ self.onmessage = async (e) => {
             }
 
             if (canRoll && !handedOver && rollsDone < cfg.rolls) {
-                /* Wait for the previous roll's multiplier to render before taking
-                   the next one, so the reading can never fall behind the rolls.
-                   Treating null as a reading is the point: it is what every
-                   round's first roll starts from, and skipping the wait there
-                   was what let the whole round run ahead of the text. Bounded,
-                   so a site whose multiplier cannot be read costs a beat per
-                   roll instead of hanging. */
-                /* Only when a target is armed. The reading is what the target
-                   is checked against, so with no target there is nothing to
-                   keep in step and no reason to wait for it - and waiting
-                   anyway is what made 1.03 crawl. */
+                /* Wait only until the roll's multiplier is readable, so the target
+                   check below can't miss it. With an API reading (Stake) this is
+                   instant - the value is present the moment the server answers, so
+                   the roll fires as soon as the button frees. With DOM-only (Nuts)
+                   it waits out the render lag, bounded by MULT_WAIT_MS. */
                 if (cfg.target > 0 && rollsDone > 0 && nowMult === multAtRoll &&
-                    Date.now() - lastRollAt < MULT_WAIT_MS) return;
+                    Date.now() - lastRollAt < MULT_WAIT_MS / gsp()) return;
                 multAtRoll = nowMult;
                 if (click(rollB)) {
                     lastRollAt = Date.now();
@@ -11978,8 +12050,8 @@ self.onmessage = async (e) => {
                    So when a target is armed and the reading has not moved yet,
                    hold the handover briefly and look again. Bounded, so a site
                    that never updates the text cannot wedge the round. */
-                if (cfg.target > 0 && nowMult !== null && nowMult === multAtRoll &&
-                    Date.now() - lastRollAt < MULT_SETTLE_MS) return;
+                if (cfg.target > 0 && multsSeen < rollsDone &&
+                    Date.now() - lastRollAt < MULT_SETTLE_MS / gsp()) return;
                 handedOver = true;
                 phase = 'handover';
                 setStatus('YOUR MOVE — ' + rollsDone + ' roll' + (rollsDone === 1 ? '' : 's') +
@@ -12124,6 +12196,7 @@ self.onmessage = async (e) => {
                 commitTarget(true);
                 running = true;
                 rollsDone = 0; handedOver = false; roundActive = false; multAtRoll = null;
+                multsSeen = 0; lastMultSeen = null; sawPayoutAnim = false;
                 phase = 'idle'; cooldown = 0; idleSince = 0; roundEndedAt = 0;
                 weCashedOut = false; roundWasPayout = false; lastChange = Date.now();
                 goneSince = 0; visibleAgainAt = 0;
