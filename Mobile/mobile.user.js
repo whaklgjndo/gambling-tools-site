@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mobile
 // @namespace    https://whaklgjndo.github.io/gambling-tools/
-// @version      6.20
+// @version      6.21
 // @description  .
 // @author       .
 // @match        https://stake.com/*
@@ -179,6 +179,10 @@
     /* Which panels get the row. body is where inside the panel it is appended
        (so it hides when the panel minimises and inherits the theme), falling
        back to the panel root when the panel has no body wrapper. */
+    /* Our OWN tool UI - never rescale these. Speeding the HUD's own mount and
+       mode-switch transitions fired their transitionend early and blanked the
+       Nuts dice HUD at high multipliers. Only the GAME's animations get scaled. */
+    const GS_OUR_UI = '#ratchet-master-container,#dt-aio-panel,#dt-backdrop,#dt-aio-button,#snakes-auto-gui,#mines-auto-gui,#keno-preset-gui,#moles-master-container,#bj-perfect-hud,#autovault-floaty,#nuts-autovault-floaty,#unified-tools-toggle,.uts-quick-toggle,.gs-ctl';
     const GS_PANELS = [
         { root: 'snakes-auto-gui',          body: '.sk-body'          },
         { root: 'mines-auto-gui',           body: null                },
@@ -283,7 +287,14 @@
             for (const d of docs) {
                 if (!d.getAnimations) continue;
                 const list = d.getAnimations();
-                for (let i = 0; i < list.length; i++) { try { if (list[i].playbackRate !== gsSpeed) list[i].playbackRate = gsSpeed; } catch (e) {} }
+                for (let i = 0; i < list.length; i++) {
+                    try {
+                        const a = list[i];
+                        const tgt = a.effect && a.effect.target;
+                        if (tgt && tgt.closest && tgt.closest(GS_OUR_UI)) { if (a.playbackRate !== 1) a.playbackRate = 1; continue; }
+                        if (a.playbackRate !== gsSpeed) a.playbackRate = gsSpeed;
+                    } catch (e) {}
+                }
             }
         } catch (e) {}
     }
