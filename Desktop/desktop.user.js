@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Desktop
 // @namespace    http://tampermonkey.net/
-// @version      3.47
+// @version      3.48
 // @description  .
 // @author       .
 // @match        https://nuts.gg/*
@@ -780,7 +780,10 @@
        game does would speed up at all. A standalone @grant-none build falls back
        to window, where the two are one and the same. */
     const GS_PAGE = (typeof unsafeWindow !== 'undefined' && unsafeWindow) ? unsafeWindow : window;
-    const gsRawSetInterval = GS_PAGE.setInterval.bind(GS_PAGE);
+    /* Housekeeping uses the plain setInterval (the sandbox timer under
+       Tampermonkey, unaffected by our page-window override; the page timer under
+       @grant none). A bound *native* ref did NOT schedule here, which silently
+       stopped injection - hence plain calls below. */
     function gsPatchWindow(w) {
         try {
             if (!w || w.__unifiedGameSpeed || typeof w.setTimeout !== 'function') return;
@@ -797,6 +800,7 @@
         if (!isFinite(v)) return;
         gsSpeed = Math.max(GS_MIN, Math.min(GS_MAX, Math.round(v / GS_STEP) * GS_STEP));
         try { localStorage.setItem(GS_KEY, String(gsSpeed)); } catch (e) {}
+        gsScaleAnimations();   // re-rate everything in flight at the new speed
         gsPaint();
     }
     function gsPaint() {
@@ -864,6 +868,15 @@
     function gsOnDown(e) { if (e.target && e.target.closest && e.target.closest('.gs-ctl')) e.stopPropagation(); }
     document.addEventListener('mousedown', gsOnDown, true);
     document.addEventListener('touchstart', gsOnDown, true);
+    /* Scale each CSS transition/animation the instant it starts - this is what
+       actually speeds Svelte/CSS games like the Stake originals, which have no
+       JS animation loop for the timer override to catch. */
+    function gsOnAnim(e) {
+        if (gsSpeed === 1 || !e.target || !e.target.getAnimations) return;
+        try { e.target.getAnimations().forEach(function (a) { if (a.playbackRate !== gsSpeed) a.playbackRate = gsSpeed; }); } catch (err) {}
+    }
+    document.addEventListener('transitionrun', gsOnAnim, true);
+    document.addEventListener('animationstart', gsOnAnim, true);
     document.addEventListener('click', function (e) {
         const b = e.target && e.target.closest && e.target.closest('.gs-ctl [data-gs]');
         if (!b) return;
@@ -879,7 +892,29 @@
         else if (act === 'rst') gsSet(1);
     }, true);
 
-    gsRawSetInterval(gsInject, 1200);
+    setInterval(gsInject, 1200);
+
+    /* CSS-transition games (Stake originals are Svelte + CSS, no JS animation
+       loop at all) are untouched by the timer override above - overriding
+       setTimeout does nothing to a 0.3s CSS transition. The Web Animations API
+       does: every running transition/animation is a document animation whose
+       playbackRate can be scaled live. Setting it to the multiplier makes the
+       roll/reveal finish proportionally sooner, and since the game re-enables
+       its buttons when the transition ends, the whole cadence speeds up with it.
+       Runs often and cheaply because transitions are short and start on demand;
+       iframes too. At 1x it resets everything to normal. */
+    function gsScaleAnimations() {
+        try {
+            const docs = [document];
+            try { document.querySelectorAll('iframe').forEach(function (fr) { try { if (fr.contentDocument) docs.push(fr.contentDocument); } catch (e) {} }); } catch (e) {}
+            for (const d of docs) {
+                if (!d.getAnimations) continue;
+                const list = d.getAnimations();
+                for (let i = 0; i < list.length; i++) { try { if (list[i].playbackRate !== gsSpeed) list[i].playbackRate = gsSpeed; } catch (e) {} }
+            }
+        } catch (e) {}
+    }
+    setInterval(gsScaleAnimations, 150);
     /* === end body: game-speed === */
 
 
