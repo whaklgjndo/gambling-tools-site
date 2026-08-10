@@ -23740,7 +23740,7 @@ function tool_stake_7day_tracker() {
            then free — with FALLBACK_MS as the escape hatch, because a round that
            resolves inside one poll never shows the busy frame and the first cut
            of this wedged forever waiting for it. */
-        var POLL_MS      = 60;
+        var POLL_MS      = 40;     // tool poll cadence (sandbox timer, unaffected by game speed)
         var GAME_MAX     = 5;      // the game's own cap — five pips under the board
         /* After a round ends, before opening the next.
 
@@ -23756,7 +23756,7 @@ function tool_stake_7day_tracker() {
         /* And a settling button is not a ready one: Bet/PLAY must have been
            quietly clickable for this long before it gets pressed. */
         var PLAY_STEADY_MS     = 200;
-        var MIN_GAP_MS   = 40;     // never two clicks inside a frame
+        var MIN_GAP_MS   = 25;     // never two clicks inside a frame
         var FALLBACK_MS  = 500;    // act anyway if the busy frame was never seen
         var MULT_WAIT_MS     = 1000;  // fallback only; releases the instant the multiplier changes (target reads)
         var MULT_SETTLE_MS   = 1500;  // grace for the profit text to catch up with the button
