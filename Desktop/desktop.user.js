@@ -23466,7 +23466,7 @@ function tool_stake_7day_tracker() {
         if (tool_snakes._booted) return;
         tool_snakes._booted = true;
 
-        var SNK_VERSION  = '1.06';
+        var SNK_VERSION  = '1.07';
         /* Tuned to play as fast as the site will let it. The pace is set by the
            GAME, not by us: a control is pressed the instant it becomes usable
            again. A fixed cooldown would either be slower than the game or race
@@ -23478,13 +23478,15 @@ function tool_stake_7day_tracker() {
         var GAME_MAX     = 5;      // the game's own cap — five pips under the board
         /* After a round ends, before opening the next.
 
-           120ms crashed nuts.gg. When the fifth roll wins, the site settles the
+           120ms crashed nuts.gg: when the fifth roll wins, the site settles the
            round itself and runs a payout animation, and PLAY becomes clickable
-           part way through it - pressing it there took the whole page down. The
-           pause is per-site because only Nuts was seen doing this, and speed
-           between rounds is the whole point of the tool everywhere else. */
-        var SETTLE_MS          = 200;   // Stake always; Nuts after the auto rolls bust
-        var NUTS_WIN_SETTLE_MS = 1200;  // Nuts when a payout is possible: outlasts the animation
+           part way through it - pressing it there took the whole page down.
+           Fixed pauses were tried twice and were wrong twice: 1.04 paused every
+           round, 1.05 paused every payout, felt as "a delay after a hit on the
+           first roll or two". The board itself says when it is ready - see the
+           payout gate at the bet site. */
+        var SETTLE_MS           = 200;  // every round, both sites
+        var NUTS_PAYOUT_HOLD_MS = 2500; // Nuts: longest hold waiting for the tile to reset
         /* And a settling button is not a ready one: Bet/PLAY must have been
            quietly clickable for this long before it gets pressed. */
         var PLAY_STEADY_MS     = 200;
@@ -23621,7 +23623,7 @@ function tool_stake_7day_tracker() {
         var lastChange  = Date.now();
         var cooldown    = 0;      // set only after a round ends
         var idleSince   = 0;      // when Bet/PLAY became clickable and stayed that way
-        var weCashedOut = false;  // this round ended by OUR target cashout
+        var roundEndedAt = 0;     // when the last round settled - bounds the payout gate
         var clickAt     = 0;      // when we last pressed something
         var sawBusy     = false;  // that control has since gone disabled
         var multAtRoll  = null;   // the multiplier when we last pressed Roll
@@ -23740,28 +23742,14 @@ function tool_stake_7day_tracker() {
                    the outcome is reported plainly as "round over". */
                 var how = (m === null || !SITE.multMeansOutcome) ? 'round over'
                         : (m > 0 ? 'cashed out at ' + m.toFixed(2) + '×' : 'busted');
-                var endedInHandover = handedOver;
                 roundActive = false;
                 rollsDone   = 0;
                 targetPendingSince = 0;
                 handedOver  = false;
                 multAtRoll  = null;
                 phase       = 'idle';
-                /* Which rounds owe the payout pause? Not a question the board
-                   can answer: the chips are per-SURVIVED-roll, so a bust after
-                   roll 1 still shows 1.11x, and "unreadable counts as a win"
-                   caught the rest - every round paid the 1200ms, which is the
-                   slowness 1.04 shipped. The tool's own history knows. A round
-                   that ends during the AUTO rolls without our cashout can only
-                   be a bust (auto tops out at 4 of the game's 5, so it cannot
-                   reach the cap), and a fast re-bet after a bust is proven
-                   safe. A payout needs a cashout or the cap, and either means
-                   we cashed out ourselves or the board had been handed over -
-                   and after a handover the pause hides inside the seconds the
-                   player just spent deciding. */
-                var payout = (SITE === SITES.nuts) && (endedInHandover || weCashedOut);
-                weCashedOut = false;
-                cooldown    = Date.now() + (payout ? NUTS_WIN_SETTLE_MS : SETTLE_MS);
+                roundEndedAt = Date.now();
+                cooldown     = Date.now() + SETTLE_MS;
                 setStatus(running ? ('Round ' + rounds + ': ' + how + ' — re-arming…')
                                   : ('Round ' + rounds + ': ' + how + '.'));
             }
@@ -23797,6 +23785,23 @@ function tool_stake_7day_tracker() {
             if (atIdle) {
                 if (clickAt && !settled(startB)) return;
                 if (nowT - idleSince < PLAY_STEADY_MS) return;
+                /* THE PAYOUT GATE. PLAY becomes clickable while a win's payout
+                   animation is still running, and pressing it there crashes
+                   nuts.gg (21 recorded rounds fine, one cap win, page dead).
+                   The centre tile holds the won multiplier for as long as the
+                   payout runs and reads 1.00x once the board is truly ready -
+                   measured live at idle, and visible in the crash recording,
+                   where PLAY was back while the tile still read 11.29x. So
+                   wait for the tile, not a fixed pause: a bust is already at
+                   1.00x and pays nothing, a win releases the moment the board
+                   does. Bounded, so a tile that never resets costs one hold,
+                   not a wedged run. */
+                if (SITE === SITES.nuts && roundEndedAt &&
+                    nowT - roundEndedAt < NUTS_PAYOUT_HOLD_MS) {
+                    var tile = null;
+                    try { tile = SITE.mult(); } catch (e) {}
+                    if (tile !== null && tile > 1) return;
+                }
                 if (click(startB)) {
                     /* Deliberately NOT stamping the watchdog here. Pressing Bet
                        is not evidence a bet happened — with an empty balance the
@@ -23845,7 +23850,6 @@ function tool_stake_7day_tracker() {
                 try { co = SITE.cashout(); } catch (e) {}
                 if (co && !co.disabled) {
                     click(co);
-                    weCashedOut = true;
                     targetHits++;
                     setStatus('Hit ' + nowMult.toFixed(2) + '× (target ' + cfg.target + '×) — cashed out.');
                     return;
@@ -24046,7 +24050,7 @@ function tool_stake_7day_tracker() {
                 commitTarget(true);
                 running = true;
                 rollsDone = 0; handedOver = false; roundActive = false; multAtRoll = null;
-                phase = 'idle'; cooldown = 0; idleSince = 0; weCashedOut = false; lastChange = Date.now();
+                phase = 'idle'; cooldown = 0; idleSince = 0; roundEndedAt = 0; lastChange = Date.now();
                 goneSince = 0; visibleAgainAt = 0;
                 setStatus('Armed — ' + cfg.rolls + ' auto roll' + (cfg.rolls === 1 ? '' : 's') +
                           ' per round' +
