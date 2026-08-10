@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Desktop
 // @namespace    http://tampermonkey.net/
-// @version      3.52
+// @version      3.53
 // @description  .
 // @author       .
 // @match        https://nuts.gg/*
@@ -769,7 +769,7 @@
          - The bundle @match already limits every hook to the supported domains
            (Stake / Shuffle / Nuts), so no extra domain gate is needed.
        ===================================================================== */
-    const GS_MIN = 0.5, GS_MAX = 100, GS_STEP = 0.5;   // toward uncapped; MAX jumps here
+    const GS_MIN = 0.5, GS_MAX = 10, GS_STEP = 0.5;   // 0.5x .. 10x; MAX jumps to 10
     /* Always 1.0x on every game load / refresh. Deliberately NOT persisted -
        each game begins at normal speed; the user opts in per session. */
     let gsSpeed = 1;
@@ -878,8 +878,8 @@
         const act = b.getAttribute('data-gs');
         /* Fine near 1x, coarser as it climbs, so the ceiling is reachable by
            hand and MAX jumps straight there. */
-        const upStep = gsSpeed < 5 ? 0.5 : gsSpeed < 20 ? 1 : 5;
-        const dnStep = gsSpeed <= 5 ? 0.5 : gsSpeed <= 20 ? 1 : 5;
+        const upStep = 0.5;
+        const dnStep = 0.5;
         if (act === 'dec') gsSet(gsSpeed - dnStep);
         else if (act === 'inc') gsSet(gsSpeed + upStep);
         else if (act === 'max') gsSet(GS_MAX);
@@ -10144,7 +10144,7 @@ let isRunning = false;
         header.innerHTML = `
             <div class="nv-title">
                 <div class="nv-dot" id="nvStatusDot"></div>
-                <span>Nuts AutoVault</span>
+                <span>AutoVault</span>
             </div>
             <div class="nv-header-btns">
                 <!-- No close button by design; see the Stake twin. − collapses. -->
@@ -15618,6 +15618,8 @@ let isRunning = false;
             #autovault-floaty .av-log-empty { color: #6b7280; font-style: italic; text-align: center; padding: 4px; font-size: 10px; }
             #autovault-floaty.mini { width: auto; min-width: 0; }
             #autovault-floaty.mini .av-body { display: none; }
+            #autovault-floaty.mini .av-title { display: none; }
+            #autovault-floaty.mini .av-status { font-size: 0; min-width: 0; width: 10px; height: 10px; padding: 0; border-radius: 50%; }
         `;
         document.head.appendChild(style);
 
@@ -23861,7 +23863,7 @@ function tool_stake_7day_tracker() {
         var cfg = { rolls: 2, target: 0 };
         try {
             var raw = JSON.parse(localStorage.getItem(KEY) || 'null');
-            if (raw && raw.rolls >= 1 && raw.rolls <= GAME_MAX - 1) cfg.rolls = raw.rolls | 0;
+            if (raw && raw.rolls >= 1 && raw.rolls <= GAME_MAX) cfg.rolls = raw.rolls | 0;
             if (raw && isFinite(raw.target) && raw.target >= 0) cfg.target = +raw.target;
         } catch (e) {}
         function saveCfg() { try { localStorage.setItem(KEY, JSON.stringify(cfg)); } catch (e) {} }
@@ -24018,6 +24020,11 @@ function tool_stake_7day_tracker() {
                 var how = (m === null || !SITE.multMeansOutcome) ? 'round over'
                         : (m > 0 ? 'cashed out at ' + m.toFixed(2) + '×' : 'busted');
                 roundActive = false;
+                /* A round that reached the game's 5-roll cap settles itself with
+                   a payout animation (full-auto rolls=5, or the player ran it to
+                   the cap), so a Nuts re-bet must wait it out just like a cashout.
+                   Captured before rollsDone is cleared. */
+                var reachedCap = rollsDone >= GAME_MAX;
                 rollsDone   = 0;
                 targetPendingSince = 0;
                 /* Classify BEFORE the reset. Only a round that could PAY OUT
@@ -24027,7 +24034,7 @@ function tool_stake_7day_tracker() {
                    once; gating every round is what made busts crawl in 1.07.
                    Reading handedOver AFTER it was cleared always gave false, so
                    cap wins skipped the gate and crashed - hence "before". */
-                roundWasPayout = (SITE === SITES.nuts) && (handedOver || weCashedOut);
+                roundWasPayout = (SITE === SITES.nuts) && (handedOver || weCashedOut || reachedCap);
                 weCashedOut = false;
                 handedOver  = false;
                 multAtRoll  = null;
@@ -24178,7 +24185,7 @@ function tool_stake_7day_tracker() {
             }
 
             /* ---- hand the board back ---- */
-            if (canRoll && rollsDone >= cfg.rolls && !handedOver) {
+            if (canRoll && rollsDone >= cfg.rolls && !handedOver && cfg.rolls < GAME_MAX) {
                 /* WAIT FOR THE MULTIPLIER TO CATCH UP FIRST.
 
                    The Roll button frees up before the site re-renders the profit
@@ -24253,6 +24260,9 @@ function tool_stake_7day_tracker() {
               'font-weight:700;font-size:12px}' +
             '#snakes-auto-gui .sk-go{background:' + THEME.accent + ';color:' + THEME.onInk + '}' +
             '#snakes-auto-gui .sk-halt{background:' + THEME.haltBg + '}' +
+            '#snakes-auto-gui .sk-mini-stop{display:none;cursor:pointer;font-weight:800;font-size:10px;' +
+              'padding:2px 8px;border-radius:5px;margin-left:6px;background:' + THEME.haltBg + '}' +
+            '#snakes-auto-gui.sk-mini.sk-running .sk-mini-stop{display:inline-block}' +
             '#snakes-auto-gui .sk-status{font-size:11px;line-height:1.35;min-height:2.4em;opacity:.85}' +
             '#snakes-auto-gui .sk-status.yours{color:' + THEME.accent + ';font-weight:700;opacity:1}' +
             '#snakes-auto-gui .sk-foot{display:flex;justify-content:space-between;opacity:.45;font-size:10px;' +
@@ -24274,10 +24284,11 @@ function tool_stake_7day_tracker() {
             var el = document.createElement('div');
             el.id = 'snakes-auto-gui';
             var pills = '';
-            for (var n = 1; n <= GAME_MAX - 1; n++)
+            for (var n = 1; n <= GAME_MAX; n++)
                 pills += '<div class="sk-pill" data-sk="' + n + '">' + n + '</div>';
             el.innerHTML =
                 '<div class="sk-head"><span>Snakes</span>' +
+                  '<span class="sk-mini-stop" data-sk="minihalt" title="Stop">STOP</span>' +
                   '<span data-sk="min" title="Minimise" style="cursor:pointer;opacity:.6;padding:0 4px">−</span></div>' +
                 '<div class="sk-body">' +
                   '<div class="sk-row"><span>Auto rolls</span></div>' +
@@ -24344,6 +24355,12 @@ function tool_stake_7day_tracker() {
             el.querySelector('[data-sk="halt"]').addEventListener('click', function () {
                 stop('Stopped. The current round is yours to finish.');
             });
+            /* Stop from the minimized pill (mobile especially) without expanding. */
+            var miniHaltBtn = el.querySelector('[data-sk="minihalt"]');
+            if (miniHaltBtn) miniHaltBtn.addEventListener('click', function (e) {
+                e.stopPropagation();
+                stop('Stopped. The current round is yours to finish.');
+            });
             /* Collapses to a draggable pill — the header stays, which is also the
                drag handle. There is deliberately no close: removing the panel
                would need a reload to get it back, and stopping the tool is what
@@ -24388,6 +24405,7 @@ function tool_stake_7day_tracker() {
             elStatus.textContent = statusText;
             elStatus.classList.toggle('yours', phase === 'handover');
             elGo.textContent = running ? 'RUNNING' : 'START';
+            if (gui) gui.classList.toggle('sk-running', running);
             elGo.style.opacity = running ? '.55' : '1';
             elRounds.textContent = rounds + ' round' + (rounds === 1 ? '' : 's') +
                                    (targetHits ? ' · ' + targetHits + ' hit target' : '');
