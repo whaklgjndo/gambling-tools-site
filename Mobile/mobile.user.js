@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mobile
 // @namespace    https://whaklgjndo.github.io/gambling-tools/
-// @version      6.21
+// @version      6.22
 // @description  .
 // @author       .
 // @match        https://stake.com/*
@@ -182,15 +182,7 @@
     /* Our OWN tool UI - never rescale these. Speeding the HUD's own mount and
        mode-switch transitions fired their transitionend early and blanked the
        Nuts dice HUD at high multipliers. Only the GAME's animations get scaled. */
-    const GS_OUR_UI = '#ratchet-master-container,#dt-aio-panel,#dt-backdrop,#dt-aio-button,#snakes-auto-gui,#mines-auto-gui,#keno-preset-gui,#moles-master-container,#bj-perfect-hud,#autovault-floaty,#nuts-autovault-floaty,#unified-tools-toggle,.uts-quick-toggle,.gs-ctl';
-    const GS_PANELS = [
-        { root: 'snakes-auto-gui',          body: '.sk-body'          },
-        { root: 'mines-auto-gui',           body: null                },
-        { root: 'keno-preset-gui',          body: '.kp-content'       },
-        { root: 'moles-master-container',   body: '.hud-body'         },
-        { root: 'ratchet-master-container', body: '.hud-controls-deck' },
-        { root: 'bj-perfect-hud',           body: null                }
-    ];
+    const GS_OUR_UI = '#ratchet-master-container,#dt-aio-panel,#dt-backdrop,#dt-aio-button,#snakes-auto-gui,#mines-auto-gui,#keno-preset-gui,#moles-master-container,#bj-perfect-hud,#autovault-floaty,#nuts-autovault-floaty,#unified-tools-panel,#unified-tools-toggle,.uts-quick-toggle,.gs-ctl';
     const GS_CTL_HTML =
         '<div class="gs-ctl">' +
           '<span class="gs-lbl">Speed</span>' +
@@ -200,6 +192,10 @@
           '<button type="button" data-gs="max">MAX</button>' +
           '<button type="button" data-gs="rst">RESET</button>' +
         '</div>';
+    /* One global row for the top of the ⚙ control panel. The accelerator is a
+       page-wide feature, not per-tool, so the control lives here and works
+       whatever tools are enabled or disabled. */
+    const GS_PANEL_ROW = '<div class="ut-speed">' + GS_CTL_HTML + '</div>';
     const GS_CSS =
         '.gs-ctl{display:flex;align-items:center;gap:4px;margin-top:8px;padding-top:8px;'+'flex:1 1 100%;width:100%;box-sizing:border-box;' +
           'border-top:1px solid rgba(255,255,255,.14);font-size:11px;flex-wrap:wrap}' +
@@ -210,20 +206,14 @@
           'padding:2px 6px !important;margin:0 !important;font:700 11px/1 inherit !important;' +
           'cursor:pointer !important;opacity:.78;min-width:0 !important;width:auto !important;' +
           'height:auto !important;text-transform:none !important;letter-spacing:0 !important;box-shadow:none !important}' +
-        '.gs-ctl button:hover{opacity:1}';
+        '.gs-ctl button:hover{opacity:1}' +
+        '.ut-speed{padding:10px 14px;border-bottom:1px solid rgba(255,255,255,.08)}' +
+        '.ut-speed .gs-ctl{margin-top:0;padding-top:0;border-top:none}';
 
     function gsInject() {
         if (document.head && !document.getElementById('gs-css')) {
             const st = document.createElement('style'); st.id = 'gs-css'; st.textContent = GS_CSS;
             document.head.appendChild(st);
-        }
-        for (const p of GS_PANELS) {
-            const root = document.getElementById(p.root);
-            if (!root || root.querySelector('.gs-ctl')) continue;
-            const host = (p.body && root.querySelector(p.body)) || root;
-            const tmp = document.createElement('div');
-            tmp.innerHTML = GS_CTL_HTML;
-            host.appendChild(tmp.firstChild);
         }
         /* Games inside an iframe (some providers) run their own timers. Patch
            every same-origin frame we can reach; cross-origin frames throw and
@@ -10630,7 +10620,7 @@ self.onmessage = async (e) => {
                 '<button class="ut-header-btn" id="ut-collapse" title="Collapse">−</button>' +
             '</div>' +
         '</div>' +
-        '<div class="ut-body">';
+        '<div class="ut-body">' + GS_PANEL_ROW;
 
         const groupOrder = ['Stake', 'Shuffle', 'Nuts', 'Other'];
         for (const groupName of groupOrder) {
