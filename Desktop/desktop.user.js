@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Desktop
 // @namespace    http://tampermonkey.net/
-// @version      3.57
+// @version      3.59
 // @description  .
 // @author       .
 // @match        https://nuts.gg/*
@@ -805,6 +805,7 @@
     }
     function gsPaint() {
         document.querySelectorAll('.gs-val').forEach(el => { el.textContent = gsSpeed.toFixed(1) + '\u00d7'; });
+        document.querySelectorAll('.gs-range').forEach(el => { if (parseFloat(el.value) !== gsSpeed) el.value = gsSpeed; });
     }
 
     /* Which panels get the row. body is where inside the panel it is appended
@@ -816,28 +817,25 @@
     const GS_OUR_UI = '#ratchet-master-container,#dt-aio-panel,#dt-backdrop,#dt-aio-button,#snakes-auto-gui,#mines-auto-gui,#keno-preset-gui,#moles-master-container,#bj-perfect-hud,#autovault-floaty,#nuts-autovault-floaty,#unified-tools-panel,#unified-tools-toggle,.uts-quick-toggle,.gs-ctl';
     const GS_CTL_HTML =
         '<div class="gs-ctl">' +
-          '<span class="gs-lbl">Speed</span>' +
-          '<button type="button" data-gs="dec">&minus;</button>' +
+          '<span class="gs-lbl">Game Speed</span>' +
+          '<input type="range" class="gs-range" min="' + GS_MIN + '" max="' + GS_MAX + '" step="' + GS_STEP + '" value="1" aria-label="Game Speed">' +
           '<span class="gs-val">1.0\u00d7</span>' +
-          '<button type="button" data-gs="inc">+</button>' +
-          '<button type="button" data-gs="max">MAX</button>' +
-          '<button type="button" data-gs="rst">RESET</button>' +
         '</div>';
     /* One global row for the top of the ⚙ control panel. The accelerator is a
        page-wide feature, not per-tool, so the control lives here and works
        whatever tools are enabled or disabled. */
     const GS_PANEL_ROW = '<div class="ut-speed">' + GS_CTL_HTML + '</div>';
     const GS_CSS =
-        '.gs-ctl{display:flex;align-items:center;gap:4px;margin-top:8px;padding-top:8px;'+'flex:1 1 100%;width:100%;box-sizing:border-box;' +
+        '.gs-ctl{display:flex;align-items:center;gap:8px;margin-top:8px;padding-top:8px;'+'flex:1 1 100%;width:100%;box-sizing:border-box;' +
           'border-top:1px solid rgba(255,255,255,.14);font-size:11px;flex-wrap:wrap}' +
-        '.gs-ctl .gs-lbl{opacity:.7;margin-right:auto;font-weight:600}' +
-        '.gs-ctl .gs-val{min-width:34px;text-align:center;font-weight:800}' +
-        '.gs-ctl button{background:transparent !important;color:inherit !important;' +
-          'border:1px solid currentColor !important;border-radius:4px !important;' +
-          'padding:2px 6px !important;margin:0 !important;font:700 11px/1 inherit !important;' +
-          'cursor:pointer !important;opacity:.78;min-width:0 !important;width:auto !important;' +
-          'height:auto !important;text-transform:none !important;letter-spacing:0 !important;box-shadow:none !important}' +
-        '.gs-ctl button:hover{opacity:1}' +
+        '.gs-ctl .gs-lbl{opacity:.7;font-weight:600;white-space:nowrap}' +
+        '.gs-ctl .gs-val{min-width:38px;text-align:right;font-weight:800;margin-left:auto;font-variant-numeric:tabular-nums}' +
+        '.gs-ctl .gs-range{flex:1 1 90px;min-width:70px;height:14px;margin:0;padding:0;cursor:pointer;background:transparent;-webkit-appearance:none;appearance:none}' +
+        '.gs-ctl .gs-range:focus{outline:none}' +
+        '.gs-ctl .gs-range::-webkit-slider-runnable-track{height:4px;border-radius:3px;background:currentColor;opacity:.4}' +
+        '.gs-ctl .gs-range::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:14px;height:14px;margin-top:-5px;border-radius:50%;background:currentColor;cursor:pointer}' +
+        '.gs-ctl .gs-range::-moz-range-track{height:4px;border-radius:3px;background:currentColor;opacity:.4}' +
+        '.gs-ctl .gs-range::-moz-range-thumb{width:14px;height:14px;border:none;border-radius:50%;background:currentColor;cursor:pointer}' +
         '.ut-speed{padding:10px 14px;border-bottom:1px solid rgba(255,255,255,.08)}' +
         '.ut-speed .gs-ctl{margin-top:0;padding-top:0;border-top:none}';
 
@@ -871,19 +869,13 @@
     }
     document.addEventListener('transitionrun', gsOnAnim, true);
     document.addEventListener('animationstart', gsOnAnim, true);
-    document.addEventListener('click', function (e) {
-        const b = e.target && e.target.closest && e.target.closest('.gs-ctl [data-gs]');
-        if (!b) return;
-        e.preventDefault(); e.stopPropagation();
-        const act = b.getAttribute('data-gs');
-        /* Fine near 1x, coarser as it climbs, so the ceiling is reachable by
-           hand and MAX jumps straight there. */
-        const upStep = 0.5;
-        const dnStep = 0.5;
-        if (act === 'dec') gsSet(gsSpeed - dnStep);
-        else if (act === 'inc') gsSet(gsSpeed + upStep);
-        else if (act === 'max') gsSet(GS_MAX);
-        else if (act === 'rst') gsSet(1);
+    /* The slider sets the speed live as you drag it - capture-phase + stop so
+       it never starts a panel drag. Steps are already GS_STEP multiples. */
+    document.addEventListener('input', function (e) {
+        const r = e.target;
+        if (!r || !r.classList || !r.classList.contains('gs-range')) return;
+        e.stopPropagation();
+        gsSet(parseFloat(r.value));
     }, true);
 
     setInterval(gsInject, 1200);
@@ -23732,7 +23724,7 @@ function tool_stake_7day_tracker() {
         if (tool_snakes._booted) return;
         tool_snakes._booted = true;
 
-        var SNK_VERSION  = '1.11';
+        var SNK_VERSION  = '1.12';
         /* Tuned to play as fast as the site will let it. The pace is set by the
            GAME, not by us: a control is pressed the instant it becomes usable
            again. A fixed cooldown would either be slower than the game or race
@@ -24330,6 +24322,7 @@ function tool_stake_7day_tracker() {
               'border-radius:5px;padding:4px 6px;text-align:right;font-weight:700;' +
               'font-size:12px;margin-right:3px}' +
             '#snakes-auto-gui .sk-target:disabled{opacity:.4;cursor:not-allowed}' +
+            '#snakes-auto-gui .sk-target-lbl{flex:1;min-width:0;line-height:1.3}' +
             '#snakes-auto-gui .sk-btn{flex:1;border:0;border-radius:5px;padding:7px 0;cursor:pointer;' +
               'font-weight:700;font-size:12px}' +
             '#snakes-auto-gui .sk-go{background:' + THEME.accent + ';color:' + THEME.onInk + '}' +
@@ -24367,9 +24360,9 @@ function tool_stake_7day_tracker() {
                 '<div class="sk-body">' +
                   '<div class="sk-row"><span>Auto rolls</span></div>' +
                   '<div class="sk-pills">' + pills + '</div>' +
-                  '<div class="sk-row"><span>Cash out at</span>' +
-                    '<span><input class="sk-target" type="number" min="0" step="0.01" ' +
-                      'data-sk="target" placeholder="off">&times;</span></div>' +
+                  '<div class="sk-row"><span class="sk-target-lbl">Auto Cashout @ min multi of:</span>' +
+                    '<input class="sk-target" type="number" min="0" step="0.01" ' +
+                      'data-sk="target" placeholder="off"></div>' +
                   '<div class="sk-row">' +
                     '<button class="sk-btn sk-go" data-sk="go">START</button>' +
                     '<button class="sk-btn sk-halt" data-sk="halt">STOP</button>' +
