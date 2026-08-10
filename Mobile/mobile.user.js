@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mobile
 // @namespace    https://whaklgjndo.github.io/gambling-tools/
-// @version      6.22
+// @version      6.23
 // @description  .
 // @author       .
 // @match        https://stake.com/*
@@ -290,6 +290,65 @@
     }
     setInterval(gsScaleAnimations, 150);
     /* === end body: game-speed === */
+
+    /* === source: autovault-shared === */
+    /* Per-site AutoVault auto-start + the preset info tooltip, shared by all
+       AutoVault panels. Auto-start lives on its own key (not the money params,
+       which Stake's setParams rebuilds) and is always gated by avToolEnabled(). */
+    function avAutoStart(site, val) {
+        var k = 'av-autostart-' + site;
+        if (val === undefined) { try { return localStorage.getItem(k) === '1'; } catch (e) { return false; } }
+        try { localStorage.setItem(k, val ? '1' : '0'); } catch (e) {}
+    }
+    var AV_PRESET_DEFS = [
+        ['Balanced', 'Useful if you just want it to work without worrying too much about the details.'],
+        ['Big Wins', 'Useful for playing slots or games like Keno or chasing big multis on originals. It simply vaults portions of those big wins.'],
+        ['Fast Paced', 'Useful for playing games like dice, limbo, or any other game where you can bet rapidly.'],
+        ['Aggressive', 'Useful if you want to see a fat vault balance after you have exhausted your unvaulted balance.'],
+        ['Custom', 'Useful if you want to set your own vault conditions.']
+    ];
+    function avInfoIconHTML() {
+        var body = AV_PRESET_DEFS.map(function (d) { return '<b>' + d[0] + '</b> \u2014 ' + d[1]; }).join('<br><br>');
+        return '<span class="av-info" tabindex="0" role="button" aria-label="Preset descriptions">\u24D8' +
+               '<span class="av-info-pop">' + body + '</span></span>';
+    }
+    var AV_INFO_CSS =
+        '.av-info{position:relative;display:inline-flex;align-items:center;justify-content:center;' +
+          'width:15px;height:15px;margin-left:5px;border-radius:50%;font-size:13px;line-height:1;' +
+          'cursor:pointer;opacity:.65;vertical-align:middle;outline:none}' +
+        '.av-info:hover{opacity:1}' +
+        '.av-info-pop{display:none;position:absolute;z-index:2147483600;top:20px;left:50%;transform:translateX(-50%);' +
+          'width:230px;max-width:70vw;background:#0b0e17;color:#e2e8f0;border:1px solid #2f4553;border-radius:8px;' +
+          'padding:10px 11px;font:400 11px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;' +
+          'box-shadow:0 8px 28px rgba(0,0,0,.5);text-align:left;white-space:normal}' +
+        '.av-info-pop b{color:#fff}' +
+        '.av-info:hover .av-info-pop,.av-info:focus .av-info-pop,.av-info.open .av-info-pop{display:block}' +
+        '.av-config input[type=checkbox],.av-row input[type=checkbox],.nv-row input[type=checkbox]' +
+          '{width:16px;height:16px;cursor:pointer;accent-color:#12d18e;justify-self:start;margin:0}';
+    function avEnsureInfoCss() {
+        if (!document.head || document.getElementById('av-info-css')) return;
+        var st = document.createElement('style'); st.id = 'av-info-css'; st.textContent = AV_INFO_CSS;
+        document.head.appendChild(st);
+    }
+    /* Tap-to-toggle (no hover on touch) + tap-outside to close. Idempotent. */
+    function avWireInfo(root) {
+        avEnsureInfoCss();
+        var icons = (root || document).querySelectorAll('.av-info');
+        for (var i = 0; i < icons.length; i++) {
+            (function (ic) {
+                if (ic.__wired) return; ic.__wired = true;
+                ic.addEventListener('click', function (e) { e.stopPropagation(); ic.classList.toggle('open'); });
+            })(icons[i]);
+        }
+        if (!document.__avInfoOutside) {
+            document.__avInfoOutside = true;
+            document.addEventListener('click', function () {
+                var open = document.querySelectorAll('.av-info.open');
+                for (var j = 0; j < open.length; j++) open[j].classList.remove('open');
+            });
+        }
+    }
+    /* === end body: autovault-shared === */
 
     /** Mark a registered tool as having run (so the panel status flips to
      *  "Running"). Mobile's boot calls tools directly rather than via
@@ -22408,7 +22467,7 @@ function tool_stake_7day_tracker() {
                          took a FRACTION (max 1), so 0.2 meant 20% and typing 30
                          for "30%" clamped to 1 and vaulted everything. Still
                          STORED as a fraction; only the display changed. -->
-                    <label>Preset</label>
+                    <label>Preset ${avInfoIconHTML()}</label>
                     <select id="av-preset">
                         <option value="balanced" title="Vaults under most conditions, a meaningful slice each time">Balanced</option>
                         <option value="bigwins" title="Slots, keno, or chasing a big multiplier: skim a little as you go, take a much bigger bite on a spike">Big Wins</option>
@@ -22424,6 +22483,8 @@ function tool_stake_7day_tracker() {
                     <input type="number" id="av-bwm" min="1" step="0.5">
                     <label>Check interval (sec)</label>
                     <input type="number" id="av-int" min="5" step="5">
+                    <label>Start on load</label>
+                    <input type="checkbox" id="av-autostart">
                 </div>
                 <div class="av-btn-row">
                     <button class="av-btn primary" id="av-toggle">Start</button>
@@ -22456,6 +22517,12 @@ function tool_stake_7day_tracker() {
         bwtInp.value = cfg.bigWinThreshold;
         bwmInp.value = cfg.bigWinMultiplier;
         intInp.value = Math.round(cfg.checkInterval / 1000);
+        const avAutoStartCb = gui.querySelector('#av-autostart');
+        if (avAutoStartCb) {
+            avAutoStartCb.checked = avAutoStart(PLATFORM);
+            avAutoStartCb.addEventListener('change', () => avAutoStart(PLATFORM, avAutoStartCb.checked));
+        }
+        avWireInfo(gui);
 
         const uiWidget = {
             render() {
@@ -22589,6 +22656,7 @@ function tool_stake_7day_tracker() {
            is how it came to be "running when I never turned it on". A tool that
            moves money starts only when you press Start, on this page load. */
         if (cfg.isRunning) { cfg.isRunning = false; saveCfg(); uiWidget.render(); }
+        if (avAutoStart(PLATFORM) && avToolEnabled()) startMonitor();
     }
 
     /* ============================================================
