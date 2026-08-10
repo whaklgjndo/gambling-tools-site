@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mobile
 // @namespace    https://whaklgjndo.github.io/gambling-tools/
-// @version      6.30
+// @version      6.31
 // @description  .
 // @author       .
 // @match        https://stake.com/*
@@ -313,8 +313,20 @@
           'box-shadow:0 8px 28px rgba(0,0,0,.5);text-align:left;white-space:normal}' +
         '.av-info-pop b{color:#fff}' +
         '.av-info:hover .av-info-pop,.av-info:focus .av-info-pop,.av-info.open .av-info-pop{display:block}' +
+        /* Self-drawn checkbox: the accent-color version relied on the browser's
+           native checkbox, which the host sites strip (appearance reset) - leaving
+           an invisible box. Draw our own border/fill/tick so it shows everywhere. */
         '.av-config input[type=checkbox],.av-row input[type=checkbox],.nv-row input[type=checkbox]' +
-          '{width:16px;height:16px;cursor:pointer;accent-color:#12d18e;justify-self:start;margin:0}';
+          '{-webkit-appearance:none!important;appearance:none!important;box-sizing:border-box;' +
+           'width:18px!important;height:18px!important;min-width:18px;flex:0 0 18px;padding:0;margin:0;' +
+           'border:2px solid #64748b!important;border-radius:4px!important;background:#0b0e17!important;' +
+           'cursor:pointer;position:relative;justify-self:start;vertical-align:middle;' +
+           'display:inline-block!important;opacity:1!important}' +
+        '.av-config input[type=checkbox]:checked,.av-row input[type=checkbox]:checked,.nv-row input[type=checkbox]:checked' +
+          '{background:#12d18e!important;border-color:#12d18e!important}' +
+        '.av-config input[type=checkbox]:checked::after,.av-row input[type=checkbox]:checked::after,.nv-row input[type=checkbox]:checked::after' +
+          '{content:"";position:absolute;left:4px;top:1px;width:5px;height:9px;box-sizing:border-box;' +
+           'border:solid #04121a;border-width:0 2px 2px 0;transform:rotate(45deg)}';
     function avEnsureInfoCss() {
         if (!document.head || document.getElementById('av-info-css')) return;
         var st = document.createElement('style'); st.id = 'av-info-css'; st.textContent = AV_INFO_CSS;
@@ -11501,7 +11513,7 @@ self.onmessage = async (e) => {
         if (tool_snakes._booted) return;
         tool_snakes._booted = true;
 
-        var SNK_VERSION  = '1.12';
+        var SNK_VERSION  = '1.13';
         /* Tuned to play as fast as the site will let it. The pace is set by the
            GAME, not by us: a control is pressed the instant it becomes usable
            again. A fixed cooldown would either be slower than the game or race
@@ -11667,6 +11679,20 @@ self.onmessage = async (e) => {
             if (raw && isFinite(raw.target) && raw.target >= 0) cfg.target = +raw.target;
         } catch (e) {}
         function saveCfg() { try { localStorage.setItem(KEY, JSON.stringify(cfg)); } catch (e) {} }
+
+        /* One-time migration (3.60): auto-cashout is now off by default, so
+           clear any target left saved from before the rename. Runs ONCE per
+           browser - the flag is set immediately, so a target you set AFTER
+           updating still sticks. New installs have no saved config, so this
+           just marks them done. */
+        try {
+            var TGT_RESET = 'snakes-target-reset-v1';
+            if (localStorage.getItem(TGT_RESET) !== '1') {
+                cfg.target = 0;
+                localStorage.setItem(TGT_RESET, '1');
+                saveCfg();
+            }
+        } catch (e) {}
 
         /* ---------------------------------------------------------------
            STATE MACHINE
