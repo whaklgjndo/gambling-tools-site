@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Desktop
 // @namespace    http://tampermonkey.net/
-// @version      3.53
+// @version      3.54
 // @description  .
 // @author       .
 // @match        https://nuts.gg/*
@@ -898,10 +898,8 @@
        Runs often and cheaply because transitions are short and start on demand;
        iframes too. At 1x it resets everything to normal. */
     function gsScaleAnimations() {
-        /* Switching games in-session (SPA nav, no reload) returns to 1.0x,
-           matching the fresh-load default. Checked in this fast loop so it lands
-           within a tick of the game changing, not up to a second later. */
-        if (location.pathname !== gsLastPath) { gsLastPath = location.pathname; gsSpeed = 1; gsPaint(); }
+        /* Speed persists across in-session game switches; it returns to 1.0x
+           only on a real page reload (it is never saved). */
         try {
             const docs = [document];
             try { document.querySelectorAll('iframe').forEach(function (fr) { try { if (fr.contentDocument) docs.push(fr.contentDocument); } catch (e) {} }); } catch (e) {}
@@ -23760,7 +23758,7 @@ function tool_stake_7day_tracker() {
         var PLAY_STEADY_MS     = 200;
         var MIN_GAP_MS   = 40;     // never two clicks inside a frame
         var FALLBACK_MS  = 500;    // act anyway if the busy frame was never seen
-        var MULT_WAIT_MS     = 1000;  // wait this long for a roll's multiplier to render
+        var MULT_WAIT_MS     = 1000;  // fallback only; releases the instant the multiplier changes (target reads)
         var MULT_SETTLE_MS   = 1500;  // grace for the profit text to catch up with the button
         var CASHOUT_GRACE_MS = 4000;  // keep retrying Cashout for this long once a target is hit
 
@@ -23846,7 +23844,7 @@ function tool_stake_7day_tracker() {
            not crash on a fast re-bet, so there both are zero - it re-arms the
            moment the Bet button returns, which the timeline probe showed was
            ~260ms sooner per round. The Nuts payout gate is unaffected. */
-        if (SITE !== SITES.nuts) { SETTLE_MS = 0; PLAY_STEADY_MS = 0; }
+        SETTLE_MS = 0; PLAY_STEADY_MS = 0;   // both sites re-arm at once; only the Nuts payout gate below waits, and only after a win
 
         function onPage()  { try { return SITE.onPage(); } catch (e) { return false; } }
         function enabled() { try { return isToolIdEnabled(TOOL_ID); } catch (e) { return true; } }
@@ -25957,7 +25955,11 @@ function tool_stake_7day_tracker() {
         '</div>' +
         '<div class="ut-body">' + GS_PANEL_ROW;
 
-        const groupOrder = ['Stake', 'Shuffle', 'Nuts', 'Other'];
+        /* Only the current site's tools - no point listing Stake tools on Nuts. */
+        var _host = location.hostname;
+        var _curGroup = /shuffle\./i.test(_host) ? 'Shuffle'
+                      : /(^|\.)nuts\.gg$/i.test(_host) ? 'Nuts' : 'Stake';
+        const groupOrder = [_curGroup, 'Other'];
         for (const groupName of groupOrder) {
             const list = groups[groupName];
             if (!list || !list.length) continue;
