@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Desktop
 // @namespace    http://tampermonkey.net/
-// @version      3.43
+// @version      3.44
 // @description  .
 // @author       .
 // @match        https://nuts.gg/*
@@ -23466,7 +23466,7 @@ function tool_stake_7day_tracker() {
         if (tool_snakes._booted) return;
         tool_snakes._booted = true;
 
-        var SNK_VERSION  = '1.07';
+        var SNK_VERSION  = '1.08';
         /* Tuned to play as fast as the site will let it. The pace is set by the
            GAME, not by us: a control is pressed the instant it becomes usable
            again. A fixed cooldown would either be slower than the game or race
@@ -23623,7 +23623,9 @@ function tool_stake_7day_tracker() {
         var lastChange  = Date.now();
         var cooldown    = 0;      // set only after a round ends
         var idleSince   = 0;      // when Bet/PLAY became clickable and stayed that way
-        var roundEndedAt = 0;     // when the last round settled - bounds the payout gate
+        var roundEndedAt   = 0;   // when the last round settled - bounds the payout gate
+        var weCashedOut    = false; // this round ended by our own target cashout
+        var roundWasPayout = false; // last round could pay out -> wait for its animation
         var clickAt     = 0;      // when we last pressed something
         var sawBusy     = false;  // that control has since gone disabled
         var multAtRoll  = null;   // the multiplier when we last pressed Roll
@@ -23745,6 +23747,15 @@ function tool_stake_7day_tracker() {
                 roundActive = false;
                 rollsDone   = 0;
                 targetPendingSince = 0;
+                /* Classify BEFORE the reset. Only a round that could PAY OUT
+                   waits for the payout animation - we cashed out ourselves, or
+                   the board had been handed over (the player's cashout, or the
+                   five-roll cap). A plain auto bust pays nothing and re-arms at
+                   once; gating every round is what made busts crawl in 1.07.
+                   Reading handedOver AFTER it was cleared always gave false, so
+                   cap wins skipped the gate and crashed - hence "before". */
+                roundWasPayout = (SITE === SITES.nuts) && (handedOver || weCashedOut);
+                weCashedOut = false;
                 handedOver  = false;
                 multAtRoll  = null;
                 phase       = 'idle';
@@ -23785,24 +23796,23 @@ function tool_stake_7day_tracker() {
             if (atIdle) {
                 if (clickAt && !settled(startB)) return;
                 if (nowT - idleSince < PLAY_STEADY_MS) return;
-                /* THE PAYOUT GATE. PLAY becomes clickable while a win's payout
+                /* THE PAYOUT GATE - only for rounds that actually paid out
+                   (roundWasPayout). PLAY becomes clickable while a win's payout
                    animation is still running, and pressing it there crashes
-                   nuts.gg (21 recorded rounds fine, one cap win, page dead).
-                   The centre tile holds the won multiplier for as long as the
-                   payout runs and reads 1.00x once the board is truly ready -
-                   measured live at idle, and visible in the crash recording,
-                   where PLAY was back while the tile still read 11.29x. So
-                   wait for the tile, not a fixed pause: a bust is already at
-                   1.00x and pays nothing, a win releases the moment the board
-                   does. Bounded, so a tile that never resets costs one hold,
-                   not a wedged run. */
-                if (SITE === SITES.nuts && roundEndedAt &&
+                   nuts.gg (21 recorded rounds fine, one cap win, page dead). For
+                   those rounds, wait for the centre tile to fall back to 1.00x
+                   rather than a fixed pause, so a short animation releases early;
+                   bounded, so a tile that never resets costs one hold not a
+                   wedge. A bust never reaches here - it pays nothing and re-arms
+                   at SETTLE_MS, which is what 1.07 broke by gating every round. */
+                if (roundWasPayout && roundEndedAt &&
                     nowT - roundEndedAt < NUTS_PAYOUT_HOLD_MS) {
                     var tile = null;
                     try { tile = SITE.mult(); } catch (e) {}
                     if (tile !== null && tile > 1) return;
                 }
                 if (click(startB)) {
+                    roundWasPayout = false;
                     /* Deliberately NOT stamping the watchdog here. Pressing Bet
                        is not evidence a bet happened — with an empty balance the
                        press does nothing at all, and stamping on the press would
@@ -23850,6 +23860,7 @@ function tool_stake_7day_tracker() {
                 try { co = SITE.cashout(); } catch (e) {}
                 if (co && !co.disabled) {
                     click(co);
+                    weCashedOut = true;
                     targetHits++;
                     setStatus('Hit ' + nowMult.toFixed(2) + '× (target ' + cfg.target + '×) — cashed out.');
                     return;
@@ -24050,7 +24061,8 @@ function tool_stake_7day_tracker() {
                 commitTarget(true);
                 running = true;
                 rollsDone = 0; handedOver = false; roundActive = false; multAtRoll = null;
-                phase = 'idle'; cooldown = 0; idleSince = 0; roundEndedAt = 0; lastChange = Date.now();
+                phase = 'idle'; cooldown = 0; idleSince = 0; roundEndedAt = 0;
+                weCashedOut = false; roundWasPayout = false; lastChange = Date.now();
                 goneSince = 0; visibleAgainAt = 0;
                 setStatus('Armed — ' + cfg.rolls + ' auto roll' + (cfg.rolls === 1 ? '' : 's') +
                           ' per round' +
