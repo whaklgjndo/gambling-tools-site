@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mobile
 // @namespace    https://whaklgjndo.github.io/gambling-tools/
-// @version      6.19
+// @version      6.20
 // @description  .
 // @author       .
 // @match        https://stake.com/*
@@ -138,10 +138,11 @@
          - The bundle @match already limits every hook to the supported domains
            (Stake / Shuffle / Nuts), so no extra domain gate is needed.
        ===================================================================== */
-    const GS_KEY = 'unified-game-speed';
     const GS_MIN = 0.5, GS_MAX = 100, GS_STEP = 0.5;   // toward uncapped; MAX jumps here
+    /* Always 1.0x on every game load / refresh. Deliberately NOT persisted -
+       each game begins at normal speed; the user opts in per session. */
     let gsSpeed = 1;
-    try { const _v = parseFloat(localStorage.getItem(GS_KEY)); if (isFinite(_v) && _v >= GS_MIN && _v <= GS_MAX) gsSpeed = _v; } catch (e) {}
+    let gsLastPath = location.pathname;
 
     /* The tools run in Tampermonkey's sandbox (@grant unsafeWindow), so the
        GAME's timers live on the PAGE window, not this scope's `window`. Patch
@@ -168,7 +169,6 @@
     function gsSet(v) {
         if (!isFinite(v)) return;
         gsSpeed = Math.max(GS_MIN, Math.min(GS_MAX, Math.round(v / GS_STEP) * GS_STEP));
-        try { localStorage.setItem(GS_KEY, String(gsSpeed)); } catch (e) {}
         gsScaleAnimations();   // re-rate everything in flight at the new speed
         gsPaint();
     }
@@ -273,6 +273,10 @@
        Runs often and cheaply because transitions are short and start on demand;
        iframes too. At 1x it resets everything to normal. */
     function gsScaleAnimations() {
+        /* Switching games in-session (SPA nav, no reload) returns to 1.0x,
+           matching the fresh-load default. Checked in this fast loop so it lands
+           within a tick of the game changing, not up to a second later. */
+        if (location.pathname !== gsLastPath) { gsLastPath = location.pathname; gsSpeed = 1; gsPaint(); }
         try {
             const docs = [document];
             try { document.querySelectorAll('iframe').forEach(function (fr) { try { if (fr.contentDocument) docs.push(fr.contentDocument); } catch (e) {} }); } catch (e) {}
