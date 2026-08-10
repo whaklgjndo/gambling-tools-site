@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mobile
 // @namespace    https://whaklgjndo.github.io/gambling-tools/
-// @version      6.16
+// @version      6.17
 // @description  .
 // @author       .
 // @match        https://stake.com/*
@@ -11389,7 +11389,7 @@ self.onmessage = async (e) => {
         if (tool_snakes._booted) return;
         tool_snakes._booted = true;
 
-        var SNK_VERSION  = '1.08';
+        var SNK_VERSION  = '1.09';
         /* Tuned to play as fast as the site will let it. The pace is set by the
            GAME, not by us: a control is pressed the instant it becomes usable
            again. A fixed cooldown would either be slower than the game or race
@@ -11408,7 +11408,7 @@ self.onmessage = async (e) => {
            round, 1.05 paused every payout, felt as "a delay after a hit on the
            first roll or two". The board itself says when it is ready - see the
            payout gate at the bet site. */
-        var SETTLE_MS           = 200;  // every round, both sites
+        var SETTLE_MS           = 200;  // Nuts re-arm pause (see site override below)
         var NUTS_PAYOUT_HOLD_MS = 2500; // Nuts: longest hold waiting for the tile to reset
         /* And a settling button is not a ready one: Bet/PLAY must have been
            quietly clickable for this long before it gets pressed. */
@@ -11495,6 +11495,13 @@ self.onmessage = async (e) => {
         }
         var SITE    = detectSite();
         var TOOL_ID = (SITE === SITES.nuts ? 'nuts' : 'stake') + '-snakes';
+
+        /* SETTLE_MS and PLAY_STEADY_MS exist only for the nuts.gg cap-win crash
+           (re-betting into the payout animation takes the page down). Stake does
+           not crash on a fast re-bet, so there both are zero - it re-arms the
+           moment the Bet button returns, which the timeline probe showed was
+           ~260ms sooner per round. The Nuts payout gate is unaffected. */
+        if (SITE !== SITES.nuts) { SETTLE_MS = 0; PLAY_STEADY_MS = 0; }
 
         function onPage()  { try { return SITE.onPage(); } catch (e) { return false; } }
         function enabled() { try { return isToolIdEnabled(TOOL_ID); } catch (e) { return true; } }
