@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Desktop
 // @namespace    http://tampermonkey.net/
-// @version      3.60
+// @version      3.61
 // @description  .
 // @author       .
 // @match        https://nuts.gg/*
@@ -949,7 +949,7 @@
            an invisible box. Draw our own border/fill/tick so it shows everywhere. */
         '.av-config input[type=checkbox],.av-row input[type=checkbox],.nv-row input[type=checkbox]' +
           '{-webkit-appearance:none!important;appearance:none!important;box-sizing:border-box;' +
-           'width:18px!important;height:18px!important;min-width:18px;flex:0 0 18px;padding:0;margin:0;' +
+           'width:18px!important;height:18px!important;min-width:18px!important;min-height:0!important;flex:0 0 18px;padding:0!important;margin:0;' +
            'border:2px solid #64748b!important;border-radius:4px!important;background:#0b0e17!important;' +
            'cursor:pointer;position:relative;justify-self:start;vertical-align:middle;' +
            'display:inline-block!important;opacity:1!important}' +
