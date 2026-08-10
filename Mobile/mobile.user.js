@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mobile
 // @namespace    https://whaklgjndo.github.io/gambling-tools/
-// @version      6.17
+// @version      6.18
 // @description  .
 // @author       .
 // @match        https://stake.com/*
@@ -139,20 +139,28 @@
            (Stake / Shuffle / Nuts), so no extra domain gate is needed.
        ===================================================================== */
     const GS_KEY = 'unified-game-speed';
-    const GS_MIN = 0.5, GS_MAX = 10, GS_STEP = 0.5;
+    const GS_MIN = 0.5, GS_MAX = 100, GS_STEP = 0.5;   // toward uncapped; MAX jumps here
     let gsSpeed = 1;
     try { const _v = parseFloat(localStorage.getItem(GS_KEY)); if (isFinite(_v) && _v >= GS_MIN && _v <= GS_MAX) gsSpeed = _v; } catch (e) {}
 
-    /* Keep a raw ref so our OWN housekeeping timer is not itself accelerated. */
-    const gsRawSetInterval = window.setInterval;
-    (function gsInstall() {
-        if (window.__unifiedGameSpeed) return;
-        window.__unifiedGameSpeed = true;
-        const oST = window.setTimeout, oSI = window.setInterval, oRAF = window.requestAnimationFrame;
-        if (typeof oST === 'function') window.setTimeout = function (cb, d, ...a) { return oST.call(this, cb, (gsSpeed > 0 && typeof d === 'number') ? d / gsSpeed : d, ...a); };
-        if (typeof oSI === 'function') window.setInterval = function (cb, d, ...a) { return oSI.call(this, cb, (gsSpeed > 0 && typeof d === 'number') ? d / gsSpeed : d, ...a); };
-        if (typeof oRAF === 'function') window.requestAnimationFrame = function (cb) { return oRAF.call(this, function (ts) { return cb(gsSpeed > 0 ? ts * gsSpeed : ts); }); };
-    })();
+    /* The tools run in Tampermonkey's sandbox (@grant unsafeWindow), so the
+       GAME's timers live on the PAGE window, not this scope's `window`. Patch
+       there - the same escape hatch the fetch/socket hooks use - or nothing the
+       game does would speed up at all. A standalone @grant-none build falls back
+       to window, where the two are one and the same. */
+    const GS_PAGE = (typeof unsafeWindow !== 'undefined' && unsafeWindow) ? unsafeWindow : window;
+    const gsRawSetInterval = GS_PAGE.setInterval.bind(GS_PAGE);
+    function gsPatchWindow(w) {
+        try {
+            if (!w || w.__unifiedGameSpeed || typeof w.setTimeout !== 'function') return;
+            w.__unifiedGameSpeed = true;
+            const oST = w.setTimeout, oSI = w.setInterval, oRAF = w.requestAnimationFrame;
+            w.setTimeout = function (cb, d, ...a) { return oST.call(w, cb, (gsSpeed > 0 && typeof d === 'number') ? d / gsSpeed : d, ...a); };
+            w.setInterval = function (cb, d, ...a) { return oSI.call(w, cb, (gsSpeed > 0 && typeof d === 'number') ? d / gsSpeed : d, ...a); };
+            if (typeof oRAF === 'function') w.requestAnimationFrame = function (cb) { return oRAF.call(w, function (ts) { return cb(gsSpeed > 0 ? ts * gsSpeed : ts); }); };
+        } catch (e) {}
+    }
+    gsPatchWindow(GS_PAGE);
 
     function gsSet(v) {
         if (!isFinite(v)) return;
@@ -209,6 +217,13 @@
             tmp.innerHTML = GS_CTL_HTML;
             host.appendChild(tmp.firstChild);
         }
+        /* Games inside an iframe (some providers) run their own timers. Patch
+           every same-origin frame we can reach; cross-origin frames throw and
+           are skipped, exactly as the reference speed script does. */
+        try {
+            const frames = document.querySelectorAll('iframe');
+            for (let i = 0; i < frames.length; i++) { try { gsPatchWindow(frames[i].contentWindow); } catch (e) {} }
+        } catch (e) {}
         gsPaint();
     }
 
@@ -223,8 +238,12 @@
         if (!b) return;
         e.preventDefault(); e.stopPropagation();
         const act = b.getAttribute('data-gs');
-        if (act === 'dec') gsSet(gsSpeed - GS_STEP);
-        else if (act === 'inc') gsSet(gsSpeed + GS_STEP);
+        /* Fine near 1x, coarser as it climbs, so the ceiling is reachable by
+           hand and MAX jumps straight there. */
+        const upStep = gsSpeed < 5 ? 0.5 : gsSpeed < 20 ? 1 : 5;
+        const dnStep = gsSpeed <= 5 ? 0.5 : gsSpeed <= 20 ? 1 : 5;
+        if (act === 'dec') gsSet(gsSpeed - dnStep);
+        else if (act === 'inc') gsSet(gsSpeed + upStep);
         else if (act === 'max') gsSet(GS_MAX);
         else if (act === 'rst') gsSet(1);
     }, true);
