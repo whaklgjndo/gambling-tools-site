@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mobile
 // @namespace    https://whaklgjndo.github.io/gambling-tools/
-// @version      6.32
+// @version      6.33
 // @description  .
 // @author       .
 // @match        https://stake.com/*
@@ -11513,7 +11513,7 @@ self.onmessage = async (e) => {
         if (tool_snakes._booted) return;
         tool_snakes._booted = true;
 
-        var SNK_VERSION  = '1.13';
+        var SNK_VERSION  = '1.14';
         /* Tuned to play as fast as the site will let it. The pace is set by the
            GAME, not by us: a control is pressed the instant it becomes usable
            again. A fixed cooldown would either be slower than the game or race
@@ -11769,8 +11769,10 @@ self.onmessage = async (e) => {
            without that it becomes the "it stops at random" bug. */
         var NO_PROGRESS_MS = 5000;
         var GAME_GONE_MS   = 2000;   // controls absent this long: the page is gone
+        var MAX_BET_TRIES  = 4;      // Bet presses in a row with no round starting -> stop (empty balance / rejected bet)
         var goneSince      = 0;
         var visibleAgainAt = 0;
+        var betTries       = 0;      // Bet presses since a round last went live
 
         function setStatus(t) { statusText = t; paint(); }
 
@@ -11830,7 +11832,7 @@ self.onmessage = async (e) => {
                itself. Any one of those is enough, which is what lets the same
                code cover Nuts without having seen its mid-round markup. */
             var live = (!startB) || !!coB || canRoll;
-            if (live) roundActive = true;
+            if (live) { roundActive = true; betTries = 0; }
             /* Reset on every frame the button is not offering itself, so the
                steadiness window only counts an uninterrupted run. */
             if (atIdle) { if (!idleSince) idleSince = Date.now(); } else { idleSince = 0; }
@@ -11968,6 +11970,14 @@ self.onmessage = async (e) => {
                        round actually going live. */
                     phase = 'rolling';
                     setStatus('Betting…');
+                    /* Several Bet presses with no round starting means the
+                       balance is empty or the bet is being rejected; stop rather
+                       than hammer Bet and stack "not enough funds" errors (seen
+                       live: 178 rounds, then a 0.00 balance stuck on "Betting…").
+                       Reset on any live round, so a healthy run never trips it. */
+                    if (++betTries >= MAX_BET_TRIES) {
+                        stop('Stopped: bets aren\'t going through — check your balance.');
+                    }
                 }
                 return;
             }
@@ -12215,7 +12225,7 @@ self.onmessage = async (e) => {
                 commitTarget(true);
                 running = true;
                 rollsDone = 0; handedOver = false; roundActive = false; multAtRoll = null;
-                multsSeen = 0; lastMultSeen = null; sawPayoutAnim = false;
+                multsSeen = 0; lastMultSeen = null; sawPayoutAnim = false; betTries = 0;
                 phase = 'idle'; cooldown = 0; idleSince = 0; roundEndedAt = 0;
                 weCashedOut = false; roundWasPayout = false; lastChange = Date.now();
                 goneSince = 0; visibleAgainAt = 0;
