@@ -11272,7 +11272,7 @@ self.onmessage = async (e) => {
         if (tool_snakes._booted) return;
         tool_snakes._booted = true;
 
-        var SNK_VERSION  = '1.05';
+        var SNK_VERSION  = '1.06';
         /* Tuned to play as fast as the site will let it. The pace is set by the
            GAME, not by us: a control is pressed the instant it becomes usable
            again. A fixed cooldown would either be slower than the game or race
@@ -11822,13 +11822,19 @@ self.onmessage = async (e) => {
                but Nuts' only exists once a round is in progress — so the field is
                left enabled and the check below simply never trips while there is
                nothing to read, rather than being greyed out on a cold page. */
-            elTarget.addEventListener('change', function () {
-                var v = parseFloat(this.value);
+            /* Commit as they TYPE. `change` alone fires on blur, and on a
+               phone the input never blurs - you type 2 and tap START, no blur,
+               no commit, and the run silently has no target. Measured on the
+               live page: value "2" + input event -> cfg.target still 0. */
+            function commitTarget(echo) {
+                var v = parseFloat(elTarget.value);
                 cfg.target = (isFinite(v) && v > 0) ? v : 0;
-                if (!cfg.target) this.value = '';
+                if (echo && !cfg.target) elTarget.value = '';
                 saveCfg();
                 paint();
-            });
+            }
+            elTarget.addEventListener('input',  function () { commitTarget(false); });
+            elTarget.addEventListener('change', function () { commitTarget(true);  });
 
 
             elPills.addEventListener('click', function (e) {
@@ -11840,11 +11846,17 @@ self.onmessage = async (e) => {
             });
             el.querySelector('[data-sk="go"]').addEventListener('click', function () {
                 if (running) return;
+                /* The field is the truth, whatever gesture put the number
+                   there. Without this, a value visible in the box could be
+                   unarmed and nothing would ever say so. */
+                commitTarget(true);
                 running = true;
                 rollsDone = 0; handedOver = false; roundActive = false; multAtRoll = null;
                 phase = 'idle'; cooldown = 0; idleSince = 0; weCashedOut = false; lastChange = Date.now();
                 goneSince = 0; visibleAgainAt = 0;
-                setStatus('Armed — ' + cfg.rolls + ' auto roll' + (cfg.rolls === 1 ? '' : 's') + ' per round.');
+                setStatus('Armed — ' + cfg.rolls + ' auto roll' + (cfg.rolls === 1 ? '' : 's') +
+                          ' per round' +
+                          (cfg.target > 0 ? ', cashing out at ' + cfg.target + '×.' : '.'));
             });
             el.querySelector('[data-sk="halt"]').addEventListener('click', function () {
                 stop('Stopped. The current round is yours to finish.');
