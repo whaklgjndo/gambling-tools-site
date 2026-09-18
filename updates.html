@@ -52,6 +52,22 @@
         <!-- ============ Add new releases above this line (newest first) ============ -->
         <article class="release latest" data-reveal>
           <div class="release-head">
+            <span class="ver-badge">v3.81</span>
+            <span class="chip">Desktop</span>
+            <span class="ver-badge">v6.50</span>
+            <span class="chip">Mobile</span>
+            <span class="rel-date">September 18, 2026</span>
+          </div>
+          <h2 class="rel-title">The 7-Day Wager Tracker comes to Nuts</h2>
+          <ul class="changes">
+            <li><span class="tag added">Added</span><span class="ctxt"><b>Nuts: 7-Day Wager Tracker.</b> A pill sits next to your balance showing your rolling 7-day wager in SOL or USD; click it for the full dashboard &mdash; goal, wager chart and window detail &mdash; in the Nuts purple. It reads your bets straight from nuts.gg's own game log, so it counts <b>every bet from every device</b>, including play from before you installed it, and it's accurate on first load &mdash; no week of calibration. A heavy week takes a few minutes to read the first time.</span></li>
+            <li><span class="tag added">Added</span><span class="ctxt"><b>Nuts: real Profit / Loss.</b> Worked out from money in and out &mdash; <b>balance + vault + withdrawn &minus; deposited</b> &mdash; using your full nuts.gg wallet history, plus the same figure for just the last 7 days. USD uses today's SOL price, the same as nuts.gg's own History page.</span></li>
+            <li><span class="tag added">Added</span><span class="ctxt"><b>Nuts: Rewards &amp; Tips for the last 7 days.</b> Rakeback, lossback, race winnings, giveaways, tips received and tips sent, each on its own line.</span></li>
+            <li><span class="tag fixed">Fixed</span><span class="ctxt"><b>Stake tracker: a wrong clock could wipe out the total.</b> If a snapshot was ever saved while a device's clock was running ahead, the 7-day total collapsed towards zero until real time caught up with it. Snapshots stamped in the future are now ignored, and a tracker that already has one repairs itself on its next save.</span></li>
+          </ul>
+        </article>
+        <article class="release" data-reveal>
+          <div class="release-head">
             <span class="ver-badge">v3.53</span>
             <span class="chip">Desktop</span>
             <span class="ver-badge">v6.24</span>

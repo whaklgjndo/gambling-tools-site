@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Desktop
 // @namespace    http://tampermonkey.net/
-// @version      3.62
+// @version      3.81
 // @description  .
 // @author       .
 // @match        https://nuts.gg/*
@@ -472,7 +472,7 @@
     const QUICK_TOGGLE_STYLE_ID = 'unified-tools-quick-toggle-css';
     // Tools managed only from the control-panel gear — no bottom-left quick-toggle
     // chip (the account-wide auto-vaults and the always-on 7-day wager tracker).
-    const NO_QUICK_TOGGLE_IDS = new Set(['stake-autovault', 'shuffle-autovault', 'nuts-autovault', 'stake-7day-tracker']);
+    const NO_QUICK_TOGGLE_IDS = new Set(['stake-autovault', 'shuffle-autovault', 'nuts-autovault', 'stake-7day-tracker', 'nuts-7day-tracker']);
 
     function injectQuickToggleCss() {
         if (document.getElementById(QUICK_TOGGLE_STYLE_ID)) return;
@@ -15999,9 +15999,10 @@ function tool_stake_7day_tracker() {
        PRIVACY: everything is stored locally in this browser. Nothing is sent out.
        ========================================================================= */
 
-    var VERSION   = '2.24.2';                       // bump on every change; surfaced in the HUD (data-ver) so the running build is verifiable
+    var VERSION   = '2.25.0';                       // bump on every change; surfaced in the HUD (data-ver) so the running build is verifiable
     var WINDOW_MS = 7 * 24 * 60 * 60 * 1000;       // rolling window: 7 days
     var KEEP_MS   = 8 * 24 * 60 * 60 * 1000;       // retain bets a little past the window
+    var CLOCK_SKEW_MS = 10 * 60 * 1000;            // how far ahead of now() a snapshot may legitimately be stamped
     var STORE_KEY = 'stk7w:v5';   // v5: data partitioned per account (userId)
     var GQL_RE    = /graphql/i;
 
@@ -16144,9 +16145,19 @@ function tool_stake_7day_tracker() {
         };
     }
     // Union an anchor-style array (by timestamp), sorted ascending.
+    // FUTURE-DATED snapshots are discarded. One can enter from a device whose clock was
+    // briefly wrong (or from an import taken on one). It then sorts to the END of the array
+    // and, because every prune keeps whatever is newer than now-9d, a future stamp NEVER
+    // expires - so rolling() reads its stale cum as "lifetime now" and the headline collapses
+    // towards 0 until real time catches up with the bad stamp. Filtering here (the one choke
+    // point every merge, import and multi-tab save passes through) also repairs a store that
+    // is already poisoned, on the next save.
     function unionAnchors(aArr, bArr) {
-        var byT = {}, ord = [];
-        function addP(p) { if (!p) return; var k = '' + p.t; if (!(k in byT)) { byT[k] = p; ord.push(k); } }
+        var byT = {}, ord = [], maxT = Date.now() + CLOCK_SKEW_MS;
+        function addP(p) {
+            if (!p || typeof p.t !== 'number' || !isFinite(p.t) || p.t <= 0 || p.t > maxT) return;
+            var k = '' + p.t; if (!(k in byT)) { byT[k] = p; ord.push(k); }
+        }
         (aArr || []).forEach(addP); (bArr || []).forEach(addP);
         return ord.map(function (k) { return byT[k]; }).sort(function (x, y) { return x.t - y.t; });
     }
@@ -16387,7 +16398,7 @@ function tool_stake_7day_tracker() {
         if (!a || !an || !an.length) {
             return { ready: false, rolling: 0, full: false, realFull: false, coverMs: 0, realCoverMs: 0, since: 0, live: 0 };
         }
-        var cur = an[an.length - 1].cum;
+        var cur = latestCum(an);
         // Baseline = the OLDEST snapshot at/after the 7-day cutoff, so the measured window
         // is always a SUBSET of the true trailing-168h window (a guaranteed lower bound).
         var baseline = null;
@@ -16434,7 +16445,7 @@ function tool_stake_7day_tracker() {
     // (i.e., when enough wager ages off the back of the 7d window). null if no usable history.
     function eligTimeLeftMs(req) {
         var a = acct(); if (!a || !a.ltAnchors || a.ltAnchors.length < 2) return null;
-        var an = a.ltAnchors, now = Date.now(), cur = an[an.length - 1].cum, target = cur - req;
+        var an = a.ltAnchors, now = Date.now(), cur = latestCum(an), target = cur - req;
         if (target <= an[0].cum) return WINDOW_MS;                       // would take the full window (or more)
         var lo = 0, hi = an.length - 1;                                  // first index with cum >= target
         while (lo < hi) { var mid = (lo + hi) >> 1; if (an[mid].cum < target) lo = mid + 1; else hi = mid; }
@@ -16573,10 +16584,27 @@ function tool_stake_7day_tracker() {
 
     /* --------------------- lifetime wager (the total) -------------------- */
     var KEEP_ANCHOR_MS = 9 * 24 * 60 * 60 * 1000;
+    // The newest snapshot that isn't stamped in the future. Never trust the array tail for
+    // "lifetime now": unionAnchors sorts by time, so one bad future stamp owns that slot.
+    function latestCum(an) {
+        var maxT = Date.now() + CLOCK_SKEW_MS;
+        for (var i = an.length - 1; i >= 0; i--) if (an[i].t <= maxT) return an[i].cum;
+        return an.length ? an[an.length - 1].cum : 0;
+    }
+    // Strip future-stamped snapshots in place (repairs a store poisoned before this fix).
+    function dropFutureAnchors(a) {
+        var maxT = Date.now() + CLOCK_SKEW_MS, an = a.ltAnchors;
+        if (!an || !an.length) return 0;
+        var kept = an.filter(function (p) { return p && typeof p.t === 'number' && isFinite(p.t) && p.t > 0 && p.t <= maxT; });
+        var dropped = an.length - kept.length;
+        if (dropped) { a.ltAnchors = kept; note('dropped ' + dropped + ' future-dated snapshot(s)'); }
+        return dropped;
+    }
     // Record a lifetime snapshot (monotonic; throttle unchanged; prune past the window+margin).
     function recordLt(a, cum) {
         if (!isFinite(cum) || cum < 0) return;
         if (!a.ltAnchors) a.ltAnchors = [];
+        dropFutureAnchors(a);          // a future-stamped tail would gate every push below on a stale cum
         var now = Date.now(), last = a.ltAnchors[a.ltAnchors.length - 1];
         if (last) {
             if (cum < last.cum - 1e-6) return;                                            // lifetime can't drop
@@ -17887,6 +17915,1906 @@ function tool_stake_7day_tracker() {
         setInterval(fetchCodeClaims, 45 * 1000);
         document.addEventListener('visibilitychange', function () { if (!document.hidden) { fetchLifetime(); fetchRaffle(); fetchBuckets(); fetchCodeClaims(); } });
         setInterval(render, 1000);             // keep the rolling window + fall-off current
+    }
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', start);
+    } else {
+        start();
+    }
+}
+
+
+/* === source: nuts-7day-tracker — embedded as a bundle tool === */
+function tool_nuts_7day_tracker() {
+    'use strict';
+    if (window.__nuts7wToolBooted) return;
+    window.__nuts7wToolBooted = true;
+
+    /* =========================================================================
+       Nuts.gg 7-Day Rolling Wager Tracker  (bet-ledger model)
+       -------------------------------------------------------------------------
+       HOW IT WORKS — and why the internals are not a copy of the Stake build.
+
+       Stake exposes a lifetime, never-resetting "amount wagered" counter, so the
+       Stake tracker snapshots that counter and differences two snapshots 168h
+       apart. nuts.gg exposes no such counter. What it does expose is better for
+       this purpose: the account's own bet ledger, one row per bet, with a real
+       timestamp. So this build SUMS A LEDGER instead of differencing a counter.
+
+       - BACKFILL (the total): query gameLog(last, before, from, to, gameType,
+         isWin) { id isWin profit wager createdAt gameType }, paged backwards from
+         the newest bet until the 168h edge is crossed. That is the same data the
+         site's own /statistics/game-log page renders, so the figure includes play
+         from EVERY device and from before this script was installed — the two
+         things a capture-only tracker can never have. Two things about that query
+         are learned rather than guessed, and both fail as a bare "Unexpected
+         error" that reads like a broken selection set:
+             * every optional variable must be PRESENT, nulls included;
+             * last is capped at 30 — asking for 31 is an error.
+         Wagers and profits come back in LAMPORTS; fromWire() converts.
+
+       - LIVE: the site's own graphql-ws socket pushes myGames frames, one per
+         resolved bet, carrying an exact id and an explicit isWin. Those are folded
+         in the instant they land, so the headline moves with play rather than
+         waiting for a poll. The exact id is what lets the live path and the
+         backfill path never double-count the same bet.
+
+       - TRANSPORT: we do not open a socket of our own and we never touch
+         credentials. We ride the socket the page has already authenticated, the
+         same way the Auto-Vault tool posts its deposit mutation. Our request ids
+         are prefixed n7w- so they cannot collide with the site client's own.
+
+       - SOL PRICE: read from localStorage["most-recent-sol-price"], which the
+         site's client keeps current, plus any solPrice frame that happens to pass
+         on the socket. Deliberately NOT a subscription of our own — the price is a
+         display convenience and is not worth adding traffic for.
+
+       - STORE SHAPE: the same bounded, per-writer, max-merged bins the Stake build
+         uses, which is what lets the fall-off chart and the multi-tab merge carry
+         over unchanged. Raw bets are a small debug ring only; the totals come from
+         the bins, so a heavy week cannot blow the localStorage quota.
+
+       PRIVACY: everything is stored locally in this browser. Nothing is sent out,
+       and no query this tool sends asks for an email, a token or a password.
+       ========================================================================= */
+
+    var VERSION   = '1.0.0';
+    var WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+    var STORE_KEY = 'nuts7w:v1';
+    var LAMPORTS_PER_SOL = 1e9;
+
+    var GSPAN_MIN  = 5 * 60 * 1000;
+    var GSPAN_MAX  = WINDOW_MS;
+
+    var GBIN_MS  = 60 * 1000;             // one ledger cell per minute
+
+    /* nuts.gg is SOL-denominated. Amounts are ALWAYS stored in SOL under the one
+       SOL record; USD is a display conversion applied at render time and only
+       there, so a price that arrives late (or never) cannot corrupt a stored
+       figure, and switching the display is never a lossy round-trip. */
+    /* Format of the bet ledger. Bumped when previously stored counts can no
+       longer be trusted, and anything written under an older value is thrown
+       away on load and read again from nuts.gg.
+         v3: counts are per-minute cells written from complete reads of the
+             game log. Everything before it counted live frames and summed
+             per-tab copies, which over-counted -- see THE LEDGER in part 2.
+         v4: v3 paged with nuts.gg's cursor, which is cut to whole seconds and
+             skipped bets on every page; busy minutes were stored ~20% short. */
+    var LEDGER_V  = 4;
+    var CCY_KEY   = 'SOL';
+    var TRACK_CCY = ['SOL', 'USD'];
+    var solPrice  = 0;
+
+    function fromWire(lamports) { return (+lamports || 0) / LAMPORTS_PER_SOL; }
+
+    /* ----------------------------- storage ------------------------------- */
+    function blankAccount() {
+        return {
+            name: null, target: 0, targetAt: 0,
+            bf: { done: false, oldestT: 0, pages: 0, err: '', at: 0 },
+            ledgerV: LEDGER_V,
+            min: {},     // minuteKey -> [bets, wager, profit], wager/profit in lamports
+            days: {},    // dayKey -> { top, bottom }: every minute in [bottom, top) read whole
+            // deposits / withdrawals, lifetime, from transactionHistory
+            money: { v: 0, dep: 0, wd: 0, at: 0, complete: false,
+                     // the rolling window: its share of those, plus credits and tips
+                     winCredits: 0, winTips: 0, winDep: 0, winWd: 0 }
+        };
+    }
+    var DEFAULTS = {
+        v: 1,
+        currency: 'SOL',
+        // defaultPanelOpen() is defined by the platform half of this build and
+        // hoists, so it is callable here: desktop opens the dashboard on a first
+        // run, mobile stays collapsed to the pill rather than throwing a
+        // full-screen sheet over the page.
+        ui: { open: defaultPanelOpen(), left: null, top: null, graphSpan: 604800000, graphLive: true },
+        accounts: {},
+        active: null,
+        debug: []
+    };
+    var S = load();
+    function load() {
+        try {
+            var raw = localStorage.getItem(STORE_KEY);
+            if (raw) {
+                var p = JSON.parse(raw);
+                return Object.assign({}, DEFAULTS, p, { ui: Object.assign({}, DEFAULTS.ui, p.ui || {}) });
+            }
+        } catch (e) {}
+        return JSON.parse(JSON.stringify(DEFAULTS));
+    }
+    if (TRACK_CCY.indexOf(S.currency) < 0) S.currency = TRACK_CCY[0];
+
+    /* --- multi-tab safe merge ---------------------------------------------
+       Two copies of one minute's cell (two tabs, or a reload) both come from
+       reading that minute of nuts.gg's log, so the one with more bets is simply
+       the later read. Taking it -- whole, so bets, wager and profit always come
+       from the same read -- is exact, and unlike adding the copies it cannot
+       double anything. */
+    function mergeCells(x, y) {
+        var out = {};
+        [x, y].forEach(function (src) {
+            if (!src) return;
+            Object.keys(src).forEach(function (k) {
+                var c = src[k];
+                if (!c || !(c[0] >= 0)) return;
+                if (!out[k] || c[0] > out[k][0]) out[k] = [c[0], c[1], c[2]];
+            });
+        });
+        return out;
+    }
+    /* Coverage records are never combined into a wider interval: two tabs can
+       each have read a different stretch of the same day, and joining them
+       would claim the gap between as read. Keep one record whole -- the one
+       reaching furthest forward -- and let anything it lacks be read again,
+       which costs a little traffic and never costs accuracy. */
+    function mergeDays(x, y) {
+        var out = {};
+        [x, y].forEach(function (src) {
+            if (!src) return;
+            Object.keys(src).forEach(function (k) {
+                var d = src[k];
+                if (!d || !d.top) return;
+                var o = out[k];
+                if (!o || d.top > o.top || (d.top === o.top && d.bottom < o.bottom)) out[k] = { top: d.top, bottom: d.bottom };
+            });
+        });
+        return out;
+    }
+    function mergeAccount(aa, bb) {
+        aa = aa || blankAccount(); bb = bb || blankAccount();
+        var newer = (bb.targetAt || 0) > (aa.targetAt || 0) ? bb : aa;
+        var abf = aa.bf || {}, bbf = bb.bf || {}, bNewer = (bbf.at || 0) > (abf.at || 0);
+        var aOk = aa.ledgerV === LEDGER_V, bOk = bb.ledgerV === LEDGER_V;
+        return {
+            name: bb.name || aa.name,
+            target: newer.target || 0,
+            targetAt: newer.targetAt || 0,
+            bf: {
+                done: !!(bNewer ? bbf.done : abf.done),
+                oldestT: bNewer ? (bbf.oldestT || 0) : (abf.oldestT || 0),
+                pages: Math.max(abf.pages || 0, bbf.pages || 0),
+                err: bNewer ? (bbf.err || '') : (abf.err || ''),
+                at: Math.max(abf.at || 0, bbf.at || 0)
+            },
+            ledgerV: LEDGER_V,
+            // Only ledger data written under the current format is kept. Old
+            // per-tab bins (`cur`) and day markers (`chunks`) are dropped here,
+            // which is also what frees their space on disk.
+            min: mergeCells(aOk ? aa.min : null, bOk ? bb.min : null),
+            days: mergeDays(aOk ? aa.days : null, bOk ? bb.days : null),
+            // whichever tab last totalled the wallet wins; it is a full re-read
+            money: ((bb.money && bb.money.at) || 0) >= ((aa.money && aa.money.at) || 0)
+                ? (bb.money || aa.money) : (aa.money || bb.money)
+        };
+    }
+    function mergeState(a, b) {
+        var accounts = {}, ids = {};
+        Object.keys(a.accounts || {}).forEach(function (i) { ids[i] = 1; });
+        Object.keys(b.accounts || {}).forEach(function (i) { ids[i] = 1; });
+        Object.keys(ids).forEach(function (i) { accounts[i] = mergeAccount((a.accounts || {})[i], (b.accounts || {})[i]); });
+        return Object.assign({}, a, b, {
+            accounts: accounts,
+            active: b.active || a.active,
+            ui: Object.assign({}, a.ui || {}, b.ui || {}),
+            currency: b.currency || a.currency
+        });
+    }
+    function readStored() { try { return JSON.parse(localStorage.getItem(STORE_KEY) || '{}'); } catch (e) { return {}; } }
+    function writeMerged() {
+        try {
+            var out = mergeState(Object.assign({}, DEFAULTS, readStored()), S);
+            S.accounts = out.accounts;
+            localStorage.setItem(STORE_KEY, JSON.stringify(out));
+        } catch (e) {
+            try { localStorage.setItem(STORE_KEY, JSON.stringify(S)); } catch (e2) {}
+        }
+    }
+    var saveT = 0;
+    function save() {
+        if (saveT) return;
+        saveT = setTimeout(function () { saveT = 0; writeMerged(); }, 400);
+    }
+    function flushSave() { if (saveT) { clearTimeout(saveT); saveT = 0; } writeMerged(); }
+
+    function acct(create) {
+        if (!S.active) return null;
+        if (!S.accounts[S.active] && create) S.accounts[S.active] = blankAccount();
+        var a = S.accounts[S.active] || null;
+        if (a && !a.bf) a.bf = blankAccount().bf;
+        /* Throw away bet counts stored under an older ledger format. They were
+           built by counting live frames and adding up per-tab copies, and on a
+           real account that put one minute's 36 bets on disk as several hundred.
+           Nothing is lost that matters: every figure is re-read from nuts.gg's
+           own log, and the goal, wallet totals and settings are untouched. */
+        if (a && a.ledgerV !== LEDGER_V) {
+            a.min = {};
+            a.days = {};
+            delete a.cur; delete a.chunks; delete a.chunksV; delete a.newestT;
+            a.ledgerV = LEDGER_V;
+            a.bf = { done: false, oldestT: 0, pages: 0, err: '', at: Date.now() };
+            note('discarded bet counts from an older build; re-reading from nuts.gg');
+            save();
+        }
+        return a;
+    }
+    function getTarget() { var a = acct(); return a ? (a.target || 0) : 0; }
+    /* --------------------------- number helpers --------------------------
+       Everything stored is SOL. disp() is the ONE place USD enters, so a price
+       that arrives late only changes what is drawn, never what is kept. */
+    function disp(sol) { return S.currency === 'USD' ? (+sol || 0) * solPrice : (+sol || 0); }
+    function fmt(n) {
+        n = +n || 0;
+        if (S.currency === 'USD') return n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+        var x = Math.abs(n);
+        if (x >= 1000) return n.toLocaleString(undefined, { maximumFractionDigits: 2 });
+        if (x >= 1) return n.toFixed(4);
+        return n.toFixed(6);
+    }
+    function fmtShort(n) {
+        if (!isFinite(n)) return '–';
+        var x = Math.abs(n);
+        if (x >= 1e6) return (n / 1e6).toFixed(2) + 'M';
+        if (x >= 1e3) return (n / 1e3).toFixed(1) + 'k';
+        if (S.currency === 'USD') return n.toFixed(2);
+        if (x >= 1) return n.toFixed(3);
+        if (x > 0) return n.toFixed(5);
+        return '0';
+    }
+    function shortDate(t) {
+        try { return new Date(t).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }); } catch (e) { return '—'; }
+    }
+    function formatDur(ms) {
+        if (ms <= 0) return '0m';
+        var d = Math.floor(ms / 86400000); ms -= d * 86400000;
+        var h = Math.floor(ms / 3600000); ms -= h * 3600000;
+        var m = Math.floor(ms / 60000);
+        return (d ? d + 'd ' : '') + ((d || h) ? h + 'h ' : '') + m + 'm';
+    }
+    function note(s) { S.debug.push(Date.now() + ' ' + s); while (S.debug.length > 30) S.debug.shift(); }
+
+    /* =====================================================================
+       TRANSPORT — ride the page's own authenticated graphql-ws socket.
+
+       We never open a socket, never read a token and never send credentials.
+       The page authenticates its socket on the upgrade (cookies); once it is
+       open, a well-formed frame on it is answered. This is the same channel
+       the Auto-Vault tool posts its deposit mutation on.
+
+       Our ids are prefixed so they cannot collide with the site client's own
+       numeric ids — a collision would hand our answer to their code, or theirs
+       to ours, and both would look like a random UI fault.
+       ===================================================================== */
+    var WS_URL_MATCH = 'nuts.tools/graphql';
+    var sock = null;             // the page socket we have latched onto
+    var sockAcked = false;       // connection_ack seen on THIS socket
+    var reqSeq = 0;
+    var pending = {};            // our id -> {resolve, reject, timer, data}
+
+    /* An open socket is NOT a usable one. graphql-ws requires connection_init /
+       connection_ack before anything else, and a subscribe sent inside that
+       window is answered by closing the connection (4401). The page then
+       reconnects, we fire again, and the site sits in "Reconnecting.." forever
+       -- which is exactly what happens without this gate. */
+    var ACK_GRACE_MS = 1200;     // let their client get its own subscriptions up first
+    var lastSendAt = 0;
+    var suspectCloses = 0;       // closes that landed right after one of our frames
+    var sendBanned = false;      // circuit breaker; passive listening continues
+
+    function sockReady() { return !!(sock && sock.readyState === 1 && sockAcked && !sendBanned); }
+
+    function onFrame(raw) {
+        var msg;
+        try { msg = JSON.parse(raw); } catch (e) { return; }
+        if (!msg || typeof msg !== 'object') return;
+        var id = msg.id != null ? String(msg.id) : '';
+        var mine = id && pending[id];
+
+        if (msg.type === 'connection_ack') {
+            // The handshake is done: from here a frame of ours is legal. The
+            // grace period keeps us out of the way while their client sends its
+            // own subscriptions.
+            if (!sockAcked) {
+                sockAcked = true;
+                note('socket acked');
+                setTimeout(function () { kick(true); }, ACK_GRACE_MS);
+            }
+            return;
+        }
+
+        if (msg.type === 'next' && msg.payload) {
+            if (mine) { mine.data = msg.payload.data || null; return; }   // ours: hold until complete
+            var d = msg.payload.data;
+            if (!d) return;
+            // The site's own subscriptions, which we only observe.
+            if ('solPrice' in d && +d.solPrice > 0) setSolPrice(+d.solPrice, 'socket');
+            if ('balance' in d && d.balance && d.balance.after !== undefined) liveBalance = fromWire(d.balance.after);
+            if ('vaultBalance' in d && d.vaultBalance && d.vaultBalance.after !== undefined) liveVault = fromWire(d.vaultBalance.after);
+            if ('myGames' in d && Array.isArray(d.myGames)) {
+                for (var i = 0; i < d.myGames.length; i++) onLiveBet(d.myGames[i]);
+            }
+            return;
+        }
+        if (mine && msg.type === 'complete') { finish(id, null); return; }
+        if (mine && msg.type === 'error') {
+            finish(id, new Error(describeGqlError(msg.payload)));
+            return;
+        }
+    }
+    function describeGqlError(p) {
+        try {
+            if (Array.isArray(p) && p.length) return String(p[0].message || p[0]);
+            if (p && p.message) return String(p.message);
+            return 'nuts.gg rejected the query';
+        } catch (e) { return 'nuts.gg rejected the query'; }
+    }
+    function finish(id, err) {
+        var p = pending[id];
+        if (!p) return;
+        delete pending[id];
+        clearTimeout(p.timer);
+        if (err) p.reject(err); else p.resolve(p.data);
+    }
+
+    /** One query. Resolves with `data`. Rejects if the socket is not up. */
+    function request(query, variables, timeoutMs) {
+        return new Promise(function (resolve, reject) {
+            if (!sockReady()) { reject(new Error('no socket')); return; }
+            var id = 'n7w-' + (++reqSeq);
+            pending[id] = {
+                resolve: resolve, reject: reject, data: null,
+                timer: setTimeout(function () {
+                    /* Silence, not an error frame, is how nuts.gg signals
+                       backpressure. Treated as retryable: the pager backs off
+                       rather than declaring the query broken. */
+                    var p = pending[id];
+                    if (!p) return;
+                    delete pending[id];
+                    var e = new Error('no answer in ' + (timeoutMs || 15000) + 'ms');
+                    e.retryable = true;
+                    reject(e);
+                }, timeoutMs || 15000)
+            };
+            try {
+                lastSendAt = Date.now();
+                var opName = (String(query).match(/^\s*(?:query|mutation)\s+([A-Za-z0-9_]+)/) || [])[1] || null;
+                var frame = { id: id, type: 'subscribe', payload: { query: query, variables: variables || {} } };
+                if (opName) frame.payload.operationName = opName;
+                sock.send(JSON.stringify(frame));
+            } catch (e) {
+                var p = pending[id];
+                delete pending[id];
+                if (p) clearTimeout(p.timer);
+                reject(e);
+            }
+        });
+    }
+
+    function attach(ws) {
+        if (!ws || ws.__nuts7wAttached) return;
+        ws.__nuts7wAttached = true;
+        sock = ws;
+        ws.addEventListener('message', function (ev) { if (typeof ev.data === 'string') onFrame(ev.data); });
+        ws.addEventListener('close', function () {
+            if (sock === ws) { sock = null; sockAcked = false; }
+            /* A close within a few seconds of one of our frames is evidence we
+               caused it. Two of those and we stop sending for the session: a
+               tracker is never worth breaking the casino's own connection over.
+               Reading frames is passive and always safe, so live capture and
+               the SOL price keep working -- only the backfill stops. */
+            if (lastSendAt && Date.now() - lastSendAt < 4000 && ++suspectCloses >= 2 && !sendBanned) {
+                sendBanned = true;
+                note('backfill disabled: socket closed twice right after our query');
+                bfSet('history paused (site connection)', false);
+            }
+            // Anything still in flight will never be answered now.
+            Object.keys(pending).forEach(function (id) { finish(id, new Error('socket closed')); });
+        });
+        ws.addEventListener('error', function () {});
+        note('socket attached (readyState=' + ws.readyState + ')');
+        // Deliberately no kick here: the socket is open but not yet acked, and
+        // sending now is the bug this guard exists for. The ack starts us.
+    }
+    (function hookSockets() {
+        // send() catches a socket opened before we ran; the constructor catches
+        // the ones opened after. Between them nothing is missed.
+        try {
+            var OrigSend = WebSocket.prototype.send;
+            WebSocket.prototype.send = function (data) {
+                try { if (this && typeof this.url === 'string' && this.url.indexOf(WS_URL_MATCH) >= 0) attach(this); } catch (e) {}
+                return OrigSend.apply(this, arguments);
+            };
+        } catch (e) {}
+        try {
+            var OrigWS = window.WebSocket;
+            function HookedWS(url, protocols) {
+                var ws = protocols !== undefined ? new OrigWS(url, protocols) : new OrigWS(url);
+                try { if (String(url).indexOf(WS_URL_MATCH) >= 0) attach(ws); } catch (e) {}
+                return ws;
+            }
+            HookedWS.prototype = OrigWS.prototype;
+            HookedWS.CONNECTING = OrigWS.CONNECTING; HookedWS.OPEN = OrigWS.OPEN;
+            HookedWS.CLOSING = OrigWS.CLOSING; HookedWS.CLOSED = OrigWS.CLOSED;
+            window.WebSocket = HookedWS;
+        } catch (e) {}
+    })();
+
+    /* ---------------------------- SOL price ------------------------------
+       Their client caches the last pushed price under this key, so reading it
+       costs nothing and is current. A solPrice frame on the socket updates it
+       sooner when one happens to pass. */
+    function setSolPrice(v, src) {
+        if (!(v > 0) || v === solPrice) return;
+        var first = !solPrice;
+        solPrice = v;
+        if (first) note('sol price ' + v + ' (' + src + ')');
+        scheduleRender();
+    }
+    function readCachedSolPrice() {
+        try {
+            var raw = localStorage.getItem('most-recent-sol-price');
+            if (!raw) return;
+            var v = parseFloat(String(raw).replace(/"/g, ''));
+            if (v > 0) setSolPrice(v, 'cache');
+        } catch (e) {}
+    }
+
+    /* ------------------------- account identity --------------------------
+       Partitioned per account so switching logins switches the tracked data.
+       The id is derived from what the page already shows — we deliberately do
+       NOT call userDetails, which returns an email and an auth token we have no
+       business reading. A display name is enough to tell two accounts apart. */
+    function detectAccount() {
+        var name = null;
+        try {
+            var el = document.querySelector('[href^="/user/"], [href^="/profile/"]');
+            if (el) {
+                var m = String(el.getAttribute('href') || '').match(/\/(?:user|profile)\/([^/?#]+)/);
+                if (m) name = decodeURIComponent(m[1]);
+            }
+        } catch (e) {}
+        /* Never downgrade a known account to the anonymous bucket. S.active is
+           restored from the store, so on a later visit the name is already
+           known before the page has rendered anything to read it from; forcing
+           'default' here would orphan that history and re-page the whole week. */
+        if (!name && S.active) return;
+        var id = name ? ('u:' + name.toLowerCase()) : 'default';
+        if (S.active !== id) {
+            S.active = id;
+            if (!S.accounts[id]) S.accounts[id] = blankAccount();
+            note('account: ' + id);
+        }
+        var a = S.accounts[S.active];
+        if (a && name && a.name !== name) { a.name = name; save(); }
+    }
+
+    /* Ask the API who we are. Selecting only `username` is deliberate: the
+       same type exposes authToken and email, and the narrowest possible
+       selection set is how you guarantee a tool never holds either. */
+    var WHOAMI = 'query userDetails { userDetails { username } }';
+    var whoamiTried = false;
+    async function fetchUsername() {
+        if (whoamiTried || !sockReady()) return;
+        whoamiTried = true;
+        var name;
+        try {
+            var d = await request(WHOAMI, {});
+            name = d && d.userDetails && d.userDetails.username;
+        } catch (e) { whoamiTried = false; return; }     // allow a later retry
+        if (!name) return;
+        adoptAccount(String(name));
+    }
+
+    /* Move to the real account key, carrying anything collected before we knew
+       it. Without the migration, a session that started anonymous would strand
+       its history under 'default' the moment the name resolved. */
+    function adoptAccount(name) {
+        var id = 'u:' + name.toLowerCase();
+        if (S.active === id) {
+            var cur = S.accounts[id];
+            if (cur && cur.name !== name) { cur.name = name; save(); }
+            return;
+        }
+        var from = S.accounts[S.active];
+        if (!S.accounts[id]) S.accounts[id] = blankAccount();
+        if (from && S.active === 'default') {
+            S.accounts[id] = mergeAccount(S.accounts[id], from);
+            delete S.accounts['default'];
+            note('adopted ' + name + ' (migrated from default)');
+        } else {
+            note('account: ' + name);
+        }
+        S.active = id;
+        S.accounts[id].name = name;
+        flushSave();
+        scheduleRender();
+        // Totals gathered before the name was known could not classify tips.
+        fetchMoney(true);
+    }
+
+    /* ------------------------------ live frames ---------------------------
+       A myGames frame is a SIGNAL, not data. It says something was just
+       played, so the most recent minutes are worth reading again -- but it is
+       never counted itself. These frames carry no timestamp, and the site
+       replays recent games when it resubscribes, so counting them is what
+       filed bets under the wrong minute and counted replays a second time.
+       Throttled, so a fast autobet does not become a query per bet. */
+    var TODAY_REFRESH_MS = 10 * 1000, todayTimer = 0;
+    function scheduleTodayRefresh() {
+        if (todayTimer) return;
+        todayTimer = setTimeout(function () {
+            todayTimer = 0;
+            if (!sockReady()) return;
+            walkDay(todayKey()).catch(function () {});
+        }, TODAY_REFRESH_MS);
+    }
+    function onLiveBet(b) { if (b) scheduleTodayRefresh(); }
+
+    /* ===================== MONEY IN / OUT (real P&L) =====================
+       `last` is INLINE here, not a variable. Passed as a variable the server
+       answers "Unexpected error" for every shape -- this is the form their own
+       wallet page sends. `reward` is aliased per variant because RaceWin.reward
+       (Float) and GiveawayEntry.reward (Float!) collide otherwise.
+       Paged by `to`, not by the cursor: the cursor here is cut to whole
+       seconds too (see GAMELOG), so two entries in one second could straddle
+       a page and one be skipped.
+
+       Deposits and withdrawals are read on their own, with the site's type
+       filter, and in full. Everything else (faucet, rakeback, races, giveaways,
+       tips) only enters the 7-day figure, so only the last 7 days of it is
+       read. One unfiltered walk used to do both, capped at 2000 entries; an
+       account claiming the faucet every few minutes fills that in days, and
+       live it had counted 1.14 SOL of 6.76 SOL deposited. */
+    var TXNS = 'query transactionHistory($before: String, $from: DateTime, $to: DateTime, $transactionType: String) {'
+        + ' transactionHistory( last: 25 before: $before from: $from to: $to transactionType: $transactionType ) {'
+        + ' items { __typename'
+        + '  ... on Deposit { _id createdAt output { amount } }'
+        + '  ... on Withdrawal { _id createdAt requestedAmount output { amount } }'
+        + '  ... on Claim { _id createdAt amount claimType: type__alias__claimType }'
+        + '  ... on LossbackPayout { _id createdAt amount }'
+        + '  ... on RaceWin { _id createdAt raceReward: reward }'
+        + '  ... on Weekly { _id createdAt amount }'
+        + '  ... on Monthly { _id createdAt amount }'
+        + '  ... on Transfer { _id createdAt amount from { username } to { username } }'
+        + '  ... on GiveawayEntry { _id createdAt giveawayReward: reward }'
+        + '  ... on VaultTransfer { _id createdAt }'
+        + ' } } }';
+    var TXN_PAGE   = 25;                  // the inline `last` above
+    var TXN_PAGES  = 400;                 // per walk; a faucet-heavy week is ~150
+    var TXN_FRESH_MS = 3 * 60 * 1000;     // a claim should show up on the panel soon after
+    var MONEY_V = 3;                      // bump to re-read totals stored by older builds
+    var txnBusy = false;
+
+    /* Balance and vault come from the site's own subscriptions, which we only
+       listen to -- no extra traffic, and the same frames the Auto-Vault reads. */
+    var liveBalance = null, liveVault = null;
+
+    /** Every wallet entry of one type (null: any type) since `from`, newest
+        first. null if the socket failed; otherwise { items, complete }. */
+    async function walkTxns(type, from) {
+        var to = null, pages = 0, seen = {}, items = [], dry = 0;
+        while (pages < TXN_PAGES) {
+            var data;
+            try { data = await request(TXNS, { before: null, from: from, to: to, transactionType: type }); }
+            catch (e) {
+                if (e && e.retryable) { await sleep(2500); continue; }
+                return null;
+            }
+            var got = ((data && data.transactionHistory) || {}).items || [];
+            pages++;
+            var fresh = 0, pageOldest = Infinity;
+            for (var i = 0; i < got.length; i++) {
+                var it = got[i], t = it.createdAt ? Date.parse(it.createdAt) : NaN;
+                if (isFinite(t) && t < pageOldest) pageOldest = t;
+                if (!it._id || seen[it._id]) continue;
+                seen[it._id] = 1;
+                fresh++;
+                items.push(it);
+            }
+            if (got.length < TXN_PAGE) return { items: items, complete: true };
+            if (!isFinite(pageOldest)) break;
+            // Same stepping as the game log: re-ask from the oldest entry's
+            // millisecond, and step past it only if a page is all repeats.
+            if (fresh) { dry = 0; to = new Date(pageOldest + 1).toISOString(); }
+            else if (++dry === 1) to = new Date(pageOldest).toISOString();
+            else break;
+            await sleep(PAGE_GAP_MS);
+        }
+        return { items: items, complete: false };
+    }
+
+    async function fetchMoney(force) {
+        if (txnBusy || !sockReady()) return;
+        var a = acct(true);
+        if (!a) return;
+        var m = a.money || {};
+        if (!force && m.v === MONEY_V && m.at && Date.now() - m.at < TXN_FRESH_MS) return;
+        txnBusy = true;
+        try {
+            var cutoff = Date.now() - WINDOW_MS;
+            var me = ((acct() || {}).name || '').toLowerCase();
+            // The filter values are the labels of the site's own History menu.
+            var deps = await walkTxns('Deposits', null);
+            if (!deps) return;                    // leave the previous totals in place
+            var wds = await walkTxns('Withdrawals', null);
+            if (!wds) return;
+            var recent = await walkTxns(null, new Date(cutoff).toISOString());
+            if (!recent) return;
+
+            var dep = 0, wd = 0, winDep = 0, winWd = 0, winCredits = 0, winTips = 0;
+            // the window's rewards and tips, one figure per panel row
+            var brk = { rakeback: 0, lossback: 0, races: 0, giveaways: 0, tipsIn: 0, tipsOut: 0 };
+            var depIds = {}, wdIds = {};
+            function when(it) { var t = it.createdAt ? Date.parse(it.createdAt) : NaN; return isFinite(t) ? t : 0; }
+            // The type check also guards against a filter the server ignores.
+            deps.items.forEach(function (it) {
+                if (it.__typename !== 'Deposit') return;
+                var v = fromWire(it.output && it.output.amount);
+                depIds[it._id] = 1; dep += v; if (when(it) >= cutoff) winDep += v;
+            });
+            wds.items.forEach(function (it) {
+                if (it.__typename !== 'Withdrawal') return;
+                var v = fromWire(it.output && it.output.amount);
+                wdIds[it._id] = 1; wd += v; if (when(it) >= cutoff) winWd += v;
+            });
+            /* A deposit or withdrawal the unfiltered read can see but the typed
+               one did not means the type filter has stopped working: say the
+               totals are partial rather than show them as whole. */
+            var consistent = true;
+            recent.items.forEach(function (it) {
+                var k = it.__typename;
+                if (k === 'Deposit') { if (!depIds[it._id]) consistent = false; return; }
+                if (k === 'Withdrawal') { if (!wdIds[it._id]) consistent = false; return; }
+                /* A vault transfer moves money between balance and vault. It
+                   nets to zero across the pair we already add together, so
+                   counting it either way would double-count. */
+                if (k === 'VaultTransfer') return;
+                if (when(it) < cutoff) return;
+                var amt = fromWire(k === 'RaceWin' ? it.raceReward
+                                 : k === 'GiveawayEntry' ? it.giveawayReward
+                                 : it.amount);
+                if (k === 'Transfer') {
+                    /* Signed: a tip out is money gone, a tip in is money gained,
+                       and an unsigned sum of the two is meaningless. */
+                    var toMe = ((it.to && it.to.username) || '').toLowerCase() === me;
+                    var fromMe = ((it.from && it.from.username) || '').toLowerCase() === me;
+                    if (toMe) { winTips += amt; brk.tipsIn += amt; }
+                    else if (fromMe) { winTips -= amt; brk.tipsOut += amt; }
+                    return;
+                }
+                winCredits += amt;                // faucet, affiliate, rakeback, races, giveaways, ...
+                // claimType is 'Rakeback', 'Affiliate' or 'Faucet' (seen live)
+                if (k === 'Claim' && String(it.claimType || '').toLowerCase() === 'rakeback') brk.rakeback += amt;
+                else if (k === 'LossbackPayout') brk.lossback += amt;
+                else if (k === 'RaceWin') brk.races += amt;
+                else if (k === 'GiveawayEntry') brk.giveaways += amt;
+            });
+
+            var acc = acct(true);
+            if (acc) {
+                acc.money = {
+                    v: MONEY_V, dep: dep, wd: wd,
+                    winDep: winDep, winWd: winWd, winCredits: winCredits, winTips: winTips,
+                    brk: brk, at: Date.now(),
+                    complete: deps.complete && wds.complete && recent.complete && consistent
+                };
+                save();
+                scheduleRender();
+            }
+        } finally { txnBusy = false; }
+    }
+
+    /* ============================== THE LEDGER ==============================
+       Every figure on the panel is a sum over per-minute cells, and every cell
+       is written from nuts.gg's own game log. A cell is REPLACED by a complete
+       read of its minute; it is never added to.
+
+       This replaces a model that counted bets as they arrived, and could not be
+       made accurate. Measured on a live account, one minute the log holds 36
+       bets for had been stored as 36, 121, 294, 206 and 1 -- and those copies
+       were then added together. The 7-day P&L built on that came out positive
+       for an account that could only be down.
+
+       The rules:
+         - a minute's cell is written only by a read that covered the WHOLE
+           minute, and it replaces whatever was stored;
+         - two copies of a cell merge by taking the one with more bets, which
+           for the same minute is always the later read;
+         - live frames are never counted (see above).
+       Reading anything twice is therefore harmless: the same minute read twice
+       gives the same cell, never a doubled one.
+
+       Cells are [bets, wager, profit] in LAMPORTS, the unit the wire uses.
+       Profit can carry a fraction of a lamport, so sums are floating point,
+       but at this scale the rounding is far below a displayed cent.
+
+       Coverage is kept per UTC day as ONE interval, [bottom, top): every minute
+       in it has been read whole. Reads always run newest-first, so an
+       interrupted read still leaves a single interval behind.
+       ===================================================================== */
+    /* Confirmed by introspecting nuts.gg's live schema:
+         gameLog(last: Int!, before: String, from: DateTime, to: DateTime,
+                 gameType: String, isWin: Boolean): GameLogPaginated!
+         GameLogPaginated { games: [SinglePlayerGameBet] pageInfo: TransactionPageInfo }
+         TransactionPageInfo { hasPreviousPage: Boolean! startCursor: String }
+       `gameType` is an argument, NOT a field on the row, and the rows live under
+       `games` rather than on the envelope.
+
+       The `before` cursor is NOT used. It is the oldest row's createdAt cut
+       to whole seconds (base64 of Date#toString), so every page skipped the
+       rest of that second: on a live minute of 710 bets it returned 552.
+       Paging by `to` instead is exact. Measured live: `from` is inclusive,
+       `to` is exclusive, and both are precise to the millisecond. */
+    var GAMELOG = 'query gameLog($last: Int!, $before: String, $from: DateTime, $to: DateTime, ' +
+                  '$gameType: String, $isWin: Boolean) { ' +
+                  'gameLog(last: $last, before: $before, from: $from, to: $to, ' +
+                  'gameType: $gameType, isWin: $isWin) { ' +
+                  'games { id isWin profit wager multiplier createdAt } } }';
+    var PAGE_SIZE   = 30;        // their cap, verified live: 50 is rejected.
+    var PAGE_GAP_MS = 130;       // pacing between pages; the breaker covers the risk
+    /* High-frequency play is the normal case here: a busy hour can be 400+
+       pages, so a week can run to five figures. With three workers and the
+       pacing above that is about half an hour of background traffic in the
+       worst case, and it stops early for anyone lighter. */
+    var PAGE_BUDGET = 20000;
+    var DAY_MS  = 24 * 60 * 60 * 1000;
+    var WORKERS = 3;             // concurrent day readers; measured safe on this socket
+    /* A bet placed a moment ago may not be in the log yet. Coverage of the
+       current day is therefore only claimed up to this long before the read
+       began, and the next read goes back over that stretch. */
+    var LAG_MS  = 30 * 1000;
+    /* The upper bound of a read is set by OUR clock; createdAt comes from THEIRS.
+       Reading a little into the future costs nothing and keeps a browser that
+       runs slow from missing the newest bets on every single pass. */
+    var SKEW_MS = 5 * 60 * 1000;
+    var bfBusy = false, bfPagesThisSession = 0, bfState = { active: false, msg: '' };
+
+    function bfSet(msg, active) {
+        bfState.msg = msg || '';
+        bfState.active = !!active;
+        scheduleRender();
+    }
+    /* Always re-reads the account. writeMerged() rebuilds S.accounts on every
+       save, so a reference captured before a save points at an orphan: writing
+       through it looks like it worked and is then silently dropped. */
+    function markBf(patch, bumpPages) {
+        var a = acct(true);
+        if (!a) return;
+        var cur = a.bf || {};
+        a.bf = Object.assign({}, cur, patch, { at: Date.now() });
+        if (bumpPages) a.bf.pages = (cur.pages || 0) + 1;
+        save();
+    }
+    function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+
+    function dayKey(t) { return Math.floor(t / DAY_MS); }
+    function todayKey() { return dayKey(Date.now()); }
+    function minuteOf(t) { return Math.floor(t / GBIN_MS); }
+
+    /** Day keys covering the window, newest first. */
+    function windowDays() {
+        var today = dayKey(Date.now()), oldest = dayKey(Date.now() - WINDOW_MS), out = [];
+        for (var k = today; k >= oldest; k--) out.push(k);
+        return out;
+    }
+
+    /** Write one minute's cell. The larger read of a minute is the later one. */
+    function putCell(a, mi, c) {
+        if (!a.min) a.min = {};
+        var cur = a.min[mi];
+        if (!cur || c[0] > cur[0]) a.min[mi] = [c[0], c[1], c[2]];
+    }
+
+    /* Read [lo, hi) newest-first, writing each minute as soon as the read has
+       seen all of it. After a page whose oldest bet is at T, every minute AFTER
+       T's minute is complete; T's own minute may still have older bets on the
+       next page, so it waits. Returns { complete, downTo }: everything in
+       [downTo, hi) is now stored.
+
+       Each page asks for the newest rows before `to`. The next page's `to` is
+       T + 1ms, not T: other bets can share T's millisecond, and an exclusive
+       bound at T would skip the ones this page did not reach. The overlap
+       comes back again and is dropped by id. */
+    async function readRange(lo, hi) {
+        var to = hi, cells = {}, seen = {}, oldest = Infinity, dry = 0;
+        var downTo = hi;
+        function flush(all) {
+            var a = acct(true);
+            if (!a) return;
+            var edge = isFinite(oldest) ? minuteOf(oldest) : Infinity;
+            var wrote = false;
+            Object.keys(cells).forEach(function (k) {
+                if (all || +k > edge) { putCell(a, +k, cells[k]); delete cells[k]; wrote = true; }
+            });
+            if (wrote) { save(); scheduleRender(); }
+        }
+        while (true) {
+            if (bfPagesThisSession >= PAGE_BUDGET) return { complete: false, downTo: downTo };
+            var data;
+            try {
+                data = await request(GAMELOG, {
+                    last: PAGE_SIZE, before: null,
+                    from: new Date(lo).toISOString(), to: new Date(to).toISOString(),
+                    gameType: null, isWin: null
+                });
+            } catch (e) {
+                if (e && e.retryable) { await sleep(2500); continue; }   // backpressure: wait, do not give up
+                throw e;
+            }
+            var rows = ((data && data.gameLog) || {}).games || [];
+            bfPagesThisSession++;
+            markBf({}, true);                    // visible progress
+            if (!rows.length) break;
+            var fresh = 0, pageOldest = Infinity;
+            for (var i = 0; i < rows.length; i++) {
+                var r = rows[i], t = r.createdAt ? Date.parse(r.createdAt) : NaN;
+                // Anything outside the range asked for is not this read's to count.
+                if (!isFinite(t) || t < lo || t >= to || r.id == null) continue;
+                if (t < pageOldest) pageOldest = t;
+                if (seen[r.id]) continue;
+                seen[r.id] = 1;
+                fresh++;
+                var mi = minuteOf(t), c = cells[mi] || (cells[mi] = [0, 0, 0]);
+                c[0] += 1;
+                c[1] += (+r.wager || 0);
+                c[2] += (+r.profit || 0);
+                if (t < oldest) oldest = t;
+            }
+            flush(false);
+            if (isFinite(oldest)) downTo = Math.max(lo, (minuteOf(oldest) + 1) * GBIN_MS);
+            if (rows.length < PAGE_SIZE) break;  // a short page is the bottom of the range
+            if (fresh) { dry = 0; to = pageOldest + 1; }
+            else if (++dry === 1 && isFinite(pageOldest)) {
+                /* A full page of rows already counted: more than a page of bets
+                   share one millisecond. Step past it; that is the only way on. */
+                to = pageOldest;
+            } else {
+                // The bound is not moving the server: keep what is whole, stop.
+                markBf({ err: 'history paging stalled' });
+                return { complete: false, downTo: downTo };
+            }
+            await sleep(PAGE_GAP_MS);
+        }
+        flush(true);                             // reached lo: every minute is whole
+        return { complete: true, downTo: lo };
+    }
+
+    function getDay(a, k) {
+        if (!a.days) a.days = {};
+        return a.days[k] || (a.days[k] = { top: 0, bottom: 0 });
+    }
+    /** A past day is done when all of it, midnight to midnight, has been read. */
+    function isDayDone(a, k) {
+        var d = a && a.days && a.days[k];
+        if (!d || !d.top) return false;
+        var start = k * DAY_MS;
+        return k < todayKey() && d.bottom <= start && d.top >= start + DAY_MS;
+    }
+
+    /* Bring one day up to date:
+         - top-up: the newest part, from the start of the minute last reached
+           (it may have been in play then) to now;
+         - deep:   the older part an earlier read did not get to.
+       A day never read before gets one read from its end back to midnight. */
+    var dayBusy = {}, todayDirty = false;
+    async function walkDay(k) {
+        if (dayBusy[k]) { if (k === todayKey()) todayDirty = true; return; }
+        dayBusy[k] = true;
+        try {
+            var start = k * DAY_MS, end = start + DAY_MS;
+            var readHi = Math.min(end, Date.now() + SKEW_MS);
+            var a = acct(true);
+            if (!a) return;
+            var d = getDay(a, k);
+
+            if (d.top && d.top < Math.min(end, Date.now())) {
+                var began = Date.now();
+                var r1 = await readRange(Math.max(start, minuteOf(d.top) * GBIN_MS), readHi);
+                d = getDay(acct(true), k);
+                // Only a finished top-up may move the top: a partial one would
+                // claim the stretch it never reached.
+                if (r1.complete) d.top = Math.max(d.top, Math.min(end, began - LAG_MS));
+                save();
+            }
+            if (!d.top) {
+                var began0 = Date.now();
+                var r0 = await readRange(start, readHi);
+                d = getDay(acct(true), k);
+                d.top = Math.min(end, began0 - LAG_MS);
+                d.bottom = r0.complete ? start : Math.min(r0.downTo, d.top);
+                save();
+            } else if (d.bottom > start) {
+                var r2 = await readRange(start, d.bottom);
+                d = getDay(acct(true), k);
+                d.bottom = r2.complete ? start : Math.min(d.bottom, r2.downTo);
+                save();
+            }
+        } finally {
+            dayBusy[k] = false;
+            if (todayDirty && k === todayKey()) {
+                todayDirty = false;
+                setTimeout(function () { walkDay(k).catch(function () {}); }, 500);
+            }
+        }
+    }
+
+    /** Forget days and cells that have left the window, so the store is bounded. */
+    function pruneLedger(a) {
+        var oldestDay = dayKey(Date.now() - WINDOW_MS);
+        if (a.days) Object.keys(a.days).forEach(function (k) { if (+k < oldestDay) delete a.days[k]; });
+        var firstMinute = oldestDay * DAY_MS / GBIN_MS;
+        if (a.min) Object.keys(a.min).forEach(function (k) { if (+k < firstMinute) delete a.min[k]; });
+    }
+
+    /** How many past days of the window have been read in full. Shown on the
+     *  panel so "complete" is visible working, not a claim. */
+    function daysCovered() {
+        var a = acct();
+        if (!a) return 0;
+        var days = windowDays(), n = 0;
+        for (var i = 1; i < days.length; i++) if (isDayDone(a, days[i])) n++;
+        return n;
+    }
+    /** Every past day of the window read in full, and today read back to midnight. */
+    function coversWindow() {
+        var a = acct();
+        if (!a) return false;
+        var days = windowDays();
+        for (var i = 1; i < days.length; i++) if (!isDayDone(a, days[i])) return false;
+        var d = a.days && a.days[days[0]];
+        return !!(d && d.top && d.bottom <= days[0] * DAY_MS);
+    }
+    /** The instant from which everything up to now has been read. */
+    function readSince() {
+        var a = acct();
+        if (!a || !a.days) return 0;
+        var days = windowDays(), since = 0;
+        for (var i = 0; i < days.length; i++) {
+            var k = days[i], d = a.days[k];
+            if (!d || !d.top) break;
+            var start = k * DAY_MS;
+            if (i > 0 && d.top < start + DAY_MS) break;   // a gap before the newer day
+            since = Math.max(start, d.bottom);
+            if (d.bottom > start) break;
+        }
+        return since;
+    }
+
+    async function backfill() {
+        if (bfBusy) return;
+        var a = acct(true);
+        if (!a) return;
+        bfBusy = true;
+        var failed = false;
+        try {
+            pruneLedger(a);
+            var days = windowDays(), today = days[0];
+            // Newest first: the part people look at fills before the tail does.
+            var todo = days.filter(function (k) { return k === today || !isDayDone(acct(true), k); });
+            bfSet(coversWindow() ? 'syncing…' : 'reading history…', true);
+
+            async function worker() {
+                while (todo.length && !failed) {
+                    var k = todo.shift();
+                    try {
+                        await walkDay(k);
+                    } catch (e) {
+                        failed = true;
+                        var why = (e && e.message) || 'query failed';
+                        markBf({ err: why });
+                        bfSet('history: ' + (why.length > 48 ? why.slice(0, 48) + '…' : why), false);
+                        return;
+                    }
+                    if (!coversWindow()) bfSet('reading history… ' + daysCovered() + '/' + (windowDays().length - 1) + ' days', true);
+                    if (bfPagesThisSession >= PAGE_BUDGET) {
+                        markBf({ err: 'paused (session page budget)' });
+                        bfSet('paused — reopen to continue', false);
+                        failed = true;
+                        return;
+                    }
+                }
+            }
+            var pool = [];
+            for (var w = 0; w < WORKERS; w++) pool.push(worker());
+            await Promise.all(pool);
+
+            if (!failed) {
+                markBf({ done: coversWindow(), err: '' });
+                bfSet('', false);
+                flushSave();
+                render();
+            }
+        } finally {
+            bfBusy = false;
+        }
+    }
+
+    /* Nudge the pager. Called when the socket comes up, when the tab is looked
+       at again, and on a slow timer — each of which is a moment when a gap may
+       have opened or a stalled backfill may be able to continue. */
+    var lastKick = 0;
+    async function kick(force) {
+        var now = Date.now();
+        if (!force && now - lastKick < 20000) return;
+        if (!sockReady() || bfBusy) return;
+        lastKick = now;
+        detectAccount();
+        /* Awaited: a tip is only money in or out once we know which side we are
+           on, and fetchMoney classifies transfers by username. Firing them
+           together left tips netting to zero on a first load. */
+        await fetchUsername();
+        fetchMoney();
+        backfill();
+    }
+
+    /* ---------------------------- window totals ---------------------------
+       Straight sums over the ledger cells inside the window. There is nothing
+       to reconcile any more: each minute exists once, as read from nuts.gg. */
+    function windowFirstMinute() { return Math.floor((Date.now() - WINDOW_MS) / GBIN_MS); }
+
+    /** Integer totals over the window, in lamports. */
+    function sumWindow() {
+        var a = acct(), s = { n: 0, w: 0, p: 0, oldest: 0 };
+        if (!a || !a.min) return s;
+        var lo = windowFirstMinute();
+        Object.keys(a.min).forEach(function (k) {
+            if (+k < lo) return;
+            var c = a.min[k];
+            s.n += c[0]; s.w += c[1]; s.p += c[2];
+            if (!s.oldest || +k < s.oldest) s.oldest = +k;
+        });
+        if (s.oldest) s.oldest *= GBIN_MS;
+        return s;
+    }
+
+    /** Cells inside the window as minuteKey -> { n, w, p } in SOL. The chart,
+     *  the ages-off rows and the goal forecast all read this. */
+    function windowGBins() {
+        var a = acct(), out = {};
+        if (!a || !a.min) return out;
+        var lo = windowFirstMinute();
+        Object.keys(a.min).forEach(function (k) {
+            if (+k < lo) return;
+            var c = a.min[k];
+            out[k] = { n: c[0], w: fromWire(c[1]), p: fromWire(c[2]) };
+        });
+        return out;
+    }
+
+    function rolling() {
+        var a = acct();
+        var blank = { ready: false, rolling: 0, bets: 0, full: false, exhausted: false,
+                      coverMs: 0, since: 0, daysDone: 0, daysTotal: windowDays().length };
+        if (!a) return blank;
+        // Nothing is "ready" until some of the log has actually been read -- a
+        // zero drawn before that is a lie, not a total.
+        var anyRead = a.days && Object.keys(a.days).some(function (k) { return a.days[k] && a.days[k].top; });
+        if (!anyRead) return blank;
+        var s = sumWindow(), since = readSince();
+        return {
+            ready: true,
+            rolling: fromWire(s.w),
+            bets: s.n,
+            full: coversWindow(),
+            /* A day with no bets reads exactly like a day before the account
+               existed, so "all history" cannot be told apart from "a quiet
+               week". The panel only ever says full or partial. */
+            exhausted: false,
+            daysDone: daysCovered(),
+            daysTotal: windowDays().length,
+            coverMs: since ? Math.min(Date.now() - since, WINDOW_MS) : 0,
+            since: s.oldest
+        };
+    }
+
+    /** Wagered / returned / net over the window. */
+    function windowReturn() {
+        var s = sumWindow(), out = { w: fromWire(s.w), p: fromWire(s.p), n: s.n, rtp: null };
+        if (s.w > 0) out.rtp = (s.w + s.p) / s.w * 100;
+        return out;
+    }
+
+    /* ms until the rolling total would fall below `req` with no further play —
+       i.e. when enough wager has aged off the back of the window. Exact here,
+       because every bet carries a real timestamp: walk the bins forward from the
+       cutoff and find the moment the remainder drops under the requirement. */
+    function timeLeftMs(req) {
+        var best = windowGBins();
+        var keys = Object.keys(best).map(Number).sort(function (x, y) { return x - y; });
+        if (!keys.length) return null;
+        var total = 0;
+        keys.forEach(function (k) { total += best[k].w || 0; });
+        if (total < req) return 0;
+        var cutoff = Date.now() - WINDOW_MS, remaining = total;
+        for (var i = 0; i < keys.length; i++) {
+            remaining -= best[keys[i]].w || 0;
+            if (remaining < req) return Math.max(0, (keys[i] * GBIN_MS) - cutoff);
+        }
+        return WINDOW_MS;
+    }
+    /* What the goal editor should show. The goal is stored in SOL and entered in
+       whatever the badge reads, so this is the inbound half of that conversion --
+       without it, opening the editor in USD shows a SOL number and the next
+       keystroke reinterprets it as USD, quietly collapsing the goal. */
+    function goalInputValue() {
+        var t = getTarget();
+        if (!t) return '';
+        if (S.currency === 'USD' && solPrice > 0) return (t * solPrice).toFixed(2);
+        return String(parseFloat(t.toFixed(8)));
+    }
+    /* The OTHER currency, for the line under the headline. Both are always on
+       screen; the badge only decides which one is big. Empty when no SOL price
+       has arrived yet, so the panel never shows a converted figure it cannot
+       actually stand behind. */
+    function altAmount(sol) {
+        sol = +sol || 0;
+        if (!(solPrice > 0)) return '';
+        if (S.currency === 'SOL') {
+            return '$' + (sol * solPrice).toLocaleString(undefined,
+                   { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+        }
+        var v = Math.abs(sol) >= 1 ? sol.toFixed(4) : sol.toFixed(6);
+        return String(parseFloat(v)) + ' SOL';
+    }
+    function leftHrs(ms) {
+        if (ms == null) return '—';
+        if (ms >= WINDOW_MS - 60000) return '7d+';
+        var h = ms / 3600000;
+        if (h >= 48) return (h / 24).toFixed(1) + 'd';
+        if (h >= 10) return Math.round(h) + 'h';
+        return h.toFixed(1) + 'h';
+    }
+
+    /* Real profit and loss: money out minus money in, not bet results.
+
+       Deposits and withdrawals are the only honest basis for "am I up" --
+       rakeback, faucet, races, giveaways and tips all move the balance without
+       being bets, so a sum of bet profits can be positive while the account is
+       badly down. On this account those two disagreed by roughly $400.
+
+       Balance is what the site last told us on the socket. `ready` is false
+       until we have both sides, so the panel shows nothing rather than a
+       confident wrong number. */
+    /* ---- rewards & tips over the window: one row per kind, from the wallet ---- */
+    var REWARD_ROWS = [
+        { k: 'rakeback',  label: 'Rakeback',      dot: '#1fd655', out: false },
+        { k: 'lossback',  label: 'Lossback',      dot: '#c9a6ff', out: false },
+        { k: 'races',     label: 'Races',         dot: '#ffb020', out: false },
+        { k: 'giveaways', label: 'Giveaways',     dot: '#4fb8d6', out: false },
+        { k: 'tipsIn',    label: 'Tips received', dot: '#03dac6', out: false },
+        { k: 'tipsOut',   label: 'Tips sent',     dot: '#ff6b76', out: true }
+    ];
+    function rewardRowsHtml() {
+        return REWARD_ROWS.map(function (row) {
+            return '<div class="rline"><span class="rk"><i style="background:' + row.dot + '"></i>' + row.label
+                 + '</span><span class="rval mono" id="nuts7w-x-' + row.k + '">—</span></div>';
+        }).join('');
+    }
+    function bindRewardRows(root) {
+        hud.x = {};
+        REWARD_ROWS.forEach(function (row) { hud.x[row.k] = root.querySelector('#nuts7w-x-' + row.k); });
+    }
+    function renderRewards(C) {
+        var m = acct() && acct().money, b = m && m.brk;
+        REWARD_ROWS.forEach(function (row) {
+            var el = hud.x && hud.x[row.k];
+            if (!el) return;
+            if (!b) { el.textContent = '—'; el.style.color = ''; return; }
+            var v = b[row.k] || 0;
+            el.textContent = (v > 0 ? (row.out ? '−' : '+') : '') + fmt(disp(v)) + C;
+            el.style.color = v > 0 ? (row.out ? '#ff6b76' : '#1fd655') : '';
+        });
+    }
+
+    function pnl() {
+        var a = acct();
+        var m = a && a.money;
+        var out = { ready: false, dep: 0, wd: 0, bal: 0, net: 0, complete: false };
+        if (!m || !m.at) return out;
+        var bal = (liveBalance == null ? null : liveBalance);
+        if (bal == null) return out;
+        out.ready = true;
+        out.dep = m.dep || 0;
+        out.wd = m.wd || 0;
+        out.bal = bal + (liveVault || 0);
+        out.complete = !!m.complete;
+        out.net = out.bal + out.wd - out.dep;
+
+        /* 7-day P&L. The balance as it stood 7 days ago is not recorded
+           anywhere, but it cancels out of the arithmetic:
+               P&L_window       = d(balance+vault) - deposits + withdrawals
+               d(balance+vault) = betProfit + deposits - withdrawals + credits + tipsNet
+           leaving  betProfit + credits + tipsNet, all of which is windowed data
+           we already hold.
+
+           Unlike the lifetime figure this one is only as good as the bet
+           ledger, so it is withheld until the window is genuinely full rather
+           than shown as a confident partial. */
+        var info = rolling();
+        if (info.full) {
+            var r = windowReturn();
+            out.winReady = true;
+            out.winBet = r.p;
+            out.winCredits = m.winCredits || 0;
+            out.winTips = m.winTips || 0;
+            out.win = out.winBet + out.winCredits + out.winTips;
+        } else {
+            out.winReady = false;
+            out.win = 0;
+        }
+        return out;
+    }
+
+    /* ---- fall-off chart: view state (continuous zoom + pan, NOW on the RIGHT) ----
+       gView.end = newest time shown (the RIGHT edge). Live tracks now; panned pins it.
+       Persisted: S.ui.graphSpan (zoom) + S.ui.graphLive. */
+    var gView = { end: 0, hoverX: null, mx: 0, my: 0, dragX: null, dragEnd: 0 };
+    function gSpan() { var s = S.ui && +S.ui.graphSpan; s = (s && isFinite(s)) ? s : GSPAN_MAX; return Math.max(GSPAN_MIN, Math.min(GSPAN_MAX, s)); }
+    function gEnd() {
+        var now = Date.now(), span = gSpan();
+        if (S.ui.graphLive) return now;
+        return Math.max(now - WINDOW_MS + span, Math.min(now, gView.end || now));
+    }
+    var GAXIS_STEPS = [60000, 120000, 300000, 600000, 900000, 1800000, 3600000, 7200000, 10800000, 21600000, 43200000, 86400000];
+    function gNiceStep(span) { for (var i = 0; i < GAXIS_STEPS.length; i++) if (span / GAXIS_STEPS[i] <= 6) return GAXIS_STEPS[i]; return GAXIS_STEPS[GAXIS_STEPS.length - 1]; }
+    function gTime12(d, withMin) {
+        var h = d.getHours(), ap = h < 12 ? 'am' : 'pm', hh = (h % 12) || 12;
+        return withMin ? (hh + ':' + ('0' + d.getMinutes()).slice(-2) + ap) : (hh + ap);
+    }
+    function gAxisLabel(t, step) {
+        var d = new Date(t);
+        if (step >= 86400000) return ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][d.getDay()] + ' ' + d.getDate();
+        if (step >= 3600000) return gTime12(d, false);
+        return gTime12(d, true);
+    }
+    function gClock(t) { try { var d = new Date(t); return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) + ' ' + gTime12(d, true); } catch (e) { return '—'; } }
+    var gQueued = false;
+    function scheduleGraph() { if (gQueued) return; gQueued = true; requestAnimationFrame(function () { gQueued = false; drawGraph(); }); }
+    function gHideTip() { if (hud.gtip) hud.gtip.style.display = 'none'; }
+    function gTipAt() {
+        if (!hud.gtip) return;
+        var tw = hud.gtip.offsetWidth || 170, vx = gView.mx + 14, vy = gView.my + 14;
+        if (vx + tw > window.innerWidth - 8) vx = gView.mx - tw - 14;
+        if (vy + 72 > window.innerHeight - 8) vy = gView.my - 72;
+        hud.gtip.style.left = vx + 'px'; hud.gtip.style.top = vy + 'px'; hud.gtip.style.display = 'block';
+    }
+    function gShowTipBar(tc, dtPerPx, w) {
+        var single = dtPerPx <= 90000, C = ' ' + S.currency;
+        var when = single ? gClock(tc) : (gClock(tc - dtPerPx / 2) + ' – ' + gClock(tc + dtPerPx / 2));
+        hud.gtip.innerHTML = '<div class="gtl">wagered</div>'
+            + '<div class="gtv">' + fmt(disp(w)) + C + '</div>'
+            + '<div class="gtf">' + when + '</div>';
+        gTipAt();
+    }
+    /* Wager-activity chart: bars = wager per pixel column over time, NOW on the
+       right, value axis on the right, crosshair readout. Continuous zoom
+       (scroll) + pan (drag) + snap-to-live. */
+    function drawGraph() {
+        if (!hud.gcanvas || !S.ui.open || !hud.w || hud.w.style.display === 'none') return;
+        var cv = hud.gcanvas, ctx; try { ctx = cv.getContext('2d'); } catch (e) { return; }
+        if (!ctx) return;
+        var dpr = window.devicePixelRatio || 1;
+        var W = cv.clientWidth || 300, H = cv.clientHeight || 150;
+        if (cv.width !== Math.round(W * dpr) || cv.height !== Math.round(H * dpr)) { cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr); }
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        ctx.clearRect(0, 0, W, H);
+        var span = gSpan(), end = gEnd(), now = Date.now(), t0 = end - span;
+        var tkH = 2, axB = 15, axR = 34, padL = 2;
+        var plotW = W - padL - axR, pTop = tkH, pBot = H - axB, plotH = pBot - pTop;
+        function X(t) { return padL + (t - t0) / span * plotW; }
+        function T(x) { return t0 + (x - padL) / plotW * span; }
+
+        // One cell per minute, straight from the ledger.
+        var best = windowGBins();
+        var colW = new Array(W), vmax = 0, sumW = 0;
+        Object.keys(best).forEach(function (bk) {
+            var t = (+bk) * GBIN_MS;
+            if (t < t0 || t > end) return;
+            var xi = Math.floor(X(t));
+            if (xi < padL || xi >= padL + plotW) return;
+            var w = best[bk].w || 0;
+            colW[xi] = (colW[xi] || 0) + w; sumW += w;
+            if (colW[xi] > vmax) vmax = colW[xi];
+        });
+        if (vmax <= 0) vmax = 1;
+        function VY(v) { return pBot - (v / vmax) * (plotH - 2); }
+
+        ctx.font = '9px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace';
+        for (var g = 0; g <= 2; g++) {
+            var gv = vmax * g / 2, gy = Math.round(VY(gv)) + 0.5;
+            ctx.strokeStyle = 'rgba(255,255,255,.05)'; ctx.lineWidth = 1;
+            ctx.beginPath(); ctx.moveTo(padL, gy); ctx.lineTo(padL + plotW, gy); ctx.stroke();
+            if (g > 0) { ctx.fillStyle = '#56707f'; ctx.textAlign = 'left'; ctx.fillText(fmtShort(disp(gv)), padL + plotW + 4, gy + 3); }
+        }
+        var step = gNiceStep(span), gt = Math.ceil(t0 / step) * step; ctx.textAlign = 'center';
+        for (; gt <= end; gt += step) {
+            var gx = X(gt);
+            ctx.strokeStyle = 'rgba(255,255,255,.04)'; ctx.beginPath(); ctx.moveTo(gx + 0.5, pTop); ctx.lineTo(gx + 0.5, pBot); ctx.stroke();
+            ctx.fillStyle = '#56707f'; ctx.fillText(gAxisLabel(gt, step), Math.max(13, Math.min(padL + plotW - 13, gx)), H - 3);
+        }
+        ctx.strokeStyle = 'rgba(255,255,255,.10)'; ctx.beginPath(); ctx.moveTo(padL, pBot + 0.5); ctx.lineTo(padL + plotW, pBot + 0.5); ctx.stroke();
+
+        var grad = ctx.createLinearGradient(0, pTop, 0, pBot);
+        grad.addColorStop(0, 'rgba(64,231,214,.98)'); grad.addColorStop(.65, 'rgba(3,218,198,.62)'); grad.addColorStop(1, 'rgba(3,218,198,.14)');
+        var hxi = (gView.hoverX != null) ? Math.round(gView.hoverX) : -1;
+        ctx.save(); ctx.shadowColor = 'rgba(3,218,198,.5)'; ctx.shadowBlur = 4; ctx.fillStyle = grad;
+        for (var x = padL; x < padL + plotW; x++) {
+            var w = colW[x] || 0; if (!w) continue;
+            var bh = Math.max(1.4, (plotH - 2) * (w / vmax));
+            ctx.globalAlpha = (x === hxi) ? 1 : 0.92; ctx.fillRect(x, pBot - bh, 1, bh);
+        }
+        ctx.restore(); ctx.globalAlpha = 1;
+        if (sumW <= 0) { ctx.fillStyle = '#56707f'; ctx.textAlign = 'center'; ctx.fillText('no wager in this range', padL + plotW / 2, pTop + plotH / 2); }
+
+        if (now >= t0 && now <= end + 1) {
+            var nx = X(now);
+            ctx.strokeStyle = 'rgba(31,214,85,.55)'; ctx.setLineDash([2, 2]);
+            ctx.beginPath(); ctx.moveTo(nx - 0.5, pTop); ctx.lineTo(nx - 0.5, pBot); ctx.stroke(); ctx.setLineDash([]);
+            ctx.fillStyle = '#1fd655'; ctx.beginPath(); ctx.arc(nx - 0.5, pTop + 3, 2.2, 0, 7); ctx.fill();
+        }
+
+        var C = ' ' + S.currency;
+        ctx.textAlign = 'left'; ctx.font = '9px ui-monospace,Menlo,monospace'; ctx.fillStyle = '#6e8b9c';
+        ctx.fillText('view  Σ ' + fmtShort(disp(sumW)) + C + (S.ui.graphLive ? '' : '  · paused'), padL + 2, 9);
+
+        if (gView.hoverX != null && hxi >= padL && hxi <= padL + plotW) {
+            ctx.strokeStyle = 'rgba(255,255,255,.22)'; ctx.setLineDash([3, 3]);
+            ctx.beginPath(); ctx.moveTo(hxi + 0.5, pTop); ctx.lineTo(hxi + 0.5, pBot); ctx.stroke(); ctx.setLineDash([]);
+            gShowTipBar(T(hxi), span / plotW, colW[hxi] || 0);
+        } else if (gView.hoverX != null) gHideTip();
+    }
+
+    /* ------------------------------ startup ------------------------------ */
+    /* A bloated store starves the origin's whole localStorage quota, which
+       breaks the SITE, not just this tool. Bins are bounded by design, but a
+       store carried over from a bad write is not, so it is checked once on boot
+       and the oldest bins are dropped until it fits. */
+    function cleanupOversizedStore() {
+        try {
+            var raw = localStorage.getItem(STORE_KEY);
+            if (!raw || raw.length < 1500000) return;
+            Object.keys(S.accounts || {}).forEach(function (id) {
+                var a = S.accounts[id];
+                if (!a) return;
+                delete a.cur;                    // per-tab bins from older builds
+                pruneLedger(a);
+            });
+            flushSave();
+            note('store trimmed from ' + Math.round(raw.length / 1024) + 'kB');
+        } catch (e) {}
+    }
+
+    function injectStyle() {
+        var css = ''
+        // ---- main panel: a static "instrument" dashboard mounted under the balance ----
+        + '#nuts7w{position:fixed;z-index:850;top:58px;left:50%;transform:translateX(-50%);width:912px;max-width:calc(100vw - 18px);'
+        + 'color:#ece6f7;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;'
+        + 'background:radial-gradient(135% 120% at 16% -10%,rgba(150,46,255,.11),transparent 45%),radial-gradient(120% 130% at 100% 0%,rgba(3,218,198,.07),transparent 50%),linear-gradient(180deg,#1a1330,#100a1c);'
+        + 'border:1px solid #3d2f5c;border-radius:18px;overflow:hidden;box-shadow:0 30px 70px -18px rgba(0,0,0,.78),0 1px 0 rgba(255,255,255,.07) inset,0 0 0 1px rgba(255,255,255,.015) inset;}'
+        + '#nuts7w *{box-sizing:border-box;}'
+        + '#nuts7w .mono{font-family:ui-monospace,SFMono-Regular,"SF Mono","JetBrains Mono",Menlo,monospace;font-variant-numeric:tabular-nums;}'
+        + '@keyframes nuts7wpulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.4;transform:scale(.82)}}'
+        + '#nuts7w .hd{display:flex;align-items:center;justify-content:space-between;padding:10px 20px;border-bottom:1px solid rgba(255,255,255,.055);background:linear-gradient(180deg,rgba(255,255,255,.025),transparent);}'
+        + '#nuts7w .who{display:flex;align-items:center;gap:11px;font-size:11.5px;color:#aca0c4;}'
+        + '#nuts7w .who b{color:#fff;font-weight:600;}'
+        + '#nuts7w .live{display:inline-flex;align-items:center;gap:6px;font-size:9.5px;letter-spacing:.16em;color:#c9a6ff;text-transform:uppercase;font-weight:600;}'
+        + '#nuts7w .live i{width:6px;height:6px;border-radius:50%;background:#962eff;box-shadow:0 0 10px #962eff;animation:nuts7wpulse 1.9s infinite ease-in-out;}'
+        + '#nuts7w .hrt{display:flex;align-items:center;gap:14px;}'
+        + '#nuts7w .pin{font-size:11px;color:#ffb020;font-family:ui-monospace,Menlo,monospace;}'
+        + '#nuts7w .pin.ok{color:#1fd655;}#nuts7w .pin b{font-weight:700;}'
+        + '#nuts7w .badge{font-size:9px;font-weight:700;letter-spacing:.08em;color:#c9a6ff;background:rgba(150,46,255,.16);border:1px solid rgba(150,46,255,.32);padding:3px 7px;border-radius:6px;cursor:default;}'
+        + '#nuts7w .x{cursor:pointer;color:#776a99;font-size:18px;line-height:1;width:16px;text-align:center;user-select:none;}'
+        + '#nuts7w .x:hover{color:#fff;}'
+        + '#nuts7w .grid{display:flex;}'
+        + '#nuts7w .cell{padding:17px 20px;}'
+        + '#nuts7w .cell+.cell{border-left:1px solid rgba(255,255,255,.05);}'
+        + '#nuts7w .c1{width:312px;flex:none;}#nuts7w .c2{width:344px;flex:none;}#nuts7w .c3{flex:1;min-width:0;}'
+        + '#nuts7w .lbl{font-size:9px;letter-spacing:.18em;color:#7e70a0;text-transform:uppercase;font-weight:600;}'
+        + '#nuts7w .hero{margin-top:9px;display:flex;align-items:baseline;gap:6px;}'
+        + '#nuts7w .hnum{font-size:38px;font-weight:700;line-height:.9;letter-spacing:-1.4px;color:#fff;text-shadow:0 0 30px rgba(150,46,255,.45);}'
+        + '#nuts7w .hu{font-size:14px;color:#9b8fb8;font-weight:500;}'
+        + '#nuts7w .halt{margin-top:7px;font-size:12px;color:#8a7cae;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-variant-numeric:tabular-nums;}'
+        + '#nuts7w .halt b{color:#b9aed4;font-weight:600;}'
+        + '#nuts7w .goalw{margin-top:18px;}'
+        + '#nuts7w .gbar{height:7px;border-radius:5px;background:#120c20;box-shadow:inset 0 1px 3px rgba(0,0,0,.6);overflow:hidden;}'
+        + '#nuts7w .gbar > i{display:block;height:100%;border-radius:5px;background:linear-gradient(90deg,#6b21c8,#962eff);box-shadow:0 0 11px rgba(150,46,255,.6);width:0;transition:width .3s;}'
+        + '#nuts7w .gmeta{display:flex;justify-content:space-between;margin-top:8px;font-size:10.5px;color:#9b8fb8;cursor:pointer;}'
+        + '#nuts7w .gmeta .pc{color:#c9a6ff;font-weight:600;}'
+        + '#nuts7w .gmeta .rem-ok{color:#1fd655;font-weight:600;}'
+        + '#nuts7w .gedit{display:none;width:100%;margin-top:8px;background:#120c20;border:1px solid #3d2f5c;color:#fff;border-radius:6px;padding:5px 8px;font-size:11px;font-family:ui-monospace,Menlo,monospace;}'
+        + '#nuts7w .rtpw{margin-top:19px;padding-top:17px;border-top:1px solid rgba(255,255,255,.05);}'
+        + '#nuts7w .meter{display:flex;height:9px;border-radius:6px;overflow:hidden;background:#120c20;box-shadow:inset 0 1px 3px rgba(0,0,0,.6);}'
+        + '#nuts7w .meter > i{height:100%;width:0;transition:width .3s;}'
+        + '#nuts7w .rtpr{margin-top:12px;}'
+        + '#nuts7w .rline{display:flex;justify-content:space-between;align-items:center;margin-top:8px;font-size:10px;}'
+        + '#nuts7w .rline .rk{display:flex;align-items:center;gap:7px;color:#aca0c4;min-width:0;}'
+        + '#nuts7w .rline .rk i{width:7px;height:7px;border-radius:2px;flex:none;}'
+        + '#nuts7w .rline .rval{font-size:11px;color:#e6dff5;font-weight:600;margin-left:10px;white-space:nowrap;}'
+        + '#nuts7w .ctop{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;}'
+        + '#nuts7w .ct{display:flex;gap:4px;align-items:center;}'
+        + '#nuts7w .ct button{background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);color:#aca0c4;border-radius:6px;font-size:10px;padding:2px 7px;cursor:pointer;line-height:1.4;font-family:inherit;}'
+        + '#nuts7w .ct button:hover{border-color:#3a4a57;color:#fff;background:rgba(255,255,255,.07);}'
+        + '#nuts7w .ct .live2{font-weight:700;letter-spacing:.02em;}'
+        + '#nuts7w .ct .live2.on{color:#c9a6ff;border-color:rgba(150,46,255,.55);background:rgba(150,46,255,.13);}'
+        + '#nuts7w .well{background:#0e0918;border:1px solid rgba(255,255,255,.045);border-radius:11px;box-shadow:inset 0 2px 10px rgba(0,0,0,.55);padding:11px 13px 7px;}'
+        + '#nuts7w #nuts7w-gcanvas{width:100%;height:150px;display:block;cursor:crosshair;touch-action:none;}'
+        + '#nuts7w .egp{display:flex;justify-content:space-between;align-items:center;margin:15px 0 9px;}'
+        + '#nuts7w .egp:first-of-type{margin-top:0;}'
+        + '#nuts7w .egn{font-size:10.5px;font-weight:700;color:#dcd3ee;}'
+        + '#nuts7w .egn span{color:#7e70a0;font-weight:500;font-size:9px;letter-spacing:.1em;text-transform:uppercase;margin-left:5px;}'
+        + '#nuts7w .egc{font-size:9px;font-weight:700;padding:2px 8px;border-radius:20px;}'
+        + '#nuts7w .egc.ok{background:rgba(150,46,255,.17);color:#1fd655;}'
+        + '#nuts7w .egc.no{background:rgba(255,91,104,.13);color:#ff6b76;}'
+        + '#nuts7w .egc.part{background:rgba(255,176,32,.14);color:#ffb020;}'
+        + '#nuts7w .et{display:flex;align-items:center;gap:10px;margin-top:8px;}'
+        + '#nuts7w .ep{width:9px;height:9px;border-radius:50%;flex:none;}'
+        + '#nuts7w .ep.ok{background:#1fd655;box-shadow:0 0 8px rgba(31,214,85,.75);}'
+        + '#nuts7w .ep.no{background:transparent;border:1.5px solid #ff5b68;}'
+        + '#nuts7w .etn{font-size:10.5px;color:#b9aed4;min-width:74px;}'
+        + '#nuts7w .etn b{color:#ece6f7;font-weight:600;}'
+        + '#nuts7w .etn .rq{color:#776a99;font-size:9px;margin-left:3px;}'
+        + '#nuts7w .es{margin-left:auto;font-size:10px;text-align:right;}'
+        + '#nuts7w .es b{font-weight:700;}'
+        + '#nuts7w .es .q{color:#7e70a0;font-size:9px;margin-left:2px;}'
+        // ---- docked nav pill (collapsed state; lives in Stake top bar, right of Wallet) ----
+        + '#nuts7w-dock{display:inline-flex;align-items:center;gap:9px;height:36px;flex:none;align-self:center;margin-left:10px;padding:0 13px;background:#1a1230;border:1px solid rgba(150,46,255,.55);border-radius:10px;cursor:pointer;color:#ece6f7;font-family:-apple-system,"Segoe UI",sans-serif;font-size:12.5px;white-space:nowrap;box-shadow:0 1px 3px rgba(0,0,0,.35);}'
+        + '#nuts7w-dock.fixed{position:fixed;z-index:850;}'
+        + '#nuts7w-dock:hover{border-color:#962eff;background:#221838;}'
+        + '#nuts7w-dock .dl{width:7px;height:7px;border-radius:50%;background:#962eff;box-shadow:0 0 9px #962eff;animation:nuts7wpulse 1.9s infinite ease-in-out;flex:none;}'
+        + '#nuts7w-dock .dlbl{color:#d6cde9;font-weight:600;}'
+        + '#nuts7w-dock .dsep{width:1px;height:16px;background:rgba(255,255,255,.12);}'
+        + '#nuts7w-dock .dval{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-variant-numeric:tabular-nums;color:#fff;font-weight:600;}'
+        + '#nuts7w-dock .dval i{color:#9b8fb8;font-style:normal;font-size:10px;font-weight:500;margin-left:2px;}'
+        + '#nuts7w-dock .dcv{color:#776a99;font-size:9px;}'
+        + '#nuts7w-dock.open .dcv{color:#c9a6ff;}'
+        // ---- chart hover tooltip ----
+        + '#nuts7w-gtip{position:fixed;z-index:860;pointer-events:none;display:none;background:#161029;border:1px solid rgba(3,218,198,.38);border-radius:7px;padding:7px 10px;box-shadow:0 8px 24px rgba(0,0,0,.6);}'
+        + '#nuts7w-gtip .gtl{color:#7e70a0;font-size:9px;letter-spacing:.06em;text-transform:uppercase;font-family:ui-monospace,Menlo,monospace;}'
+        + '#nuts7w-gtip .gtv{color:#fff;font-size:12.5px;font-weight:700;margin-top:2px;font-family:ui-monospace,Menlo,monospace;}'
+        + '#nuts7w-gtip .gtf{color:#9fe6dc;font-size:10px;margin-top:3px;font-family:ui-monospace,Menlo,monospace;}';
+        var st = document.createElement('style');
+        st.textContent = css;
+        (document.head || document.documentElement).appendChild(st);
+    }
+
+    /* ------------------------------- HUD --------------------------------- */
+    function defaultPanelOpen() { return true; }   // desktop: the dashboard is the point
+    var hud = {};
+    var renderQueued = false;
+    function scheduleRender() {
+        if (renderQueued) return;
+        renderQueued = true;
+        requestAnimationFrame(function () { renderQueued = false; render(); });
+    }
+
+    function buildHud() {
+        if (document.getElementById('nuts7w')) return;
+        injectStyle();
+
+        // ---- docked pill (the collapsed state) ----
+        var dock = document.createElement('div');
+        dock.id = 'nuts7w-dock';
+        dock.innerHTML = '<span class="dl"></span><span class="dlbl">Rolling 7-Day Wager Tracker</span><span class="dsep"></span><span class="dval" id="nuts7w-dval">–</span><span class="dcv">▾</span>';
+        hud.dock = dock;
+        hud.dval = dock.querySelector('#nuts7w-dval');
+        dock.addEventListener('click', function () { S.ui.open = !S.ui.open; save(); applyOpen(); });
+
+        // ---- main panel ----
+        var w = document.createElement('div');
+        w.id = 'nuts7w';
+        w.setAttribute('data-ver', VERSION);
+        w.innerHTML =
+            '<div class="hd">'
+          + '  <div class="who"><span class="live"><i></i>Live</span><b id="nuts7w-acct">—</b><span id="nuts7w-bfw">· —</span></div>'
+          + '  <div class="hrt"><span class="pin" id="nuts7w-cover">—</span><span class="badge" id="nuts7w-cur" title="click to switch SOL / USD">SOL</span><span class="x" id="nuts7w-min" title="collapse">–</span></div>'
+          + '</div>'
+          + '<div class="grid">'
+          + '  <div class="cell c1">'
+          + '    <div class="lbl">Rolling 7-Day Wager</div>'
+          + '    <div class="hero"><span class="hnum mono" id="nuts7w-roll">–</span><span class="hu" id="nuts7w-hu">SOL</span></div>'
+          + '    <div class="halt" id="nuts7w-halt"></div>'
+          + '    <div class="goalw">'
+          + '      <div class="gbar"><i id="nuts7w-fill"></i></div>'
+          + '      <div class="gmeta" id="nuts7w-gmeta" title="click to set a goal"><span class="mono" id="nuts7w-gleft">—</span><span class="mono" id="nuts7w-gright">—</span></div>'
+          + '      <input class="gedit mono" id="nuts7w-target" type="number" min="0" step="any" placeholder="goal">'
+          + '    </div>'
+          + '    <div class="rtpw"><div class="lbl">Rewards &amp; Tips · 7d</div>'
+          + '      <div class="rtpr">' + rewardRowsHtml() + '</div>'
+          + '    </div>'
+          + '  </div>'
+          + '  <div class="cell c2">'
+          + '    <div class="ctop"><div class="lbl">Wager Activity · 7d</div>'
+          + '      <div class="ct"><button class="live2 on" id="nuts7w-glive" title="snap to live">⟲ Live</button><button id="nuts7w-gout" title="zoom out">−</button><button id="nuts7w-gin" title="zoom in">+</button><button id="nuts7w-gfit" title="fit 7 days">⛶</button></div>'
+          + '    </div>'
+          + '    <div class="well"><canvas id="nuts7w-gcanvas"></canvas></div>'
+          + '  </div>'
+          + '  <div class="cell c3">'
+          + '    <div class="egp"><span class="egn">Window Detail</span><span class="egc" id="nuts7w-nbets">—</span></div>'
+          + '    <div class="rline"><span class="rk">Average bet</span><span class="rval mono" id="nuts7w-avg">—</span></div>'
+          + '    <div class="rline"><span class="rk">Return to player</span><span class="rval mono" id="nuts7w-rtp">—</span></div>'
+          + '    <div class="rline"><span class="rk">Oldest bet counted</span><span class="rval mono" id="nuts7w-oldest">—</span></div>'
+          + '    <div class="egp" style="margin-top:17px"><span class="egn">Profit / Loss<span>lifetime</span></span></div>'
+          + '    <div class="rline"><span class="rk">Deposited</span><span class="rval mono" id="nuts7w-pldep">—</span></div>'
+          + '    <div class="rline"><span class="rk">Withdrawn</span><span class="rval mono" id="nuts7w-plwd">—</span></div>'
+          + '    <div class="rline"><span class="rk">Balance + vault</span><span class="rval mono" id="nuts7w-plbal">—</span></div>'
+          + '    <div class="rline" style="border-top:1px solid rgba(255,255,255,.07);padding-top:8px;margin-top:9px"><span class="rk"><b>Net P&amp;L</b></span><span class="rval mono" id="nuts7w-plnet">—</span></div>'
+          + '    <div class="rline"><span class="rk">Last 7 days</span><span class="rval mono" id="nuts7w-plwin">—</span></div>'
+          + '    <div class="rline" style="margin-top:4px"><span class="rk" style="font-size:9px;color:#7e70a0" id="nuts7w-plnote"></span></div>'
+          + '  </div>'
+          + '</div>';
+        document.body.appendChild(w);
+        hud.w = w;
+        hud.livew  = w.querySelector('.live');
+        hud.acct   = w.querySelector('#nuts7w-acct');
+        hud.bfw    = w.querySelector('#nuts7w-bfw');
+        hud.cover  = w.querySelector('#nuts7w-cover');
+        hud.cur    = w.querySelector('#nuts7w-cur');
+        hud.hu     = w.querySelector('#nuts7w-hu');
+        hud.roll   = w.querySelector('#nuts7w-roll');
+        hud.halt   = w.querySelector('#nuts7w-halt');
+        hud.fill   = w.querySelector('#nuts7w-fill');
+        hud.gmeta  = w.querySelector('#nuts7w-gmeta');
+        hud.gleft  = w.querySelector('#nuts7w-gleft');
+        hud.gright = w.querySelector('#nuts7w-gright');
+        hud.target = w.querySelector('#nuts7w-target');
+        bindRewardRows(w);
+        hud.nbets  = w.querySelector('#nuts7w-nbets');
+        hud.avg    = w.querySelector('#nuts7w-avg');
+        hud.rtp    = w.querySelector('#nuts7w-rtp');
+        hud.oldest = w.querySelector('#nuts7w-oldest');
+        hud.pl     = w.querySelector('#nuts7w-plnet');
+        hud.pldep  = w.querySelector('#nuts7w-pldep');
+        hud.plwd   = w.querySelector('#nuts7w-plwd');
+        hud.plbal  = w.querySelector('#nuts7w-plbal');
+        hud.plnet  = w.querySelector('#nuts7w-plnet');
+        hud.plnote = w.querySelector('#nuts7w-plnote');
+        hud.plwin  = w.querySelector('#nuts7w-plwin');
+        window.addEventListener('resize', scheduleRender);
+
+        // ---- chart: zoom / pan / hover ----
+        hud.gwrap = w.querySelector('.well');
+        hud.gcanvas = w.querySelector('#nuts7w-gcanvas');
+        hud.glive = w.querySelector('#nuts7w-glive');
+        hud.gtip = document.createElement('div'); hud.gtip.id = 'nuts7w-gtip'; document.body.appendChild(hud.gtip);
+        if (S.ui.graphLive == null) S.ui.graphLive = true;
+        gView.end = Date.now();
+        function setLiveBtn() { if (hud.glive) hud.glive.className = 'live2' + (S.ui.graphLive ? ' on' : ''); }
+        function zoomBy(factor, atX) {
+            var W = hud.gcanvas.clientWidth || 300, span = gSpan(), end = gEnd(), now = Date.now();
+            var cx = (atX == null) ? W / 2 : atX, tc = (end - span) + (cx / W) * span;
+            var ns = Math.max(GSPAN_MIN, Math.min(GSPAN_MAX, span * factor));
+            var ne = tc + ns * (1 - cx / W);
+            S.ui.graphSpan = ns;
+            if (ne >= now - 500) { S.ui.graphLive = true; gView.end = now; }
+            else { S.ui.graphLive = false; gView.end = ne; }
+            save(); setLiveBtn(); scheduleGraph();
+        }
+        hud.glive.addEventListener('click', function () { S.ui.graphLive = true; gView.end = Date.now(); save(); setLiveBtn(); scheduleGraph(); });
+        w.querySelector('#nuts7w-gout').addEventListener('click', function () { zoomBy(1 / 0.7); });
+        w.querySelector('#nuts7w-gin').addEventListener('click', function () { zoomBy(0.7); });
+        w.querySelector('#nuts7w-gfit').addEventListener('click', function () { S.ui.graphSpan = GSPAN_MAX; S.ui.graphLive = true; gView.end = Date.now(); save(); setLiveBtn(); scheduleGraph(); });
+        hud.gcanvas.addEventListener('wheel', function (e) {
+            e.preventDefault();
+            var rect = hud.gcanvas.getBoundingClientRect();
+            zoomBy(e.deltaY > 0 ? 1 / 0.85 : 0.85, e.clientX - rect.left);
+        }, { passive: false });
+        hud.gcanvas.addEventListener('mousedown', function (e) { gView.dragX = e.clientX; gView.dragEnd = gEnd(); e.preventDefault(); });
+        window.addEventListener('mousemove', function (e) {
+            if (!S.ui.open || !hud.gcanvas) return;
+            var rect = hud.gcanvas.getBoundingClientRect();
+            if (gView.dragX != null) {
+                var W = hud.gcanvas.clientWidth || 300, span = gSpan(), now = Date.now();
+                var ne = gView.dragEnd - ((e.clientX - gView.dragX) / W) * span;
+                ne = Math.max(now - WINDOW_MS + span, Math.min(now, ne));
+                S.ui.graphLive = (ne >= now - 500); gView.end = ne; setLiveBtn();
+            }
+            var inside = e.clientX >= rect.left && e.clientX <= rect.right && e.clientY >= rect.top && e.clientY <= rect.bottom;
+            if (inside) { gView.hoverX = e.clientX - rect.left; gView.mx = e.clientX; gView.my = e.clientY; }
+            else if (gView.hoverX != null) { gView.hoverX = null; gHideTip(); }
+            scheduleGraph();
+        });
+        window.addEventListener('mouseup', function () { if (gView.dragX != null) { gView.dragX = null; save(); } });
+        setLiveBtn();
+
+        // ---- inline goal editor ----
+        function showEdit() {
+            hud.gmeta.style.display = 'none';
+            hud.target.style.display = 'block';
+            hud.target.value = goalInputValue();
+            hud.target.focus(); hud.target.select();
+        }
+        function hideEdit() {
+            hud.target.style.display = 'none';
+            hud.gmeta.style.display = '';
+            render();
+        }
+        hud.gmeta.addEventListener('click', showEdit);
+        hud.target.addEventListener('input', function () {
+            var a = acct(true);
+            // The goal is entered in whatever the display is set to, but stored in
+            // SOL, so flipping the badge afterwards cannot silently move the goal.
+            if (a) {
+                var v = parseFloat(hud.target.value) || 0;
+                a.target = (S.currency === 'USD' && solPrice > 0) ? v / solPrice : v;
+                a.targetAt = Date.now();
+                save();
+            }
+        });
+        hud.target.addEventListener('keydown', function (e) { if (e.key === 'Enter' || e.key === 'Escape') hideEdit(); });
+        hud.target.addEventListener('blur', hideEdit);
+
+        hud.cur.addEventListener('click', cycleCurrency);
+        w.querySelector('#nuts7w-min').addEventListener('click', function () { S.ui.open = false; save(); applyOpen(); });
+        makeDraggable(w, w.querySelector('.hd'));
+
+        if (S.ui.open == null) S.ui.open = true;
+        ensureDocked();
+        applyOpen();
+        render();
+    }
+
+    /* Dock the pill into nuts.gg's own header, beside the balance, so it lands
+       top centre the way the Stake build sits beside the wallet.
+
+       Their header is a React tree with no stable class we can pin to, so the
+       anchor is found by what it CONTAINS rather than what it is called: the
+       balance element carries title="<n> SOL" (the same selector the Nuts dice
+       tool reads the balance from), and failing that the DEPOSIT control. Both
+       are content, not styling, so a re-skin does not break this.
+
+       If neither is found the pill falls back to fixed top centre. It re-docks
+       on every render because the header remounts on SPA navigation. */
+    /* The pill sits just right of the header's balance / deposit cluster, as a
+       free-standing element. It is NOT inserted into their markup: nuts.gg's
+       header is React, and a foreign node in a managed subtree is both fragile
+       and cramped by their flex layout. Instead it stays position:fixed and is
+       parked next to the cluster, which looks the same and cannot disturb them.
+
+       The cluster is located by content, not class: the balance carries
+       title="<n> SOL" (what the Nuts dice tool reads it from) and DEPOSIT by its
+       text. We take whichever sits furthest right and park after it. */
+    function headerAnchorRect() {
+        var best = null;
+        function consider(el) {
+            var r = el.getBoundingClientRect();
+            if (!r.width || r.top > 90) return;           // header strip only
+            if (!best || r.right > best.right) best = r;
+        }
+        try {
+            var bal = document.querySelectorAll('div[title$=" SOL"], span[title$=" SOL"]');
+            for (var i = 0; i < bal.length; i++) {
+                var t = (bal[i].getAttribute('title') || '').trim();
+                if (/^[\d.,]+\s+SOL$/.test(t)) consider(bal[i]);
+            }
+            var btns = document.querySelectorAll('button, a');
+            for (var j = 0; j < btns.length; j++) {
+                if (/^deposit$/i.test((btns[j].textContent || '').trim())) consider(btns[j]);
+            }
+        } catch (e) {}
+        return best;
+    }
+    var GAP_PX = 14;
+    function ensureDocked() {
+        if (!hud.dock) return;
+        if (!hud.dock.isConnected) { hud.dock.classList.add('fixed'); document.body.appendChild(hud.dock); }
+        hud.dock.classList.add('fixed');
+        var r = headerAnchorRect(), st = hud.dock.style;
+        if (!r) {                                          // header not up yet
+            st.left = '50%'; st.top = '10px'; st.transform = 'translateX(-50%)';
+            return;
+        }
+        var w = hud.dock.offsetWidth || 240, h = hud.dock.offsetHeight || 36;
+        var left = Math.min(r.right + GAP_PX, window.innerWidth - w - 8);
+        st.transform = 'none';
+        st.left = Math.max(8, Math.round(left)) + 'px';
+        st.top = Math.round(r.top + (r.height - h) / 2) + 'px';
+    }
+
+    function applyOpen() {
+        if (!hud.w) return;
+        ensureDocked();
+        if (S.ui.open) { hud.w.style.display = ''; if (hud.dock) hud.dock.classList.add('open'); }
+        else { hud.w.style.display = 'none'; if (hud.dock) hud.dock.classList.remove('open'); }
+        render();
+    }
+    function cycleCurrency() {
+        var next = S.currency === 'SOL' ? 'USD' : 'SOL';
+        if (next === 'USD' && !(solPrice > 0)) { readCachedSolPrice(); if (!(solPrice > 0)) return; }
+        S.currency = next;
+        save(); render();
+    }
+
+    function render() {
+        if (!hud.w) return;
+        ensureDocked();
+        var C = ' ' + S.currency;
+        if (hud.cur) hud.cur.textContent = S.currency;
+        if (hud.hu) hud.hu.textContent = S.currency;
+
+        var a = acct();
+        hud.acct.textContent = a ? (a.name || 'this browser') : 'detecting…';
+        /* The pulse means "bets are reaching us", so it has to go dark when the
+           socket is down — a pulsing dot over a stale number is the one thing
+           this panel must never show. */
+        var up = sockReady();
+        if (hud.livew) {
+            hud.livew.style.opacity = up ? '' : '.45';
+            hud.livew.style.color = up ? '' : '#65808f';
+            hud.livew.lastChild.nodeValue = up ? 'Live' : 'Offline';
+        }
+
+        var info = rolling();
+        var rollStr = info.ready ? fmt(disp(info.rolling)) : '–';
+        hud.roll.textContent = rollStr;
+        if (hud.dval) hud.dval.innerHTML = rollStr + '<i>' + S.currency + '</i>';
+        /* Both currencies, always. The badge only picks which one is big. */
+        if (hud.halt) {
+            var alt = info.ready ? altAmount(info.rolling) : '';
+            hud.halt.innerHTML = alt ? ('≈ <b>' + alt + '</b>')
+                : (S.currency === 'SOL' ? 'USD rate not loaded yet' : '');
+        }
+
+        // header: where the history stands. This is the one number a user has to
+        // be able to trust, so the line says plainly whether it is complete.
+        if (!up) { hud.cover.textContent = 'waiting for nuts.gg…'; hud.cover.className = 'pin'; }
+        else if (!info.ready) { hud.cover.textContent = 'reading bet history…'; hud.cover.className = 'pin'; }
+        else if (info.exhausted) {
+            // Everything the account has, which is less than 7 days old.
+            hud.cover.innerHTML = '✓ <b>all history</b> · ' + formatDur(info.coverMs);
+            hud.cover.className = 'pin ok';
+        }
+        else if (info.full) { hud.cover.innerHTML = '✓ <b>full 7 days</b>'; hud.cover.className = 'pin ok'; }
+        else { hud.cover.innerHTML = '◷ <b>' + info.daysDone + '/' + (info.daysTotal - 1) + ' days</b> · ' + formatDur(info.coverMs); hud.cover.className = 'pin'; }
+        var bfErr = (acct() && acct().bf && acct().bf.err) || '';
+        hud.bfw.textContent = bfState.msg ? ('· ' + bfState.msg)
+            : (bfErr && !info.full) ? ('· ' + bfErr)
+            : (info.ready ? ('· ' + info.bets.toLocaleString() + ' bets') : '· —');
+
+        renderRewards(C);
+        var r = windowReturn();
+
+        // goal progress
+        var tgt = getTarget();
+        if (tgt > 0 && info.ready) {
+            var pct = Math.max(0, Math.min(1, info.rolling / tgt)), rem = tgt - info.rolling;
+            hud.fill.style.width = (pct * 100) + '%';
+            if (rem <= 0) {
+                /* Met is not the whole story on a ROLLING window: the wager that
+                   got you there ages out. Say how long the goal holds if you stop
+                   now, which is the thing a goal on a 7-day window is actually
+                   asked. */
+                hud.gleft.innerHTML = '<span class="rem-ok">✓ goal complete</span>';
+                hud.gright.textContent = 'holds ' + leftHrs(timeLeftMs(tgt));
+            }
+            else {
+                hud.gleft.innerHTML = '<span class="pc">' + Math.round(pct * 100) + '%</span> of ' + fmtShort(disp(tgt)) + ' goal';
+                hud.gright.textContent = fmtShort(disp(rem)) + ' to go';
+            }
+        } else {
+            hud.fill.style.width = '0%';
+            hud.gleft.textContent = 'No goal set';
+            hud.gright.textContent = 'click to set →';
+        }
+
+        // window detail
+        hud.nbets.textContent = info.ready ? info.bets.toLocaleString() + ' bets' : '—';
+        hud.nbets.className = 'egc' + (info.ready ? (info.full ? ' ok' : ' part') : '');
+        hud.avg.textContent = (info.ready && info.bets > 0) ? fmt(disp(info.rolling / info.bets)) + C : '—';
+        hud.rtp.textContent = (r.rtp != null) ? r.rtp.toFixed(2) + '%' : '—';
+        if (hud.rtp) hud.rtp.style.color = (r.rtp == null) ? '' : (r.rtp >= 100 ? '#1fd655' : r.rtp >= 96 ? '#dfe9ef' : '#ff6b76');
+        hud.oldest.textContent = info.since ? shortDate(info.since) : '—';
+
+
+        /* Real P&L: money out minus money in. Deliberately sits apart from the
+           bet figures -- they answer different questions and conflating them is
+           what made the old "Net" misleading. */
+        var pl = pnl();
+        if (hud.pl) {
+            if (!pl.ready) {
+                hud.plnet.textContent = '—';
+                hud.plnet.style.color = '';
+                hud.pldep.textContent = hud.plwd.textContent = hud.plbal.textContent = '—';
+                hud.plnote.textContent = 'reading wallet…';
+            } else {
+                hud.pldep.textContent = fmt(disp(pl.dep)) + C;
+                hud.plwd.textContent  = fmt(disp(pl.wd)) + C;
+                hud.plbal.textContent = fmt(disp(pl.bal)) + C;
+                hud.plnet.textContent = (pl.net >= 0 ? '+' : '') + fmt(disp(pl.net)) + C;
+                hud.plnet.style.color = pl.net >= 0 ? '#1fd655' : '#ff6b76';
+                hud.plnote.textContent = pl.complete ? 'balance + withdrawn − deposited'
+                                                     : 'partial wallet history';
+            }
+            if (hud.plwin) {
+                if (pl.ready && pl.winReady) {
+                    hud.plwin.textContent = (pl.win >= 0 ? '+' : '') + fmt(disp(pl.win)) + C;
+                    hud.plwin.style.color = pl.win >= 0 ? '#1fd655' : '#ff6b76';
+                } else {
+                    // Needs the full 7 days of bets behind it; say so rather
+                    // than show a number that is quietly short.
+                    hud.plwin.textContent = pl.ready ? 'needs full 7d' : '—';
+                    hud.plwin.style.color = '';
+                }
+            }
+        }
+
+        if (S.ui.open) drawGraph();
+    }
+
+    /* ---------------------------- drag panel ----------------------------- */
+    function makeDraggable(panel, handle) {
+        var sx, sy, ox, oy, drag = false;
+        handle.addEventListener('mousedown', function (e) {
+            if (e.target.classList.contains('x') || e.target.classList.contains('badge')) return;
+            drag = true;
+            var r = panel.getBoundingClientRect();
+            sx = e.clientX; sy = e.clientY; ox = r.left; oy = r.top;
+            panel.style.transform = 'none';
+            panel.style.left = ox + 'px'; panel.style.top = oy + 'px';
+            e.preventDefault();
+        });
+        window.addEventListener('mousemove', function (e) {
+            if (!drag) return;
+            panel.style.left = (ox + e.clientX - sx) + 'px';
+            panel.style.top = (oy + e.clientY - sy) + 'px';
+        });
+        window.addEventListener('mouseup', function () {
+            if (!drag) return;
+            drag = false;
+            S.ui.left = parseInt(panel.style.left, 10);
+            S.ui.top = parseInt(panel.style.top, 10);
+            save();
+        });
+        if (S.ui.left != null && S.ui.top != null) {
+            panel.style.transform = 'none';
+            panel.style.left = S.ui.left + 'px';
+            panel.style.top = S.ui.top + 'px';
+        }
+    }
+
+    function start() {
+        cleanupOversizedStore();
+        detectAccount();
+        buildHud();
+        readCachedSolPrice();
+        setInterval(readCachedSolPrice, 30 * 1000);
+
+        // The account link only exists once their app has rendered the header.
+        var tries = 0;
+        var idt = setInterval(function () {
+            detectAccount();
+            if (++tries > 40 || (acct() && acct().name)) clearInterval(idt);
+        }, 1500);
+
+        // The socket may already be open, may open later, or may drop and come
+        // back; kick() is cheap and self-throttling, so it is safe to call from
+        // all three places rather than trying to catch the one right moment.
+        kick(true);
+        setInterval(function () { kick(); }, 60 * 1000);
+        document.addEventListener('visibilitychange', function () { if (!document.hidden) kick(); });
+
+        setInterval(render, 1000);
+        window.addEventListener('beforeunload', flushSave);
     }
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', start);
@@ -23022,6 +24950,18 @@ function tool_stake_7day_tracker() {
         group: 'Stake',
         uiSelectors: ['#stk7w', '#stk7w-dock', '#stk7w-sync', '#stk7w-gtip']
     }, tool_stake_7day_tracker);
+
+    /* ----- Nuts 7-Day Wager Tracker ----- */
+    register({
+        id: 'nuts-7day-tracker',
+        name: 'Nuts 7-Day Wager Tracker',
+        description: 'Rolling 7-day wager total, goal tracker, P&L, rewards & tips, and wager chart.',
+        matches: ['https://nuts.gg/*', 'https://*.nuts.gg/*'],
+        runAt: 'document-start',
+        defaultEnabled: true,
+        group: 'Nuts',
+        uiSelectors: ['#nuts7w', '#nuts7w-dock', '#nuts7w-gtip']
+    }, tool_nuts_7day_tracker);
 
     /* ----- Stake Auto-Vault ----- */
     register({
