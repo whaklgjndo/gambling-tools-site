@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>API Dash: betting dashboards for Stake and Nuts</title>
+  <meta name="description" content="API Dash is a separate paid app with betting dashboards for stake.us, stake.com and nuts.gg, on Windows, Android and iPhone." />
+  <link rel="icon" href="logo.png" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link rel="stylesheet" href="../assets/style.css" />
+  <link rel="stylesheet" href="../assets/api-dash.css" />
+  <script>document.documentElement.classList.add("js");</script>
+  <!--
+    API DASH, inside the Gambling Tools site (owner, 2026-10-04). Generated:
+    the source is worker/site/ in the API Dash "Desktop App" repo, written
+    out by `node worker/export-site.mjs <this site's folder>`. Edit it there,
+    not here, or the next export puts it back.
+  -->
+</head>
+<body>
+  <a href="#main" class="skip-link">Skip to content</a>
+
+  <header class="site">
+    <div class="container">
+      <a href="../index.html#top" class="brand"><span class="dot" aria-hidden="true"></span> Gambling Tools</a>
+      <nav aria-label="Primary">
+        <a href="../index.html#download" class="nav-anchor">Download</a>
+        <a href="../index.html#install" class="nav-anchor">Setup</a>
+        <a href="../index.html#tools" class="nav-anchor">What's inside</a>
+        <a href="../updates.html">Updates</a>
+        <a href="index.html" class="active" aria-current="true">API Dash</a>
+      </nav>
+    </div>
+  </header>
+
+  <div class="adbar">
+    <div class="container">
+      <a class="adbrand" href="index.html" data-nav="home" aria-current="page"><img src="logo.png" alt="" width="34" height="34" /><span>API <i>Dash</i></span></a>
+      <nav aria-label="API Dash">
+        <a href="windows.html" data-nav="windows">Windows</a>
+        <a href="android.html" data-nav="android">Android</a>
+        <a href="iphone.html" data-nav="iphone">iPhone</a>
+        <a href="index.html#prices" class="adwide">Prices</a>
+        <a class="btn primary" href="https://apidash-licences.apidash.workers.dev/buy">Buy a key</a>
+      </nav>
+    </div>
+  </div>
+
+  <main class="container" id="main">
+    <span id="top"></span>
+
+    <section class="hero" data-reveal>
+      <span class="eyebrow">For stake.us, stake.com and nuts.gg</span>
+      <h1>Bets faster than you can click. <span class="hl">Stops exactly where you tell it to.</span></h1>
+      <p class="lead">
+        Set conditions on every game, hard stops for loss, profit and balance, and watch each bet land
+        in a live log. Try any strategy first in Simulated mode, which plays the real games against a
+        pretend balance and stakes nothing.
+      </p>
+
+      <div class="quickdl">
+        <a class="btn primary big" href="#devices">
+          <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 3v10.6l3.3-3.3 1.4 1.4L12 17.4l-4.7-4.7 1.4-1.4 3.3 3.3V3h2ZM5 19h14v2H5z"/></svg>
+          <span class="bt"><b>Choose your device</b><small>Windows · Android · iPhone</small></span>
+        </a>
+        <a class="btn big" href="#prices">
+          <span class="bt"><b>See prices</b><small>$10 key · time per site</small></span>
+        </a>
+      </div>
+
+      <div class="sites">
+        <span class="chip stake">stake.us</span>
+        <span class="chip stake">stake.com</span>
+        <span class="chip nuts">nuts.gg</span>
+      </div>
+    </section>
+
+    <div class="panel-intro adapart" data-reveal>
+      <span aria-hidden="true">🔑</span>
+      <div><b>A separate, paid app.</b> API Dash is not part of the free Gambling Tools bundle: it is its own
+        app with its own dashboards, sold with a licence key. The userscripts on the rest of this site stay
+        free and don't need it.</div>
+    </div>
+
+    <!-- ===================== DEVICES ===================== -->
+    <section class="section" id="devices">
+      <span class="eyebrow">01 / Devices</span>
+      <h2>Get it for your device</h2>
+      <p class="section-sub">Apple and Google only take real-money gambling apps from licensed casinos, so
+        neither phone version is in an app store. All three run the same dashboards with the same kind of key.</p>
+
+      <div class="picker adpicker">
+        <a class="pick" href="windows.html">
+          <span class="pi"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 4h18a1 1 0 0 1 1 1v11a1 1 0 0 1-1 1h-7v2h3v2H7v-2h3v-2H3a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1Zm1 2v9h16V6H4Z"/></svg></span>
+          <h3>Windows</h3>
+          <p class="sub">ApiDash.exe · 135 MB · Windows 10 or 11</p>
+          <p class="pdesc">The app, as one file. Nothing to install.</p>
+          <span class="go">Windows download <span class="arrow" aria-hidden="true">→</span></span>
+        </a>
+        <a class="pick" href="android.html">
+          <span class="pi"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9h12v8a1 1 0 0 1-1 1h-1v3h-2v-3h-4v3H8v-3H7a1 1 0 0 1-1-1V9Zm-3 .5A1.5 1.5 0 0 1 4.5 11v4a1.5 1.5 0 0 1-3 0v-4A1.5 1.5 0 0 1 3 9.5Zm18 0a1.5 1.5 0 0 1 1.5 1.5v4a1.5 1.5 0 0 1-3 0v-4A1.5 1.5 0 0 1 21 9.5ZM7.2 8a5 5 0 0 1 9.6 0H7.2Zm1.8-3.2.8 1.4-.7.4-.8-1.4.7-.4Zm6 0 .7.4-.8 1.4-.7-.4.8-1.4Z"/></svg></span>
+          <h3>Android</h3>
+          <p class="sub">ApiDash.apk · 85 KB · Android 8.0 or newer</p>
+          <p class="pdesc">The app, installed from its file.</p>
+          <span class="go">Android download <span class="arrow" aria-hidden="true">→</span></span>
+        </a>
+        <a class="pick" href="iphone.html">
+          <span class="pi"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16.4 12.9c0-2.3 1.9-3.4 2-3.5-1.1-1.6-2.8-1.8-3.4-1.8-1.4-.1-2.8.8-3.5.8-.7 0-1.8-.8-3-.8-1.5 0-2.9.9-3.7 2.3-1.6 2.7-.4 6.8 1.1 9 .8 1.1 1.6 2.3 2.8 2.3 1.1 0 1.6-.7 2.9-.7 1.3 0 1.7.7 2.9.7 1.2 0 2-1.1 2.7-2.2.9-1.2 1.2-2.5 1.2-2.5s-2.3-.9-2.3-3.6ZM14.3 6c.6-.8 1.1-1.9.9-3-1 .1-2.1.7-2.8 1.5-.6.7-1.1 1.8-1 2.9 1.1.1 2.2-.6 2.9-1.4Z"/></svg></span>
+          <h3>iPhone</h3>
+          <p class="sub">apidash-loader.user.js · iOS 15.1 or newer</p>
+          <p class="pdesc">A small file that runs in Safari, through the free Userscripts app.</p>
+          <span class="go">iPhone setup <span class="arrow" aria-hidden="true">→</span></span>
+        </a>
+      </div>
+    </section>
+
+    <!-- ===================== PRICES ===================== -->
+    <section class="section" id="prices">
+      <span class="eyebrow">02 / Prices</span>
+      <h2>Prices</h2>
+      <p class="section-sub">Buy a key once, then add time to the sites you play, when you want to play them.</p>
+
+      <div class="adgrid keytime">
+        <div class="adcard">
+          <span class="adlabel">The key</span>
+          <div class="bigprice"><span>$10</span> once</div>
+          <ul class="adlist">
+            <li>Never runs out.</li>
+            <li>Works on one device, a computer or a phone. Using both needs a key for each.</li>
+            <li>Moving to a new device is free. Do it yourself from the store page, once a week.</li>
+          </ul>
+        </div>
+        <div class="adcard">
+          <span class="adlabel">Time, per site</span>
+          <div class="ptable-wrap"><table class="ptable"><thead><tr><th scope="col">Hours</th><th scope="col">24<small>1 day</small></th><th scope="col">72<small>3 days</small></th><th scope="col">168<small>7 days</small></th><th scope="col">240<small>10 days</small></th><th scope="col">336<small>14 days</small></th><th scope="col">480<small>20 days</small></th><th scope="col">720<small>30 days</small></th></tr></thead><tbody><tr class="cost"><th scope="row">Price</th><td class="hl">$1.00</td><td>$1.67</td><td class="hl">$3.00</td><td>$3.26</td><td>$3.61</td><td>$4.13</td><td class="hl">$5.00</td></tr><tr class="each"><th scope="row">Per day</th><td>$1.00</td><td>$0.56</td><td>$0.43</td><td>$0.33</td><td>$0.26</td><td>$0.21</td><td>$0.17</td></tr></tbody></table></div>
+          <p class="adp">Add any whole number of hours from 24 to 720, priced along the same line.
+            Each site holds at most 720 hours (30 days), so you can top up whenever it has room.</p>
+          <p class="adp dim">Example: a key plus 168 hours (7 days) of stake.us is $13.00.</p>
+        </div>
+      </div>
+
+      <div class="adgrid keytime">
+        <div class="adcard clocks">
+          <div class="clocks-head"><span class="adlabel">Your time, per site</span><span class="dim">Example</span></div>
+          <div class="clock"><span>stake.us</span><span class="t">167:59:42</span></div>
+          <div class="clock"><span>stake.com</span><span class="t">23:12:05</span></div>
+          <div class="clock"><span>nuts.gg</span><span class="none">no time yet</span></div>
+          <p class="adp dim">Hours, minutes and seconds left. Each site counts down on its own, whether or not
+            you play, and holds up to 720 hours.</p>
+        </div>
+        <div class="adcard paybox">
+          <span class="adlabel">Paid in USDC or SOL, on Solana</span>
+          <p class="adp">Pay from a wallet app such as Phantom, Solflare or Backpack by scanning the order's code.
+            Your key or your time arrives as soon as the payment confirms, usually within seconds. Every app
+            shows each site's time left and has an Add time button.</p>
+          <p class="adp dim">USDC pays the dollar price exactly. SOL is worked out from SOL's price when you
+            order, and that price holds for 15 minutes.</p>
+          <a class="btn primary" href="https://apidash-licences.apidash.workers.dev/buy">Buy a key or add time</a>
+          
+        </div>
+      </div>
+    </section>
+
+    <!-- ===================== READ THIS FIRST ===================== -->
+    <section class="section" id="read">
+      <div class="risk">
+        <span class="eyebrow">03 / Read this first</span>
+        <h2>Read this before you use it</h2>
+        <div class="adfacts">
+          <div><b>It bets real money.</b> Sweeps Coins are redeemable and every stake.com currency is
+            withdrawable. A simulated run is the only run that stakes nothing.</div>
+          <div><b>Automated play is against Stake's terms.</b> Clause 8.2(c) of the stake.us terms. An account
+            caught using it can be closed with its balance withheld. That risk is yours.</div>
+          <div><b>No strategy beats the house edge.</b> Betting faster only loses faster. API Dash changes how
+            quickly and precisely you act, never the odds of anything.</div>
+          <div><b>No warranty.</b> The sites can change their APIs at any time. The app stops when it sees
+            something it does not understand, but it comes with no guarantee.</div>
+          <div><b>Adults only.</b> At whatever age your country or state sets, and only with money you can
+            afford to lose.</div>
+        </div>
+      </div>
+      <div class="adcard contact">
+        <span class="adlabel">Questions about a key or an order</span>
+        <span class="who">TypicalPrag on Discord</span>
+      </div>
+    </section>
+
+  </main>
+
+  <footer class="site">
+    <div class="container">
+      <p class="rg">API Dash is a separate paid app, not part of the free Gambling Tools bundle. It bets real money and doesn't change the odds of any game. Only play with what you can afford to lose. <a href="index.html#read">Read this before you use it</a>.</p>
+      <p class="cr">API Dash · all rights reserved · the dashboards are fetched at run time against your key</p>
+    </div>
+  </footer>
+
+  <script src="../assets/app.js"></script>
+</body>
+</html>
