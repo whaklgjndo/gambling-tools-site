@@ -44,6 +44,9 @@
 .adgrid { display: grid; gap: 16px; margin-top: 16px; }
 .adgrid.keytime { grid-template-columns: minmax(0, 1fr) minmax(0, 2fr); }
 .adgrid.side { grid-template-columns: minmax(0, 1fr) 330px; gap: 36px; align-items: start; }
+/* What it does: three cards across, one column on a phone. */
+.adgrid.three { grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
+.adgrid.three .adp { margin-top: 10px; }
 
 /* Devices: the site's picker, as links. */
 .adpicker { margin-top: 0; }
