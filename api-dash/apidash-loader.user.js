@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         API Dash
 // @namespace    apidash
-// @version      1.0.6
+// @version      1.0.7
 // @description  Loads your licensed API Dash dashboard on stake.us, stake.com and nuts.gg - made for phones (Safari + Userscripts, Firefox + Violentmonkey).
 // @match        https://stake.us/*
 // @match        https://*.stake.us/*
@@ -69,7 +69,7 @@
     // without a key.
     var SERVER = 'https://apidash-licences.apidash.workers.dev';
     var STORE = SERVER + '/buy';
-    var APP = 'phone-loader 1.0.6';
+    var APP = 'phone-loader 1.0.7';
 
     // The same three sites, matched the same way, as the Desktop App's
     // Sites.cs: the host itself or a subdomain of it, so the stake.com build
@@ -188,12 +188,30 @@
     // about the phone, so the device is a random id made once and kept in the
     // manager's own storage. Deleting the manager app loses it, and the key
     // then needs the admin panel's Unbind - the README says so.
+    //
+    // KEPT TWICE since 1.0.7: in the manager's storage AND in this site's own
+    // storage (localStorage, which the manager's sandbox shares with the
+    // page). A customer's iPad, low on space, had iOS clear Userscripts'
+    // storage whenever Safari was quit: a new id every launch, and "already
+    // in use on another computer" every time. Whichever copy survives puts
+    // the other back, so the id only changes if both are lost together.
+    var DEVICE_KEY = '__apidashDevice';
+    var DEVICE_OK = /^[0-9a-f]{16}$/;
+    function siteDevice() {
+        try { return localStorage.getItem(DEVICE_KEY) || ''; } catch (e) { return ''; }
+    }
+    function keepOnSite(d) {
+        try { if (localStorage.getItem(DEVICE_KEY) !== d) localStorage.setItem(DEVICE_KEY, d); } catch (e) { /* storage blocked: the manager's copy stands */ }
+    }
     function deviceId() {
         return getValue('device', '').then(function (d) {
-            if (/^[0-9a-f]{16}$/.test(d)) return d;
+            if (DEVICE_OK.test(d)) { keepOnSite(d); return d; }
+            var kept = siteDevice();
+            if (DEVICE_OK.test(kept)) return setValue('device', kept).then(function () { return kept; });
             var b = new Uint8Array(8);
             crypto.getRandomValues(b);
             d = Array.prototype.map.call(b, function (x) { return ('0' + x.toString(16)).slice(-2); }).join('');
+            keepOnSite(d);
             return setValue('device', d).then(function () { return d; });
         });
     }
