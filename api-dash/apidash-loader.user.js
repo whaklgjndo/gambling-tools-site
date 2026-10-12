@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         API Dash
 // @namespace    apidash
-// @version      1.0.7
+// @version      1.0.8
 // @description  Loads your licensed API Dash dashboard on stake.us, stake.com and nuts.gg - made for phones (Safari + Userscripts, Firefox + Violentmonkey).
 // @match        https://stake.us/*
 // @match        https://*.stake.us/*
@@ -69,7 +69,9 @@
     // without a key.
     var SERVER = 'https://apidash-licences.apidash.workers.dev';
     var STORE = SERVER + '/buy';
-    var APP = 'phone-loader 1.0.7';
+    // This file's own address, as in @downloadURL above: where an update comes from.
+    var LOADER_URL = 'https://whaklgjndo.github.io/gambling-tools-site/api-dash/apidash-loader.user.js';
+    var APP = 'phone-loader 1.0.8';
 
     // The same three sites, matched the same way, as the Desktop App's
     // Sites.cs: the host itself or a subdomain of it, so the stake.com build
@@ -253,9 +255,108 @@
     function hostSet(end) {
         pageRun('(function(){var h=window.ApiDashHost;if(!h||typeof h!=="object"){h=window.ApiDashHost={};}' +
             'h.site=' + JSON.stringify(site.key) + ';' +
+            // Which app and version this is (panel: laterAppCard).
+            'h.app={platform:"iphone",version:' + JSON.stringify(APP.split(' ').pop()) + '};' +
             'h.end=' + (end === undefined ? 'undefined' : JSON.stringify(end)) + ';' +
             'h.addTime=function(){window.open(' + JSON.stringify(STORE) + ',"_blank")};})()');
     }
+    // ---- friends, for the panel ----------------------------------------------------
+    // Owner, 2026-10-11: the friends list lives in the dashboard, so the iPhone
+    // has it too. The panel calls ApiDashHost.friends(what, body). The page
+    // cannot hold the key, so it asks THIS sandbox with a DOM event; the request
+    // goes out here, through the manager, with the key and device added last so
+    // nothing the page says can replace them; and the answer goes back the same
+    // way, as text. What crosses the page is the friends traffic itself - names,
+    // statuses, strategy codes - never the key.
+    var FRIENDS_ASK = 'apidash-friends-ask', FRIENDS_ANSWER = 'apidash-friends-answer';
+    var friendsKey = null;
+    var FRIENDS_PAGE = '(function(){var h=window.ApiDashHost;if(!h||typeof h!=="object"){h=window.ApiDashHost={};}' +
+        'if(h.friends)return;var n=0;' +
+        'h.friends=function(what,body){return new Promise(function(res){' +
+        'var id="f"+(++n)+"."+Date.now();' +
+        'function on(e){var d;try{d=JSON.parse(e.detail)}catch(x){return}if(!d||d.id!==id)return;' +
+        'document.removeEventListener("' + FRIENDS_ANSWER + '",on);res({status:d.status,body:d.body||{}})}' +
+        'document.addEventListener("' + FRIENDS_ANSWER + '",on);' +
+        'document.dispatchEvent(new CustomEvent("' + FRIENDS_ASK + '",' +
+        '{detail:JSON.stringify({id:id,what:String(what),body:body||{}})}))})}})()';
+    function friendsOn(key, device) {
+        var first = !friendsKey;
+        friendsKey = { key: key, device: device };     // a key changed from the menu: the new one
+        pageRun(FRIENDS_PAGE);
+        if (!first) return;
+        document.addEventListener(FRIENDS_ASK, function (e) {
+            var d = null;
+            try { d = JSON.parse(String(e.detail)); } catch (x) { return; }
+            if (!d || typeof d.id !== 'string' || !/^[a-z]{2,10}$/.test(String(d.what))) return;
+            var body = Object.assign({}, d.body && typeof d.body === 'object' ? d.body : {},
+                { key: friendsKey.key, device: friendsKey.device, app: APP });
+            post('/v1/friends/' + d.what, body).then(function (r) {
+                var out = JSON.stringify({ id: d.id, status: r.status,
+                    body: r.json && typeof r.json === 'object' ? r.json : {} });
+                pageRun('document.dispatchEvent(new CustomEvent("' + FRIENDS_ANSWER + '",{detail:' + JSON.stringify(out) + '}))');
+            });
+        });
+    }
+
+    // ---- a newer loader ------------------------------------------------------------
+    // Owner, 2026-10-11: "prompt users that there is an update on their next load,
+    // with a button that auto downloads the new version and replaces the old one."
+    // The licence server's /v1/app says which loader version is out (the same
+    // manifest the Windows and Android apps read). Here the userscript app does the
+    // replacing: Update is a plain link to this file's own address, which the app
+    // offers to install over this one. Only the version is taken from the server,
+    // never the address. Not now hides it for that version for a day.
+    function newer(a, b) {
+        var x = String(a).split('.'), y = String(b).split('.');
+        for (var i = 0; i < Math.max(x.length, y.length); i++) {
+            var d = (parseInt(x[i], 10) || 0) - (parseInt(y[i], 10) || 0);
+            if (d) return d > 0;
+        }
+        return false;
+    }
+    var offeredUpdate = false;
+    function offerUpdate() {
+        if (offeredUpdate) return;
+        offeredUpdate = true;
+        var mine = APP.split(' ').pop();
+        post('/v1/app', {}).then(function (r) {
+            var m = null;
+            try { m = r.json && typeof r.json.manifest === 'string' ? JSON.parse(r.json.manifest) : null; } catch (e) { m = null; }
+            var out = m && m.loader && m.loader.version;
+            if (!out || !newer(out, mine)) return;
+            return getValue('updateLater', '').then(function (later) {
+                var p = String(later || '').split('|');
+                if (p[0] === out && Date.now() - Number(p[1]) < 86400000) return;
+                var u = shell();
+                if (!u.scrim.hidden) return;      // the key or time sheet is up: not now
+                u.scrim.textContent = '';
+                var card = el('div', 'card');
+                card.setAttribute('role', 'dialog');
+                card.setAttribute('aria-label', 'API Dash update');
+                card.appendChild(el('h1', null, 'API Dash · update'));
+                // The release's name, from its tag (owner, 2026-10-11: "API Dash Beta 0.2.5").
+                var release = m.tag ? String(m.tag).replace(/^v/, '') : out;
+                card.appendChild(el('p', null, 'API Dash Beta ' + release + ' is out: loader ' + out + ' (this is ' + mine + ').'));
+                if (m.notes) card.appendChild(el('p', 'dim', String(m.notes)));
+                card.appendChild(el('p', 'dim', 'Your userscript app will ask to update it. Then reload this page.'));
+                var row = el('div', 'row');
+                var later = el('button', 'btn', 'Not now');
+                var go = el('a', 'btn pri', 'Update');
+                go.href = LOADER_URL;
+                go.target = '_blank';
+                go.rel = 'noopener';
+                row.appendChild(later);
+                row.appendChild(go);
+                card.appendChild(row);
+                u.scrim.appendChild(card);
+                u.scrim.hidden = false;
+                function close() { u.scrim.hidden = true; u.scrim.textContent = ''; }
+                later.onclick = function () { setValue('updateLater', out + '|' + Date.now()); close(); };
+                go.addEventListener('click', close);
+            });
+        });
+    }
+
     function endFrom(ends) {
         return ends && typeof ends === 'object' && site.key in ends ? ends[site.key] : undefined;
     }
@@ -506,6 +607,8 @@
                 hostSet(endFrom(j.ends));
                 watchTime(key, device);
                 goLive(key, device);
+                friendsOn(key, device);
+                offerUpdate();
                 say('API Dash ' + got.said, false, 2500);
             } else {
                 say(got.said, true);
