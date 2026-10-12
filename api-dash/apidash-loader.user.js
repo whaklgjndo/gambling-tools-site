@@ -1,14 +1,16 @@
 // ==UserScript==
 // @name         API Dash
 // @namespace    apidash
-// @version      1.0.8
-// @description  Loads your licensed API Dash dashboard on stake.us, stake.com and nuts.gg - made for phones (Safari + Userscripts, Firefox + Violentmonkey).
+// @version      1.0.9
+// @description  Loads your licensed API Dash dashboard on stake.us, stake.com, nuts.gg and winna.com - made for phones (Safari + Userscripts, Firefox + Violentmonkey).
 // @match        https://stake.us/*
 // @match        https://*.stake.us/*
 // @match        https://stake.com/*
 // @match        https://*.stake.com/*
 // @match        https://nuts.gg/*
 // @match        https://*.nuts.gg/*
+// @match        https://winna.com/*
+// @match        https://*.winna.com/*
 // @match        https://apidash-licences.apidash.workers.dev/buy*
 // @run-at       document-idle
 // @noframes
@@ -27,59 +29,19 @@
 // @downloadURL  https://whaklgjndo.github.io/gambling-tools-site/api-dash/apidash-loader.user.js
 // ==/UserScript==
 
-// THE PHONE LOADER. The Desktop App's job, done by a userscript, for phones.
-//
-// It holds NO dashboard. It asks the licence server for this site's dashboard
-// with the buyer's key, the same /v1/dashboard call the Desktop App makes, and
-// runs what comes back in the page - so the file a buyer installs is worth
-// nothing without a key that is paid for, and the dashboard is never saved on
-// the phone: it is fetched on every page load and lives in that page only.
-//
-// WHY A USERSCRIPT AND NOT AN APP on iPhone (owner, 2026-10-02): the App Store
-// takes real-money gambling apps only from licensed operators, and TestFlight
-// is for testing, not selling. A userscript manager is an ordinary approved
-// app; this file is a script it runs on the casino's own page.
-//
-// WHAT IT CANNOT STOP, honestly: the dashboard has to be readable to run, so
-// someone with a Mac's Web Inspector attached to their iPhone can read it out
-// of the page. That is the same line the Desktop App draws (Dashboards.cs):
-// this stops one buyer handing a file to everybody else, not a debugger.
-//
-// THE HEADER, checked against each manager's source (2026-10-02). Every
-// manager skips header lines it does not know, so each line is for someone:
-// - @inject-into content: Userscripts and Violentmonkey run the loader in the
-//   extension's sandbox, where the GM functions are. @sandbox DOM asks
-//   Tampermonkey for the same; without it Tampermonkey runs scripts in the
-//   page itself.
-// - Both the GM.* and GM_* @grant lines: Userscripts has only GM.* (and no
-//   menu), and quietly drops grants it does not know (Functions.swift
-//   validGrants), so the extra lines cost nothing there and help elsewhere.
-// - @connect: Tampermonkey asks the person before a request to a host not
-//   listed here. The others ignore it.
-// - https://*.stake.us/* already covers stake.us itself in every manager; the
-//   plain lines stay so the list reads plainly.
-// - The licence server's /buy is the store (owner, 2026-10-03). The loader
-//   runs there only to hand the store the key it holds - see "the store".
-
 (function () {
     'use strict';
 
-    // One host, written here. Pointing a copy of this file at another server
-    // gets that server's code, not ours - there is nothing on ours to take
-    // without a key.
     var SERVER = 'https://apidash-licences.apidash.workers.dev';
     var STORE = SERVER + '/buy';
-    // This file's own address, as in @downloadURL above: where an update comes from.
     var LOADER_URL = 'https://whaklgjndo.github.io/gambling-tools-site/api-dash/apidash-loader.user.js';
-    var APP = 'phone-loader 1.0.8';
+    var APP = 'phone-loader 1.0.9';
 
-    // The same three sites, matched the same way, as the Desktop App's
-    // Sites.cs: the host itself or a subdomain of it, so the stake.com build
-    // can never land on stake.us.
     var SITES = [
         { key: 'com', label: 'stake.com', host: 'stake.com', accent: '#1475e1' },
         { key: 'us', label: 'stake.us', host: 'stake.us', accent: '#1475e1' },
         { key: 'nuts', label: 'nuts.gg', host: 'nuts.gg', accent: '#7165f2' },
+        { key: 'winna', label: 'winna.com', host: 'winna.com', accent: '#10abe1' },
     ];
 
     if (window.top !== window.self) return;
@@ -88,13 +50,7 @@
     var site = SITES.filter(function (s) { return host === s.host || host.slice(-(s.host.length + 1)) === '.' + s.host; })[0];
     if (!site && !onStore) return;
 
-    // ---- the userscript manager -------------------------------------------------
-    // GM.* where the manager has it (Userscripts, Violentmonkey, Tampermonkey
-    // all do), the older GM_* where it does not. Userscripts keeps these values
-    // under the script's FILE NAME, so a copy saved under another name starts
-    // with no key and a new device id - the README says so.
     var G = (typeof GM !== 'undefined' && GM) || {};
-    // Which manager this is, for messages only: 'Userscripts' on iPhone.
     function handler() {
         try {
             var info = G.info || (typeof GM_info !== 'undefined' ? GM_info : null);
@@ -105,41 +61,22 @@
         try {
             if (G.getValue) return Promise.resolve(G.getValue(k, d));
             if (typeof GM_getValue === 'function') return Promise.resolve(GM_getValue(k, d));
-        } catch (e) { /* fall through */ }
+        } catch (e) { }
         return Promise.resolve(d);
     }
     function setValue(k, v) {
         try {
             if (G.setValue) return Promise.resolve(G.setValue(k, v));
             if (typeof GM_setValue === 'function') return Promise.resolve(GM_setValue(k, v));
-        } catch (e) { /* fall through */ }
+        } catch (e) { }
         return Promise.resolve();
     }
-    // Userscripts (iPhone) has no menu yet (its issue #230), so there the
-    // #apidash-key address is the only way to the key box. That is enough.
     function menu(label, fn) {
         try {
             if (G.registerMenuCommand) G.registerMenuCommand(label, fn);
             else if (typeof GM_registerMenuCommand === 'function') GM_registerMenuCommand(label, fn);
-        } catch (e) { /* the #apidash-key address still works */ }
+        } catch (e) { }
     }
-    // The licence server is another host, so the request goes through the
-    // manager rather than the page: no CORS, and nothing on the page sees it.
-    // (In Safari that holds only where the person has allowed Userscripts on
-    // the server's address too - see the "could not reach" message below.)
-    //
-    // Written to hold across the three managers:
-    // - called AS A METHOD of GM, never lifted off it: Violentmonkey binds its
-    //   functions, but Tampermonkey's source is closed, so no bet on it.
-    // - the answer is read from responseText, else from response: Userscripts
-    //   fills responseText only for text answers (its api.js), and a manager
-    //   that parsed the JSON itself hands over an object.
-    // - settled ONCE, by whichever comes first: onload, onerror, ontimeout,
-    //   onabort, the promise GM.xmlHttpRequest returns, or our own clock.
-    //   Userscripts sends the request without waiting to hear it was taken,
-    //   and iOS may stop the extension's background page, so a request can
-    //   end with no call at all; the clock turns that into "could not reach"
-    //   rather than a pill that says Loading forever.
     var WAIT = 45000;
     function post(path, body) {
         return new Promise(function (resolve) {
@@ -154,10 +91,10 @@
             function answer(r) {
                 if (!r) { unreachable(); return; }
                 var text = null, json = null;
-                try { text = r.responseText; } catch (e) { /* a getter that throws for non-text */ }
+                try { text = r.responseText; } catch (e) { }
                 if (typeof text !== 'string' || !text) text = r.response;
                 if (text && typeof text === 'object') json = text;
-                else { try { json = JSON.parse(text); } catch (e) { /* not ours */ } }
+                else { try { json = JSON.parse(text); } catch (e) { } }
                 var status = Number(r.status) || 0;
                 if (!status && json) status = 200;
                 finish({ status: status, json: json });
@@ -177,33 +114,18 @@
                 else if (typeof GM_xmlhttpRequest === 'function') ret = GM_xmlhttpRequest(details);
                 else { finish({ status: -1 }); return; }
             } catch (e) { unreachable(); return; }
-            // Also takes the rejection, so a failed request is not reported
-            // as an unhandled error in Violentmonkey and Tampermonkey. A
-            // promise that settles with nothing is left to the callbacks.
             if (ret && typeof ret.then === 'function') ret.then(function (r) { if (r) answer(r); }, unreachable);
             clock = setTimeout(unreachable, WAIT + 15000);
         });
     }
 
-    // ---- which phone this is ----------------------------------------------------
-    // The server binds a key to ONE device. A userscript cannot read anything
-    // about the phone, so the device is a random id made once and kept in the
-    // manager's own storage. Deleting the manager app loses it, and the key
-    // then needs the admin panel's Unbind - the README says so.
-    //
-    // KEPT TWICE since 1.0.7: in the manager's storage AND in this site's own
-    // storage (localStorage, which the manager's sandbox shares with the
-    // page). A customer's iPad, low on space, had iOS clear Userscripts'
-    // storage whenever Safari was quit: a new id every launch, and "already
-    // in use on another computer" every time. Whichever copy survives puts
-    // the other back, so the id only changes if both are lost together.
     var DEVICE_KEY = '__apidashDevice';
     var DEVICE_OK = /^[0-9a-f]{16}$/;
     function siteDevice() {
         try { return localStorage.getItem(DEVICE_KEY) || ''; } catch (e) { return ''; }
     }
     function keepOnSite(d) {
-        try { if (localStorage.getItem(DEVICE_KEY) !== d) localStorage.setItem(DEVICE_KEY, d); } catch (e) { /* storage blocked: the manager's copy stands */ }
+        try { if (localStorage.getItem(DEVICE_KEY) !== d) localStorage.setItem(DEVICE_KEY, d); } catch (e) { }
     }
     function deviceId() {
         return getValue('device', '').then(function (d) {
@@ -218,17 +140,6 @@
         });
     }
 
-    // ---- running the dashboard in the page ----------------------------------------
-    // The loader runs in the manager's sandbox; the dashboard must run in the
-    // PAGE, where the userscripts always ran (@grant none), so it rides the
-    // page's own session. A script element is how - the same thing
-    // Tampermonkey does. stake.us's CSP is report-only and nuts.gg sends none
-    // (Desktop App, SiteWindow.cs), so neither blocks it; if that changes the
-    // check below says so rather than leaving a page with no dashboard.
-    // Safari too (WebKit ScriptElement.cpp, ScriptController.cpp): an inline
-    // script added by code runs DURING the append, in the page's own world,
-    // whichever world added it - so the attribute read straight after works.
-    // It is also how Userscripts itself runs @inject-into page scripts.
     var root = document.documentElement;
     function pageRun(text) {
         var s = document.createElement('script');
@@ -236,8 +147,6 @@
         (document.head || root).appendChild(s);
         s.remove();
     }
-    // What the page says about itself, carried back on an attribute: the
-    // sandbox cannot read the page's globals, but both see the same DOM.
     function pageAsk(expr) {
         pageRun("document.documentElement.setAttribute('data-apidash-ask',String((function(){try{return " + expr + "}catch(e){return ''}})()))");
         var v = root.getAttribute('data-apidash-ask') || '';
@@ -246,28 +155,13 @@
     }
     function mountedVersion() { return pageAsk("(self.ApiMode&&self.ApiMode.version)?self.ApiMode.version:''"); }
 
-    // ---- this site's time, for the panel ----------------------------------------------
-    // Owner, 2026-10-03: users see their time, and add to it, in the apps. The
-    // panel reads window.ApiDashHost: `end` - when this site's time runs out
-    // (ISO; null for never) - and `addTime`, which here opens the store in a new
-    // tab. The KEY is not in it: the store gets the key from this loader, on
-    // the store's own page, never from the casino's.
     function hostSet(end) {
         pageRun('(function(){var h=window.ApiDashHost;if(!h||typeof h!=="object"){h=window.ApiDashHost={};}' +
             'h.site=' + JSON.stringify(site.key) + ';' +
-            // Which app and version this is (panel: laterAppCard).
             'h.app={platform:"iphone",version:' + JSON.stringify(APP.split(' ').pop()) + '};' +
             'h.end=' + (end === undefined ? 'undefined' : JSON.stringify(end)) + ';' +
             'h.addTime=function(){window.open(' + JSON.stringify(STORE) + ',"_blank")};})()');
     }
-    // ---- friends, for the panel ----------------------------------------------------
-    // Owner, 2026-10-11: the friends list lives in the dashboard, so the iPhone
-    // has it too. The panel calls ApiDashHost.friends(what, body). The page
-    // cannot hold the key, so it asks THIS sandbox with a DOM event; the request
-    // goes out here, through the manager, with the key and device added last so
-    // nothing the page says can replace them; and the answer goes back the same
-    // way, as text. What crosses the page is the friends traffic itself - names,
-    // statuses, strategy codes - never the key.
     var FRIENDS_ASK = 'apidash-friends-ask', FRIENDS_ANSWER = 'apidash-friends-answer';
     var friendsKey = null;
     var FRIENDS_PAGE = '(function(){var h=window.ApiDashHost;if(!h||typeof h!=="object"){h=window.ApiDashHost={};}' +
@@ -281,7 +175,7 @@
         '{detail:JSON.stringify({id:id,what:String(what),body:body||{}})}))})}})()';
     function friendsOn(key, device) {
         var first = !friendsKey;
-        friendsKey = { key: key, device: device };     // a key changed from the menu: the new one
+        friendsKey = { key: key, device: device };
         pageRun(FRIENDS_PAGE);
         if (!first) return;
         document.addEventListener(FRIENDS_ASK, function (e) {
@@ -298,14 +192,6 @@
         });
     }
 
-    // ---- a newer loader ------------------------------------------------------------
-    // Owner, 2026-10-11: "prompt users that there is an update on their next load,
-    // with a button that auto downloads the new version and replaces the old one."
-    // The licence server's /v1/app says which loader version is out (the same
-    // manifest the Windows and Android apps read). Here the userscript app does the
-    // replacing: Update is a plain link to this file's own address, which the app
-    // offers to install over this one. Only the version is taken from the server,
-    // never the address. Not now hides it for that version for a day.
     function newer(a, b) {
         var x = String(a).split('.'), y = String(b).split('.');
         for (var i = 0; i < Math.max(x.length, y.length); i++) {
@@ -328,13 +214,12 @@
                 var p = String(later || '').split('|');
                 if (p[0] === out && Date.now() - Number(p[1]) < 86400000) return;
                 var u = shell();
-                if (!u.scrim.hidden) return;      // the key or time sheet is up: not now
+                if (!u.scrim.hidden) return;
                 u.scrim.textContent = '';
                 var card = el('div', 'card');
                 card.setAttribute('role', 'dialog');
                 card.setAttribute('aria-label', 'API Dash update');
                 card.appendChild(el('h1', null, 'API Dash · update'));
-                // The release's name, from its tag (owner, 2026-10-11: "API Dash Beta 0.2.5").
                 var release = m.tag ? String(m.tag).replace(/^v/, '') : out;
                 card.appendChild(el('p', null, 'API Dash Beta ' + release + ' is out: loader ' + out + ' (this is ' + mine + ').'));
                 if (m.notes) card.appendChild(el('p', 'dim', String(m.notes)));
@@ -363,15 +248,10 @@
 
     function inject(code) {
         if (mountedVersion()) return { ok: true, said: 'already on this page' };
-        // The first error the dashboard throws while it starts, kept for the
-        // message - a dashboard that did not appear looks the same from outside
-        // whatever the reason.
         pageRun("window.__apidashErr=function(e){document.documentElement.setAttribute('data-apidash-err',String((e&&e.message)||'error'))};" +
                 "window.addEventListener('error',window.__apidashErr)");
         var ranMark = 'data-apidash-ran';
         root.removeAttribute(ranMark);
-        // The run-state mirror rides in this same script element (see "who
-        // is live"), so check-ins never need a script element of their own.
         pageRun(code + "\n;document.documentElement.setAttribute('" + ranMark + "','1');" + RUN_MIRROR);
         pageRun("window.removeEventListener('error',window.__apidashErr);delete window.__apidashErr;");
         var ran = root.getAttribute(ranMark) === '1';
@@ -385,9 +265,6 @@
         return { ok: false, said: 'The dashboard ran but did not appear. Reload the page.' };
     }
 
-    // ---- what the person sees -------------------------------------------------------
-    // In its own shadow root, so the casino's styles cannot reach it and its
-    // styles cannot reach the casino. Gone once the dashboard is up.
     var ui = null;
     function shell() {
         if (ui) return ui;
@@ -446,15 +323,11 @@
         x.onclick = function () { u.pill.hidden = true; };
         u.pill.appendChild(x);
         u.pill.hidden = false;
-        // A message that goes by itself takes the whole layer with it when
-        // nothing else is showing, so nothing of the loader stays on the page.
         if (hideAfter) pillTimer = setTimeout(function () {
             u.pill.hidden = true;
             if (ui === u && u.scrim.hidden) { u.host.remove(); ui = null; }
         }, hideAfter);
     }
-    // The key box, as a sheet from the bottom. Resolves with the key saved, or
-    // null for Not now.
     function askKey(message, isProblem) {
         return new Promise(function (resolve) {
             var u = shell();
@@ -483,7 +356,6 @@
             row.appendChild(later);
             row.appendChild(save);
             card.appendChild(row);
-            // No key yet: the store sells one, with time for the sites wanted.
             var alt = el('p', 'alt', 'No key yet? ');
             alt.appendChild(storeLink('a', 'Buy one'));
             card.appendChild(alt);
@@ -501,10 +373,6 @@
         });
     }
 
-    // The way to the store: a real link, opened in a new tab. A link the
-    // person tapped is never stopped by Safari's pop-up blocker, which a
-    // window.open from code can be. The store then gets the key from this
-    // loader, on the store's own page (see "the store").
     function storeLink(cls, text) {
         var a = el('a', cls, text);
         a.href = STORE;
@@ -513,14 +381,6 @@
         return a;
     }
 
-    // No time on this site, or it ran out (owner, 2026-10-04: "the ios version
-    // doesn't have an option to buy time"). The KEY is fine here, so the answer
-    // is the store, not the key box - which is what this used to show, with
-    // the refusal above a box asking for a new key. Coming back to this tab
-    // with time bought loads the dashboard by itself.
-    //
-    // Resolves 'load' once the site has time, 'key' for "Use a different key",
-    // or null for Not now.
     function askTime(message, hasTime) {
         return new Promise(function (resolve) {
             var u = shell();
@@ -562,7 +422,6 @@
         });
     }
 
-    // ---- the whole job ---------------------------------------------------------------
     function load(key, device, tries) {
         say('Loading the ' + site.label + ' dashboard…');
         return post('/v1/dashboard', { key: key, device: device, site: site.key, app: APP }).then(function (r) {
@@ -571,11 +430,6 @@
                 return;
             }
             if (r.status === 0) {
-                // On iPhone the usual cause is not the connection: Safari lets
-                // Userscripts reach another website only where the person has
-                // allowed it (Userscripts issue #897), and the licence server
-                // is another website. The server sends no CORS headers, so
-                // allowing just the casino is not enough.
                 say(handler() === 'Userscripts'
                     ? 'Could not reach the licence server. Check your connection, and that Safari allows Userscripts on All Websites (Settings > Apps > Safari > Extensions > Userscripts). Then reload.'
                     : 'Could not reach the licence server. Check your connection, then reload the page.', true);
@@ -583,11 +437,6 @@
             }
             var j = r.json || {};
             if (j.error) {
-                // Refused. Either the key is the problem, or the key is fine
-                // and this site has no time on it - and the server's licence
-                // answer says which: it is a 200 for a good key whatever its
-                // time. A server problem gets neither box - a new key would not
-                // help.
                 if (r.status === 403 && tries < 3) {
                     return post('/v1/licence', { key: key, device: device, app: APP }).then(function (lr) {
                         var lic = lr.status === 200 && lr.json && !lr.json.error ? lr.json : null;
@@ -616,13 +465,9 @@
         });
     }
 
-    // A good key with no time on this site. The sheet offers the store; time
-    // bought there loads the dashboard as soon as this tab is looked at again.
     function noTime(key, device, tries, lic, said) {
         var covers = function (l) { return !!(l && l.sites && l.sites.indexOf(site.key) >= 0); };
-        // Time arrived between the two questions: just load.
         if (covers(lic)) return load(key, device, tries + 1);
-        // Ran out: the server's sentence, which says when. Never had any: ours.
         var message = endFrom(lic.ends) ? said : 'There is no ' + site.label + ' time on this key yet. Add time to play it.';
         var hasTime = function () {
             return post('/v1/licence', { key: key, device: device, app: APP }).then(function (r) {
@@ -641,9 +486,6 @@
         });
     }
 
-    // Coming back to this tab - from the store, most likely - asks the server
-    // for the time again, so hours just bought show at once. At most every
-    // 20 seconds, and never while the tab is out of sight.
     var watching = false, askedAt = 0;
     function watchTime(key, device) {
         if (watching) return;
@@ -657,40 +499,8 @@
         });
     }
 
-    // ---- session check-in ----------------------------------------------------------
-    // While a dashboard is open, the loader checks in with the licence server
-    // (/v1/live): once when it is up, then every `every` seconds the server
-    // names while the page is on screen, and once more ("gone") when the page
-    // closes.
-    //
-    // - What is sent: the key and device (as with every licence call), the
-    //   site, the loader's version, whether a run is going, whether it is
-    //   simulated, and whether the page is on screen. Nothing else - no
-    //   balance, bet, account or address.
-    // - Sent by post(), through the manager, like every licence call; never
-    //   from the page itself.
-    // - The two run facts come from a small mirror set up once, inside the
-    //   dashboard's own script element (inject): it copies ApiMode.engine's
-    //   running and simulated, with the time, into one attribute on <html> -
-    //   at once, every 5 s, and whenever the page is hidden or shown (iOS
-    //   stops a hidden page's timers). The loader only reads the attribute;
-    //   missing, or older than 15 s, reads as not running, not simulated. No
-    //   further script element is ever added for it.
-    // - Silent: it shows nothing, waits on nothing and throws nothing.
-    //   Anything but a 200 - a refused key or device (403), a bad request
-    //   (400), a server without /v1/live (404), no connection - ends it for
-    //   this page; the next page load starts it again.
-    // - Hidden: one check-in says so, and the clock stops. Shown again: one
-    //   goes at once and the clock restarts. A page Safari brings back (back,
-    //   forward) starts again as if just opened.
-    // - One at a time, in order, so "gone" is always the last thing sent: a
-    //   check-in starts only once the one before has answered or failed, and
-    //   at most one waits behind it. (A page that closes with one in flight
-    //   takes the waiting "gone" with it; the server times it out.)
-    // - One clock per page: cleared whenever a check-in is asked for, set only
-    //   by an answer with nothing waiting.
     var RUN_ATTR = 'data-apidash-run';
-    var RUN_EVERY = 5, RUN_STALE = 15;   // seconds
+    var RUN_EVERY = 5, RUN_STALE = 15;
     var RUN_MIRROR = "\n;(function(){try{var m=function(){try{var e=self.ApiMode&&self.ApiMode.engine;" +
         "document.documentElement.setAttribute('" + RUN_ATTR + "',(e&&e.running?1:0)+','+(e&&e.simulated?1:0)+','+Date.now())}catch(x){}};" +
         "m();setInterval(m," + RUN_EVERY * 1000 + ");" +
@@ -721,7 +531,6 @@
         if (live.waiting) { live.waiting.gone = !!gone; return; }
         var w = live.waiting = { gone: !!gone };
         function go() { live.waiting = null; return send(w.gone); }
-        // Whatever throws or rejects anywhere in a check-in ends here, quietly.
         live.chain = live.chain.then(go).then(null, liveEnd);
     }
     function send(gone) {
@@ -732,15 +541,12 @@
         if (gone) body.gone = true;
         return post('/v1/live', body).then(function (r) {
             if (r.status !== 200) { liveEnd(); return; }
-            // Seconds, 30 to 600; 60 when the answer does not say.
             var e = Number(r.json && r.json.every);
             live.every = e > 0 ? Math.min(600, Math.max(30, e)) : 60;
             if (!live.waiting) liveNext();
         });
     }
     function goLive(key, device) {
-        // Loaded again on the same page (a key changed from the menu): the
-        // clock already running carries on, with that key.
         if (live) { live.key = key; live.device = device; return; }
         live = { key: key, device: device, every: 60, timer: null, over: false, gone: false,
             chain: Promise.resolve(), waiting: null };
@@ -767,11 +573,6 @@
         }).catch(function (e) { say('The loader stopped: ' + (e && e.message), true); });
     }
 
-    // ---- the store ----------------------------------------------------------------
-    // On the store's own page, the loader hands it the key it already holds,
-    // so the buyer never retypes it (store.html's window.apidashUseKey). Never
-    // in the address: an address is kept in history, and this key alone can
-    // move the licence to another phone. Nothing else happens here.
     if (onStore) {
         getValue('key', '').then(function (k) {
             k = String(k || '').trim();
@@ -780,11 +581,7 @@
         return;
     }
 
-    // Changing the key: the manager's own menu where it has one, and an
-    // address that works everywhere - stake.us/#apidash-key.
     menu('Change licence key', function () { start(true); });
-    // Where the manager has a menu (not Userscripts yet); on iPhone the sheets
-    // and the panel's Add time are the way to the store.
     menu('Buy a key or add time', function () { window.open(STORE, '_blank'); });
     start(/(^|[#&])apidash-key\b/.test(location.hash));
 })();
