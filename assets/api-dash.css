@@ -106,29 +106,22 @@ a.pick:hover { color: var(--text); }
 .slogos { gap: 10px; }
 .slogo {
   --c: var(--text-dim); --s: var(--bg-soft); --k: #04100a;
-  display: inline-flex; align-items: center; gap: 9px;
-  padding: 7px 14px 7px 8px; border-radius: 14px;
+  display: inline-flex; align-items: center; gap: 12px;
+  padding: 9px 16px 9px 14px; border-radius: 14px;
   border: 1px solid color-mix(in srgb, var(--c) 38%, transparent);
   background: linear-gradient(135deg, color-mix(in srgb, var(--c) 24%, var(--s)), var(--s) 70%);
   box-shadow: 0 0 22px -10px var(--c);
   line-height: 1; white-space: nowrap;
 }
 .slogo:hover { border-color: color-mix(in srgb, var(--c) 65%, transparent); box-shadow: 0 0 26px -6px var(--c); }
-.slogo b { font-family: var(--font-display); font-weight: 800; font-size: 1.02rem; letter-spacing: -0.01em; color: var(--text); }
-.slogo em { font-family: var(--font-mono); font-style: normal; font-weight: 600; font-size: 0.8rem; color: var(--c); margin-left: -8px; }
-.slogo .mk {
-  width: 26px; height: 26px; display: inline-grid; place-items: center;
-  background: var(--c); color: var(--k); font-style: normal; font-weight: 900; font-size: 0.95rem;
-  font-family: var(--font-display);
-}
+.slogo img.lg { display: block; height: 28px; width: auto; max-width: 118px; object-fit: contain; }
+.slogo img.lg.us { height: 34px; }
+.slogo.nuts img.lg { height: 34px; }
+.slogo em { font-family: var(--font-mono); font-style: normal; font-weight: 600; font-size: 0.8rem; color: var(--c); }
 .slogo.stake { --c: #1475e1; --s: #172b39; --k: #ffffff; }
 .slogo.nuts { --c: #77ffa8; --s: #292929; --k: #07130d; }
 .slogo.winna { --c: #10abe1; --s: #03121a; --k: #03121a; }
 .slogo.rainbet { --c: #0b78d0; --s: #0f1328; --k: #ffffff; }
-.slogo.stake .mk { border-radius: 7px; }
-.slogo.nuts .mk { border-radius: 50%; }
-.slogo.winna .mk { clip-path: polygon(25% 4%, 75% 4%, 100% 50%, 75% 96%, 25% 96%, 0 50%); border-radius: 0; }
-.slogo.rainbet .mk { border-radius: 50% 50% 50% 12%; }
 
 .clock span:first-child { display: inline-flex; align-items: center; gap: 9px; }
 .clock span:first-child::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--c, var(--text-faint)); box-shadow: 0 0 8px -1px var(--c, transparent); }
@@ -139,6 +132,7 @@ a.pick:hover { color: var(--text); }
 
 @media (max-width: 480px) {
   .slogos { gap: 8px; }
-  .slogo { padding: 6px 12px 6px 7px; }
-  .slogo b { font-size: 0.95rem; }
+  .slogo { padding: 8px 13px 8px 11px; gap: 10px; }
+  .slogo img.lg { height: 24px; }
+  .slogo img.lg.us, .slogo.nuts img.lg { height: 30px; }
 }
