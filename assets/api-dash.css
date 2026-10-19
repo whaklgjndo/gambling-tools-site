@@ -116,7 +116,7 @@ a.pick:hover { color: var(--text); }
 .slogo:hover { border-color: color-mix(in srgb, var(--c) 65%, transparent); box-shadow: 0 0 26px -6px var(--c); }
 .slogo img.lg { display: block; height: 28px; width: auto; max-width: 118px; object-fit: contain; }
 .slogo img.lg.us { height: 34px; }
-.slogo.nuts img.lg { height: 34px; }
+.slogo.nuts img.lg { height: 46px; }
 .slogo em { font-family: var(--font-mono); font-style: normal; font-weight: 600; font-size: 0.8rem; color: var(--c); }
 .slogo.stake { --c: #1475e1; --s: #172b39; --k: #ffffff; }
 .slogo.nuts { --c: #77ffa8; --s: #292929; --k: #07130d; }
@@ -134,5 +134,6 @@ a.pick:hover { color: var(--text); }
   .slogos { gap: 8px; }
   .slogo { padding: 8px 13px 8px 11px; gap: 10px; }
   .slogo img.lg { height: 24px; }
-  .slogo img.lg.us, .slogo.nuts img.lg { height: 30px; }
+  .slogo img.lg.us { height: 30px; }
+  .slogo.nuts img.lg { height: 40px; }
 }
