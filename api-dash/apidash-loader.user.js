@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         API Dash
 // @namespace    apidash
-// @version      1.0.11
+// @version      1.0.12
 // @description  Loads your licensed API Dash dashboard on stake.us, stake.com, nuts.gg, winna.com and rainbet.com - made for phones (Safari + Userscripts, Firefox + Violentmonkey).
 // @match        https://stake.us/*
 // @match        https://*.stake.us/*
@@ -37,7 +37,7 @@
     var SERVER = 'https://apidash-licences.apidash.workers.dev';
     var STORE = SERVER + '/buy';
     var LOADER_URL = 'https://whaklgjndo.github.io/gambling-tools-site/api-dash/apidash-loader.user.js';
-    var APP = 'phone-loader 1.0.11';
+    var APP = 'phone-loader 1.0.12';
 
     var SITES = [
         { key: 'com', label: 'stake.com', host: 'stake.com', accent: '#1475e1' },
@@ -230,7 +230,7 @@
                 card.setAttribute('aria-label', 'API Dash update');
                 card.appendChild(el('h1', null, 'API Dash · update'));
                 var release = m.tag ? String(m.tag).replace(/^v/, '') : out;
-                card.appendChild(el('p', null, 'API Dash Beta ' + release + ' is out: loader ' + out + ' (this is ' + mine + ').'));
+                card.appendChild(el('p', null, 'API Dash ' + release + ' is out: loader ' + out + ' (this is ' + mine + ').'));
                 if (m.notes) card.appendChild(el('p', 'dim', String(m.notes)));
                 card.appendChild(el('p', 'dim', 'Your userscript app will ask to update it. Then reload this page.'));
                 var row = el('div', 'row');
