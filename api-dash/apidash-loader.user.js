@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         API Dash
 // @namespace    apidash
-// @version      1.0.9
-// @description  Loads your licensed API Dash dashboard on stake.us, stake.com, nuts.gg and winna.com - made for phones (Safari + Userscripts, Firefox + Violentmonkey).
+// @version      1.0.11
+// @description  Loads your licensed API Dash dashboard on stake.us, stake.com, nuts.gg, winna.com and rainbet.com - made for phones (Safari + Userscripts, Firefox + Violentmonkey).
 // @match        https://stake.us/*
 // @match        https://*.stake.us/*
 // @match        https://stake.com/*
@@ -11,6 +11,8 @@
 // @match        https://*.nuts.gg/*
 // @match        https://winna.com/*
 // @match        https://*.winna.com/*
+// @match        https://rainbet.com/*
+// @match        https://*.rainbet.com/*
 // @match        https://apidash-licences.apidash.workers.dev/buy*
 // @run-at       document-idle
 // @noframes
@@ -35,13 +37,14 @@
     var SERVER = 'https://apidash-licences.apidash.workers.dev';
     var STORE = SERVER + '/buy';
     var LOADER_URL = 'https://whaklgjndo.github.io/gambling-tools-site/api-dash/apidash-loader.user.js';
-    var APP = 'phone-loader 1.0.9';
+    var APP = 'phone-loader 1.0.11';
 
     var SITES = [
         { key: 'com', label: 'stake.com', host: 'stake.com', accent: '#1475e1' },
         { key: 'us', label: 'stake.us', host: 'stake.us', accent: '#1475e1' },
         { key: 'nuts', label: 'nuts.gg', host: 'nuts.gg', accent: '#7165f2' },
         { key: 'winna', label: 'winna.com', host: 'winna.com', accent: '#10abe1' },
+        { key: 'rainbet', label: 'rainbet.com', host: 'rainbet.com', accent: '#1077d1' },
     ];
 
     if (window.top !== window.self) return;
@@ -65,11 +68,17 @@
         return Promise.resolve(d);
     }
     function setValue(k, v) {
-        try {
-            if (G.setValue) return Promise.resolve(G.setValue(k, v));
-            if (typeof GM_setValue === 'function') return Promise.resolve(GM_setValue(k, v));
-        } catch (e) { }
-        return Promise.resolve();
+        return new Promise(function (resolve) {
+            var clock = setTimeout(function () { resolve(false); }, 4000);
+            function end(ok) { clearTimeout(clock); resolve(ok); }
+            try {
+                var p;
+                if (G.setValue) p = G.setValue(k, v);
+                else if (typeof GM_setValue === 'function') p = GM_setValue(k, v);
+                else { end(false); return; }
+                Promise.resolve(p).then(function () { end(true); }, function () { end(false); });
+            } catch (e) { end(false); }
+        });
     }
     function menu(label, fn) {
         try {
@@ -328,6 +337,7 @@
             if (ui === u && u.scrim.hidden) { u.host.remove(); ui = null; }
         }, hideAfter);
     }
+    var keyKept = true;
     function askKey(message, isProblem) {
         return new Promise(function (resolve) {
             var u = shell();
@@ -366,7 +376,8 @@
             save.onclick = function () {
                 var k = inp.value.trim();
                 if (!k) { inp.focus(); return; }
-                setValue('key', k).then(function () { done(k); });
+                save.disabled = true;
+                setValue('key', k).then(function (ok) { keyKept = ok; done(k); });
             };
             inp.addEventListener('keydown', function (e) { if (e.key === 'Enter') save.click(); });
             setTimeout(function () { inp.focus(); }, 50);
@@ -458,7 +469,8 @@
                 goLive(key, device);
                 friendsOn(key, device);
                 offerUpdate();
-                say('API Dash ' + got.said, false, 2500);
+                if (keyKept) say('API Dash ' + got.said, false, 2500);
+                else say('API Dash ' + got.said + ' - but your userscript app would not keep the key, so it will ask again next time.', false, 9000);
             } else {
                 say(got.said, true);
             }
