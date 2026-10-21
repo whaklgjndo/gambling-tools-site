@@ -7,27 +7,78 @@
   <meta name="description" content="Step-by-step setup for the Gambling Tools userscript bundle. One script, all the tools, for Desktop, iPhone/iPad, and Android. Free, client-side, and honest about what it can and can't do." />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <meta name="theme-color" content="#07090e" />
   <link rel="stylesheet" href="assets/style.css" />
   <script>document.documentElement.classList.add("js");</script>
 </head>
 <body>
   <a href="#main" class="skip-link">Skip to content</a>
 
-  <header class="site">
-    <div class="container">
-      <a href="#top" class="brand"><span class="dot" aria-hidden="true"></span> Gambling Tools</a>
-      <nav aria-label="Primary">
-        <a href="#download" class="nav-anchor">Download</a>
-        <a href="#install" class="nav-anchor">Setup</a>
-        <a href="#tools" class="nav-anchor">What's inside</a>
-        <a href="updates.html">Updates</a>
-        <a href="api-dash/">API Dash</a>
-      </nav>
+  <aside class="sb" id="sidebar" aria-label="Site navigation">
+    <div class="sb-top">
+      <a class="sb-brand" href="#top"><span class="dot" aria-hidden="true"></span><span>Gambling Tools</span></a>
+      <button class="icon-btn" type="button" id="navClose" aria-controls="sidebar" aria-expanded="true" aria-label="Hide the sidebar"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15.4 6 14 4.6 6.6 12 14 19.4 15.4 18 9.4 12z"/><path d="M20 6l-1.4-1.4L11.2 12l7.4 7.4L20 18l-6-6z" opacity=".55"/></svg></button>
     </div>
-  </header>
+    <div class="sb-label">Quick jump</div>
+    <nav aria-label="Quick jump">
+        <a href="#top">Overview</a>
+        <a href="#download">Download bundle</a>
+        <a href="#risk">Read first / rules</a>
+    </nav>
+    <div class="sb-label">01 / Setup guide</div>
+    <nav aria-label="Setup guide">
+        <a href="#install">Setup overview</a>
+        <a class="sub" href="#install" data-tab="desktop">Desktop (Chrome/Brave)</a>
+        <a class="sub" href="#install" data-tab="ios">iPhone &amp; iPad</a>
+        <a class="sub" href="#install" data-tab="android">Android (Firefox)</a>
+    </nav>
+    <div class="sb-label">02 / What's inside</div>
+    <nav aria-label="Tools">
+        <a href="#tools">All tools</a>
+        <a href="#tool-auto-vault" class="sub">Auto-Vault</a>
+        <a href="#tool-wager-tracker" class="sub">7-Day Wager</a>
+        <a href="#tool-dice" class="sub">Dice &amp; IOW</a>
+        <a href="#tool-limbo" class="sub">Limbo</a>
+        <a href="#tool-mines" class="sub">Mines</a>
+        <a href="#tool-keno" class="sub">Keno</a>
+        <a href="#tool-blackjack" class="sub">Blackjack</a>
+        <a href="#tool-moles" class="sub">Moles</a>
+        <a href="#tool-snakes" class="sub">Snakes</a>
+    </nav>
+    <div class="sb-label">03 / Help &amp; links</div>
+    <nav aria-label="Help">
+        <a href="#faq">FAQ</a>
+        <a href="updates.html">Updates</a>
+    </nav>
+    <div class="sb-promo"><a class="btn primary" href="https://apidash-licences.apidash.workers.dev/" rel="noopener">API Dash</a></div>
+  </aside>
+  <div class="scrim" id="scrim"></div>
+
+  <div class="shell">
+    <header class="top">
+      <button class="icon-btn open" type="button" id="navOpen" aria-controls="sidebar" aria-expanded="false" aria-label="Show the sidebar"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg></button>
+      <span class="net"><i aria-hidden="true"></i>FREE &amp; OPEN SOURCE</span>
+      <nav class="topnav" aria-label="Primary">
+        <a href="#download">Download</a>
+        <a href="#install">Setup</a>
+        <a href="#tools">What's inside</a>
+        <a href="updates.html">Updates</a>
+        <a class="btn primary" href="https://apidash-licences.apidash.workers.dev/" rel="noopener">API Dash</a>
+      </nav>
+    </header>
 
   <main class="container" id="main">
     <span id="top"></span>
+
+    <aside class="promo" aria-label="API Dash">
+      <span class="promo-tag">NEW · API DASH</span>
+      <div class="promo-copy">
+        <b>Want full control of your automated betting? Check out API Dash!</b>
+        <p>A condition based strategy builder for ALL originals! Available for popular crypto casinos including Stake, Rainbet, Winna, and more! Desktop, iOS, and Android devices fully supported!</p>
+      </div>
+      <a class="btn primary" href="https://apidash-licences.apidash.workers.dev/" rel="noopener">Explore API Dash <span aria-hidden="true">→</span></a>
+    </aside>
+
 
     <!-- ===================== HERO ===================== -->
     <section class="hero" data-reveal>
@@ -409,7 +460,7 @@
 
       <div class="tools" data-reveal>
         <!-- Auto-Vault -->
-        <article class="tool">
+        <article class="tool" id="tool-auto-vault">
           <div class="tool-head"><div class="tool-icon" aria-hidden="true">🔒</div><h3>Auto-Vault</h3></div>
           <div class="tool-body">
             <div class="tool-copy">
@@ -463,7 +514,7 @@
         </article>
 
 <!-- 7-Day Wager Tracker -->
-        <article class="tool">
+        <article class="tool" id="tool-wager-tracker">
           <div class="tool-head"><div class="tool-icon" aria-hidden="true">📊</div><h3>7-Day Wager Tracker</h3></div>
           <div class="tool-body">
             <div class="tool-copy">
@@ -500,7 +551,7 @@
         </article>
 
         <!-- Dice -->
-        <article class="tool">
+        <article class="tool" id="tool-dice">
           <div class="tool-head"><div class="tool-icon" aria-hidden="true">🎲</div><h3>Dice</h3></div>
           <div class="tool-body">
             <div class="tool-copy">
@@ -540,7 +591,7 @@
         </article>
 
         <!-- Limbo -->
-        <article class="tool">
+        <article class="tool" id="tool-limbo">
           <div class="tool-head"><div class="tool-icon" aria-hidden="true">🚀</div><h3>Limbo</h3></div>
           <div class="tool-body">
             <div class="tool-copy">
@@ -573,7 +624,7 @@
         </article>
 
         <!-- Mines -->
-        <article class="tool">
+        <article class="tool" id="tool-mines">
           <div class="tool-head"><div class="tool-icon" aria-hidden="true">💎</div><h3>Mines</h3></div>
           <div class="tool-body">
             <div class="tool-copy">
@@ -604,7 +655,7 @@
         </article>
 
         <!-- Keno -->
-        <article class="tool">
+        <article class="tool" id="tool-keno">
           <div class="tool-head"><div class="tool-icon" aria-hidden="true">🎱</div><h3>Keno</h3></div>
           <div class="tool-body">
             <div class="tool-copy">
@@ -637,7 +688,7 @@
         </article>
 
         <!-- Perfect Blackjack -->
-        <article class="tool">
+        <article class="tool" id="tool-blackjack">
           <div class="tool-head"><div class="tool-icon" aria-hidden="true">🃏</div><h3>Perfect Blackjack</h3></div>
           <div class="tool-body">
             <div class="tool-copy">
@@ -654,7 +705,7 @@
         </article>
 
         <!-- Moles -->
-        <article class="tool">
+        <article class="tool" id="tool-moles">
           <div class="tool-head"><div class="tool-icon" aria-hidden="true">🕳️</div><h3>Moles</h3></div>
           <div class="tool-body">
             <div class="tool-copy">
@@ -671,7 +722,7 @@
         </article>
 
         <!-- Snakes -->
-        <article class="tool">
+        <article class="tool" id="tool-snakes">
           <div class="tool-head"><div class="tool-icon" aria-hidden="true">🐍</div><h3>Snakes</h3></div>
           <div class="tool-body">
             <div class="tool-copy">
@@ -749,7 +800,38 @@
       <p class="cr">Gambling Tools · Desktop &amp; Mobile bundles · client-side only</p>
     </div>
   </footer>
+  </div>
 
+  <script>
+    (function () {
+      var body = document.body, wide = window.matchMedia("(min-width: 1024px)");
+      var openBtn = document.getElementById("navOpen"), closeBtn = document.getElementById("navClose");
+      function shown() { return wide.matches ? !body.classList.contains("nav-collapsed") : body.classList.contains("nav-open"); }
+      function set(on) {
+        body.classList.toggle("nav-collapsed", wide.matches && !on);
+        body.classList.toggle("nav-open", !wide.matches && on);
+        openBtn.setAttribute("aria-expanded", String(on));
+        closeBtn.setAttribute("aria-expanded", String(on));
+      }
+      openBtn.addEventListener("click", function () { set(true); });
+      closeBtn.addEventListener("click", function () { set(false); });
+      document.getElementById("scrim").addEventListener("click", function () { set(false); });
+      document.addEventListener("keydown", function (e) { if (e.key === "Escape" && !wide.matches && shown()) set(false); });
+      document.querySelectorAll("#sidebar a").forEach(function (a) {
+        a.addEventListener("click", function () {
+          var t = a.getAttribute("data-tab"), btn = t && document.getElementById("tabbtn-" + t);
+          if (btn) btn.click();
+          if (!wide.matches) set(false);
+        });
+      });
+      var onChange = function () {
+        body.classList.remove("nav-collapsed", "nav-open");
+        openBtn.setAttribute("aria-expanded", String(wide.matches));
+        closeBtn.setAttribute("aria-expanded", String(wide.matches));
+      };
+      if (wide.addEventListener) wide.addEventListener("change", onChange); else wide.addListener(onChange);
+    })();
+  </script>
   <script src="assets/app.js"></script>
 </body>
 </html>

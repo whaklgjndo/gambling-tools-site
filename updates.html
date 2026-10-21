@@ -7,24 +7,65 @@
   <meta name="description" content="Release notes and version history for the Gambling Tools userscript bundles (Desktop & Mobile) for Stake, Nuts, and Shuffle." />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <meta name="theme-color" content="#07090e" />
   <link rel="stylesheet" href="assets/style.css" />
   <script>document.documentElement.classList.add("js");</script>
 </head>
 <body>
   <a href="#main" class="skip-link">Skip to content</a>
 
-  <header class="site">
-    <div class="container">
-      <a href="index.html#top" class="brand"><span class="dot" aria-hidden="true"></span> Gambling Tools</a>
-      <nav aria-label="Primary">
-        <a href="index.html#download" class="nav-anchor">Download</a>
-        <a href="index.html#install" class="nav-anchor">Setup</a>
-        <a href="index.html#tools" class="nav-anchor">What's inside</a>
-        <a href="updates.html" class="active" aria-current="page">Updates</a>
-        <a href="api-dash/">API Dash</a>
-      </nav>
+  <aside class="sb" id="sidebar" aria-label="Site navigation">
+    <div class="sb-top">
+      <a class="sb-brand" href="index.html#top"><span class="dot" aria-hidden="true"></span><span>Gambling Tools</span></a>
+      <button class="icon-btn" type="button" id="navClose" aria-controls="sidebar" aria-expanded="true" aria-label="Hide the sidebar"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15.4 6 14 4.6 6.6 12 14 19.4 15.4 18 9.4 12z"/><path d="M20 6l-1.4-1.4L11.2 12l7.4 7.4L20 18l-6-6z" opacity=".55"/></svg></button>
     </div>
-  </header>
+    <div class="sb-label">Quick jump</div>
+    <nav aria-label="Quick jump">
+        <a href="index.html#top">Overview</a>
+        <a href="index.html#download">Download bundle</a>
+        <a href="index.html#risk">Read first / rules</a>
+    </nav>
+    <div class="sb-label">01 / Setup guide</div>
+    <nav aria-label="Setup guide">
+        <a href="index.html#install">Setup overview</a>
+        <a class="sub" href="index.html#install" data-tab="desktop">Desktop (Chrome/Brave)</a>
+        <a class="sub" href="index.html#install" data-tab="ios">iPhone &amp; iPad</a>
+        <a class="sub" href="index.html#install" data-tab="android">Android (Firefox)</a>
+    </nav>
+    <div class="sb-label">02 / What's inside</div>
+    <nav aria-label="Tools">
+        <a href="index.html#tools">All tools</a>
+        <a href="index.html#tool-auto-vault" class="sub">Auto-Vault</a>
+        <a href="index.html#tool-wager-tracker" class="sub">7-Day Wager</a>
+        <a href="index.html#tool-dice" class="sub">Dice &amp; IOW</a>
+        <a href="index.html#tool-limbo" class="sub">Limbo</a>
+        <a href="index.html#tool-mines" class="sub">Mines</a>
+        <a href="index.html#tool-keno" class="sub">Keno</a>
+        <a href="index.html#tool-blackjack" class="sub">Blackjack</a>
+        <a href="index.html#tool-moles" class="sub">Moles</a>
+        <a href="index.html#tool-snakes" class="sub">Snakes</a>
+    </nav>
+    <div class="sb-label">03 / Help &amp; links</div>
+    <nav aria-label="Help">
+        <a href="index.html#faq">FAQ</a>
+        <a href="updates.html" aria-current="page">Updates</a>
+    </nav>
+    <div class="sb-promo"><a class="btn primary" href="https://apidash-licences.apidash.workers.dev/" rel="noopener">API Dash</a></div>
+  </aside>
+  <div class="scrim" id="scrim"></div>
+
+  <div class="shell">
+    <header class="top">
+      <button class="icon-btn open" type="button" id="navOpen" aria-controls="sidebar" aria-expanded="false" aria-label="Show the sidebar"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg></button>
+      <span class="net"><i aria-hidden="true"></i>FREE &amp; OPEN SOURCE</span>
+      <nav class="topnav" aria-label="Primary">
+        <a href="index.html#download">Download</a>
+        <a href="index.html#install">Setup</a>
+        <a href="index.html#tools">What's inside</a>
+        <a href="updates.html">Updates</a>
+        <a class="btn primary" href="https://apidash-licences.apidash.workers.dev/" rel="noopener">API Dash</a>
+      </nav>
+    </header>
 
   <main class="container" id="main">
     <span id="top"></span>
@@ -539,7 +580,38 @@
       <p class="cr">Gambling Tools · Desktop &amp; Mobile bundles · client-side only</p>
     </div>
   </footer>
+  </div>
 
+  <script>
+    (function () {
+      var body = document.body, wide = window.matchMedia("(min-width: 1024px)");
+      var openBtn = document.getElementById("navOpen"), closeBtn = document.getElementById("navClose");
+      function shown() { return wide.matches ? !body.classList.contains("nav-collapsed") : body.classList.contains("nav-open"); }
+      function set(on) {
+        body.classList.toggle("nav-collapsed", wide.matches && !on);
+        body.classList.toggle("nav-open", !wide.matches && on);
+        openBtn.setAttribute("aria-expanded", String(on));
+        closeBtn.setAttribute("aria-expanded", String(on));
+      }
+      openBtn.addEventListener("click", function () { set(true); });
+      closeBtn.addEventListener("click", function () { set(false); });
+      document.getElementById("scrim").addEventListener("click", function () { set(false); });
+      document.addEventListener("keydown", function (e) { if (e.key === "Escape" && !wide.matches && shown()) set(false); });
+      document.querySelectorAll("#sidebar a").forEach(function (a) {
+        a.addEventListener("click", function () {
+          var t = a.getAttribute("data-tab"), btn = t && document.getElementById("tabbtn-" + t);
+          if (btn) btn.click();
+          if (!wide.matches) set(false);
+        });
+      });
+      var onChange = function () {
+        body.classList.remove("nav-collapsed", "nav-open");
+        openBtn.setAttribute("aria-expanded", String(wide.matches));
+        closeBtn.setAttribute("aria-expanded", String(wide.matches));
+      };
+      if (wide.addEventListener) wide.addEventListener("change", onChange); else wide.addListener(onChange);
+    })();
+  </script>
   <script src="assets/app.js"></script>
 </body>
 </html>
