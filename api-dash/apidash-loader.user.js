@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         API Dash
 // @namespace    apidash
-// @version      1.0.12
+// @version      1.0.13
 // @description  Loads your licensed API Dash dashboard on stake.us, stake.com, nuts.gg, winna.com and rainbet.com - made for phones (Safari + Userscripts, Firefox + Violentmonkey).
 // @match        https://stake.us/*
 // @match        https://*.stake.us/*
@@ -37,7 +37,7 @@
     var SERVER = 'https://apidash-licences.apidash.workers.dev';
     var STORE = SERVER + '/buy';
     var LOADER_URL = 'https://whaklgjndo.github.io/gambling-tools-site/api-dash/apidash-loader.user.js';
-    var APP = 'phone-loader 1.0.12';
+    var APP = 'phone-loader 1.0.13';
 
     var SITES = [
         { key: 'com', label: 'stake.com', host: 'stake.com', accent: '#1475e1' },
@@ -552,9 +552,11 @@
             running: st.running, sim: st.sim, visible: document.visibilityState === 'visible' };
         if (gone) body.gone = true;
         return post('/v1/live', body).then(function (r) {
-            if (r.status !== 200) { liveEnd(); return; }
-            var e = Number(r.json && r.json.every);
-            live.every = e > 0 ? Math.min(600, Math.max(30, e)) : 60;
+            if (r.status === 400 || r.status === 403) { liveEnd(); return; }
+            if (r.status === 200) {
+                var e = Number(r.json && r.json.every);
+                live.every = e > 0 ? Math.min(600, Math.max(30, e)) : 60;
+            }
             if (!live.waiting) liveNext();
         });
     }
