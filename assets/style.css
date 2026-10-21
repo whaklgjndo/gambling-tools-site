@@ -127,9 +127,9 @@ code {
 .sb-brand { display: flex; align-items: center; gap: 10px; color: var(--text); font-weight: 800; font-size: 1.08rem; letter-spacing: -0.01em; }
 .sb-brand:hover { color: var(--text); }
 .sb-brand .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--mint); box-shadow: 0 0 0 3px var(--accent-soft), 0 0 14px var(--mint-glow); }
-.sb-label { margin: 14px 8px 4px; font-family: var(--font-mono); font-size: 0.64rem; font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase; color: var(--text-faint); }
+.sb-label { margin: 12px 8px 3px; font-family: var(--font-mono); font-size: 0.64rem; font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase; color: var(--text-faint); }
 .sb nav { display: flex; flex-direction: column; gap: 1px; }
-.sb nav a { display: block; padding: 6px 10px; border-radius: 8px; border-left: 2px solid transparent; color: var(--text-dim); font-family: var(--font-mono); font-size: 0.78rem; font-weight: 500; transition: color 0.15s, background 0.15s; }
+.sb nav a { display: block; padding: 5px 10px; border-radius: 8px; border-left: 2px solid transparent; color: var(--text-dim); font-family: var(--font-mono); font-size: 0.78rem; font-weight: 500; transition: color 0.15s, background 0.15s; }
 .sb nav a:hover { color: var(--text); background: rgba(255, 255, 255, 0.04); }
 .sb nav a.sub { padding-left: 22px; font-size: 0.74rem; color: var(--text-faint); }
 .sb nav a[aria-current="page"], .sb nav a.on { color: var(--mint); background: var(--accent-soft); border-left-color: var(--mint); }
@@ -552,7 +552,7 @@ html { scroll-padding-top: 84px; }
 .btn.primary { background: var(--grad); color: var(--mint-ink); border-color: transparent; box-shadow: 0 8px 28px -10px rgba(99, 102, 241, 0.5); }
 .btn.primary:hover { background: var(--grad); color: var(--mint-ink); filter: brightness(1.08); box-shadow: 0 10px 34px -8px rgba(99, 102, 241, 0.65); }
 .btn.big .bt b { font-weight: 700; }
-.pick, .tool, .steps > li, .qa, .release, .disclosure, .risk, .panel-intro, .details-toggle, .tabs {
+.pick, .tool, .steps > li, .qa, .release, .disclosure, .risk, .panel-intro, .details-toggle {
   background: var(--glass);
 }
 .pick:hover, .tool:hover { border-color: var(--violet-line); box-shadow: 0 10px 40px -10px rgba(99, 102, 241, 0.2); }
@@ -581,3 +581,7 @@ footer.site { background: rgba(255, 255, 255, 0.012); }
 }
 @media (max-width: 640px) { .container { padding: 0 18px; } }
 @media (prefers-reduced-motion: reduce) { .net i { animation: none; } .sb, .shell { transition: none; } }
+
+:root { color-scheme: dark; }
+.tabs { background: rgba(11, 15, 25, 0.96); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); }
+.sb { scrollbar-width: thin; scrollbar-color: rgba(255, 255, 255, 0.18) transparent; }
