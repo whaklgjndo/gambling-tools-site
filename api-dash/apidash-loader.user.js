@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         API Dash
 // @namespace    apidash
-// @version      1.0.13
+// @version      1.0.14
 // @description  Loads your licensed API Dash dashboard on stake.us, stake.com, nuts.gg, winna.com and rainbet.com - made for phones (Safari + Userscripts, Firefox + Violentmonkey).
 // @match        https://stake.us/*
 // @match        https://*.stake.us/*
@@ -37,7 +37,7 @@
     var SERVER = 'https://apidash-licences.apidash.workers.dev';
     var STORE = SERVER + '/buy';
     var LOADER_URL = 'https://whaklgjndo.github.io/gambling-tools-site/api-dash/apidash-loader.user.js';
-    var APP = 'phone-loader 1.0.13';
+    var APP = 'phone-loader 1.0.14';
 
     var SITES = [
         { key: 'com', label: 'stake.com', host: 'stake.com', accent: '#1475e1' },
@@ -338,7 +338,16 @@
         }, hideAfter);
     }
     var keyKept = true;
-    function askKey(message, isProblem) {
+    function freeKey(k) {
+        if (!window.confirm('Free this key from the device that holds it?\n\nA key works on one device at a time. Whichever device uses it next claims it.')) return Promise.resolve(null);
+        return post('/v1/unbind', { key: k }).then(function (r) {
+            if (r.status === 200 && r.json && !r.json.error) return { ok: true, said: r.json.said };
+            if (r.json && r.json.error) return { ok: false, said: r.json.error };
+            return { ok: false, said: 'Could not reach the licence server. Check your connection and try again.' };
+        });
+    }
+
+    function askKey(message, isProblem, stuckKey) {
         return new Promise(function (resolve) {
             var u = shell();
             u.pill.hidden = true;
@@ -359,7 +368,7 @@
             inp.placeholder = 'Paste the key you were sent';
             card.appendChild(lab);
             card.appendChild(inp);
-            card.appendChild(el('p', 'dim', 'The key is kept in your userscript app on this phone. It works on one device - ask us to move it if you change phones.'));
+            card.appendChild(el('p', 'dim', 'The key is kept in your userscript app on this phone. It works on one device at a time - on a new phone or computer, free it first.'));
             var row = el('div', 'row');
             var later = el('button', 'btn', 'Not now');
             var save = el('button', 'btn pri', 'Save key');
@@ -369,9 +378,24 @@
             var alt = el('p', 'alt', 'No key yet? ');
             alt.appendChild(storeLink('a', 'Buy one'));
             card.appendChild(alt);
+            var free = el('p', 'alt');
+            var freeBtn = el('button', null, 'Key on another device? Free it');
+            free.appendChild(freeBtn);
+            card.appendChild(free);
             u.scrim.appendChild(card);
             u.scrim.hidden = false;
             function done(v) { u.scrim.hidden = true; u.scrim.textContent = ''; resolve(v); }
+            freeBtn.onclick = function () {
+                var k = inp.value.trim() || stuckKey || '';
+                if (!k) { inp.focus(); return; }
+                freeBtn.disabled = true;
+                freeKey(k).then(function (r) {
+                    freeBtn.disabled = false;
+                    if (!r) return;
+                    if (!r.ok) { freeBtn.textContent = r.said; return; }
+                    setValue('key', k).then(function (ok) { keyKept = ok; done(k); });
+                });
+            };
             later.onclick = function () { done(null); };
             save.onclick = function () {
                 var k = inp.value.trim();
@@ -452,7 +476,7 @@
                     return post('/v1/licence', { key: key, device: device, app: APP }).then(function (lr) {
                         var lic = lr.status === 200 && lr.json && !lr.json.error ? lr.json : null;
                         if (lic) return noTime(key, device, tries, lic, j.error);
-                        return askKey(j.error, true).then(function (k) {
+                        return askKey(j.error, true, key).then(function (k) {
                             if (k) return load(k, device, tries + 1);
                             say(j.error, true);
                         });
@@ -597,5 +621,14 @@
 
     menu('Change licence key', function () { start(true); });
     menu('Buy a key or add time', function () { window.open(STORE, '_blank'); });
+    menu('Free this key (to use it on another device)', function () {
+        getValue('key', '').then(function (k) {
+            k = String(k || '').trim();
+            if (!k) { say('No key is saved on this phone.', true, 5000); return; }
+            freeKey(k).then(function (r) {
+                if (r) say(r.ok ? 'Key freed. It works on the next device that uses it.' : r.said, !r.ok, 8000);
+            });
+        });
+    });
     start(/(^|[#&])apidash-key\b/.test(location.hash));
 })();
