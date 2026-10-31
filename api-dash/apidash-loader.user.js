@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         API Dash
 // @namespace    apidash
-// @version      1.0.14
+// @version      1.0.15
 // @description  Loads your licensed API Dash dashboard on stake.us, stake.com, nuts.gg, winna.com and rainbet.com - made for phones (Safari + Userscripts, Firefox + Violentmonkey).
 // @match        https://stake.us/*
 // @match        https://*.stake.us/*
@@ -37,7 +37,7 @@
     var SERVER = 'https://apidash-licences.apidash.workers.dev';
     var STORE = SERVER + '/buy';
     var LOADER_URL = 'https://whaklgjndo.github.io/gambling-tools-site/api-dash/apidash-loader.user.js';
-    var APP = 'phone-loader 1.0.14';
+    var APP = 'phone-loader 1.0.15';
 
     var SITES = [
         { key: 'com', label: 'stake.com', host: 'stake.com', accent: '#1475e1' },
@@ -52,6 +52,10 @@
     var onStore = location.origin === SERVER && location.pathname.indexOf('/buy') === 0;
     var site = SITES.filter(function (s) { return host === s.host || host.slice(-(s.host.length + 1)) === '.' + s.host; })[0];
     if (!site && !onStore) return;
+    var onSecurityCheck = Array.prototype.some.call(document.scripts, function (s) {
+        return /\/cdn-cgi\/challenge-platform\/\S*orchestrate\//.test(s.src) || s.text.indexOf('_cf_' + 'chl_opt') >= 0;
+    });
+    if (onSecurityCheck) return;
 
     var G = (typeof GM !== 'undefined' && GM) || {};
     function handler() {
@@ -197,8 +201,13 @@
                 var out = JSON.stringify({ id: d.id, status: r.status,
                     body: r.json && typeof r.json === 'object' ? r.json : {} });
                 pageRun('document.dispatchEvent(new CustomEvent("' + FRIENDS_ANSWER + '",{detail:' + JSON.stringify(out) + '}))');
+                if (d.what === 'free' && r.status === 200) keyFreedHere();
             });
         });
+    }
+    function keyFreedHere() {
+        liveEnd();
+        setValue('key', '').then(function () { setTimeout(function () { location.reload(); }, 1500); });
     }
 
     function newer(a, b) {
@@ -219,9 +228,10 @@
             try { m = r.json && typeof r.json.manifest === 'string' ? JSON.parse(r.json.manifest) : null; } catch (e) { m = null; }
             var out = m && m.loader && m.loader.version;
             if (!out || !newer(out, mine)) return;
+            var required = !!(m.min && m.min.loader && newer(String(m.min.loader), mine));
             return getValue('updateLater', '').then(function (later) {
                 var p = String(later || '').split('|');
-                if (p[0] === out && Date.now() - Number(p[1]) < 86400000) return;
+                if (!required && p[0] === out && Date.now() - Number(p[1]) < 86400000) return;
                 var u = shell();
                 if (!u.scrim.hidden) return;
                 u.scrim.textContent = '';
@@ -231,6 +241,7 @@
                 card.appendChild(el('h1', null, 'API Dash · update'));
                 var release = m.tag ? String(m.tag).replace(/^v/, '') : out;
                 card.appendChild(el('p', null, 'API Dash ' + release + ' is out: loader ' + out + ' (this is ' + mine + ').'));
+                if (required) card.appendChild(el('p', null, 'Required security update.'));
                 if (m.notes) card.appendChild(el('p', 'dim', String(m.notes)));
                 card.appendChild(el('p', 'dim', 'Your userscript app will ask to update it. Then reload this page.'));
                 var row = el('div', 'row');
@@ -239,7 +250,7 @@
                 go.href = LOADER_URL;
                 go.target = '_blank';
                 go.rel = 'noopener';
-                row.appendChild(later);
+                if (!required) row.appendChild(later);
                 row.appendChild(go);
                 card.appendChild(row);
                 u.scrim.appendChild(card);
@@ -284,6 +295,7 @@
         sh.innerHTML =
             '<style>' +
             '*{box-sizing:border-box;margin:0;font-family:-apple-system,system-ui,sans-serif}' +
+            '[hidden]{display:none!important}' +
             '.pill{position:absolute;left:50%;top:max(10px,env(safe-area-inset-top));transform:translateX(-50%);max-width:calc(100% - 24px);' +
             'display:flex;align-items:center;gap:8px;padding:9px 14px;border-radius:999px;background:#172b39;color:#ecf3f9;' +
             'border:1px solid #3e586c;font-size:13px;font-weight:700;box-shadow:0 6px 20px rgba(0,0,0,.45);pointer-events:auto}' +
@@ -339,15 +351,27 @@
     }
     var keyKept = true;
     function freeKey(k) {
-        if (!window.confirm('Free this key from the device that holds it?\n\nA key works on one device at a time. Whichever device uses it next claims it.')) return Promise.resolve(null);
-        return post('/v1/unbind', { key: k }).then(function (r) {
+        if (!window.confirm('Free this key?\n\nA key works on one device at a time. This phone can use it again straight away; another phone or computer can use it an hour after it is freed.')) return Promise.resolve(null);
+        return deviceId().then(function (d) { return post('/v1/unbind', { key: k, device: d }); }).then(function (r) {
             if (r.status === 200 && r.json && !r.json.error) return { ok: true, said: r.json.said };
             if (r.json && r.json.error) return { ok: false, said: r.json.error };
             return { ok: false, said: 'Could not reach the licence server. Check your connection and try again.' };
         });
     }
 
-    function askKey(message, isProblem, stuckKey) {
+    function releaseKey(k) {
+        return deviceId().then(function (d) { return post('/v1/unbind', { key: k, device: d }); }).then(function (r) {
+            if (r.status === 200 && r.json && !r.json.error) return { ok: true };
+            if (r.json && r.json.error) return { ok: false, said: r.json.error, release: r.json.release };
+            return { ok: false, said: 'Could not reach the licence server. Check your connection and try again.' };
+        });
+    }
+    function clockText(ms) {
+        var s = Math.max(0, Math.ceil(ms / 1000));
+        return Math.floor(s / 60) + ':' + ('0' + (s % 60)).slice(-2);
+    }
+
+    function askKey(message, isProblem, stuckKey, release) {
         return new Promise(function (resolve) {
             var u = shell();
             u.pill.hidden = true;
@@ -379,21 +403,50 @@
             alt.appendChild(storeLink('a', 'Buy one'));
             card.appendChild(alt);
             var free = el('p', 'alt');
-            var freeBtn = el('button', null, 'Key on another device? Free it');
+            var freeBtn = el('button', null, 'Release my key');
             free.appendChild(freeBtn);
-            card.appendChild(free);
+            if (release) card.appendChild(free);
             u.scrim.appendChild(card);
             u.scrim.hidden = false;
-            function done(v) { u.scrim.hidden = true; u.scrim.textContent = ''; resolve(v); }
+            var rel = null, relUntil = 0, relTick = null, relPoll = null;
+            function relPaint() {
+                if (!rel) return;
+                var left = relUntil - Date.now();
+                var ready = rel.state === 'ready' || (rel.state === 'wait' && left <= 0);
+                freeBtn.disabled = !ready;
+                freeBtn.textContent = rel.state === 'wait' && !ready ? 'Release my key (' + clockText(left) + ')' : 'Release my key';
+            }
+            function relSet(r) {
+                rel = r;
+                relUntil = r.state === 'wait' ? Date.now() + Number(r.left || 0) : 0;
+                relPaint();
+            }
+            function keep(k) { setValue('key', k).then(function (ok) { keyKept = ok; done(k); }); }
+            function relCheck() {
+                var k = inp.value.trim() || stuckKey || '';
+                if (!k) return;
+                deviceId().then(function (d) { return post('/v1/release-state', { key: k, device: d }); }).then(function (r) {
+                    var got = r.status === 200 && r.json && r.json.release;
+                    if (!got || !u.scrim.contains(card)) return;
+                    if (got.state === 'free') keep(k);
+                    else relSet(got);
+                });
+            }
+            if (release) {
+                relSet(release);
+                relTick = setInterval(relPaint, 1000);
+                relPoll = setInterval(relCheck, 30000);
+            }
+            function done(v) { clearInterval(relTick); clearInterval(relPoll); u.scrim.hidden = true; u.scrim.textContent = ''; resolve(v); }
             freeBtn.onclick = function () {
                 var k = inp.value.trim() || stuckKey || '';
                 if (!k) { inp.focus(); return; }
                 freeBtn.disabled = true;
-                freeKey(k).then(function (r) {
+                releaseKey(k).then(function (r) {
+                    if (r.ok) { keep(k); return; }
+                    if (r.release) { relSet(r.release); return; }
                     freeBtn.disabled = false;
-                    if (!r) return;
-                    if (!r.ok) { freeBtn.textContent = r.said; return; }
-                    setValue('key', k).then(function (ok) { keyKept = ok; done(k); });
+                    freeBtn.textContent = r.said;
                 });
             };
             later.onclick = function () { done(null); };
@@ -472,11 +525,16 @@
             }
             var j = r.json || {};
             if (j.error) {
+                if (j.update) {
+                    say(j.error, true);
+                    offerUpdate();
+                    return;
+                }
                 if (r.status === 403 && tries < 3) {
                     return post('/v1/licence', { key: key, device: device, app: APP }).then(function (lr) {
                         var lic = lr.status === 200 && lr.json && !lr.json.error ? lr.json : null;
                         if (lic) return noTime(key, device, tries, lic, j.error);
-                        return askKey(j.error, true, key).then(function (k) {
+                        return askKey(j.error, true, key, j.release || (lr.json && lr.json.release)).then(function (k) {
                             if (k) return load(k, device, tries + 1);
                             say(j.error, true);
                         });
@@ -602,8 +660,9 @@
             if (!key || forceKeyBox) {
                 return askKey(key ? 'Paste a new key to replace the one on this phone.' : 'Paste the licence key you were sent to put the dashboard on ' + site.label + '.', false)
                     .then(function (k) {
-                        if (k) return load(k, device, 0);
-                        if (key && forceKeyBox) return load(key, device, 0);
+                        if (k && k !== key) return load(k, device, 0);
+                        if (key && mountedVersion()) return;
+                        if (k || (key && forceKeyBox)) return load(k || key, device, 0);
                         say('No key yet. Open ' + site.label + '/#apidash-key to add one.', false, 6000);
                     });
             }
@@ -626,7 +685,9 @@
             k = String(k || '').trim();
             if (!k) { say('No key is saved on this phone.', true, 5000); return; }
             freeKey(k).then(function (r) {
-                if (r) say(r.ok ? 'Key freed. It works on the next device that uses it.' : r.said, !r.ok, 8000);
+                if (!r) return;
+                say(r.ok ? 'Key freed. Another device can use it in an hour, this phone straight away.' : r.said, !r.ok, 8000);
+                if (r.ok) keyFreedHere();
             });
         });
     });
