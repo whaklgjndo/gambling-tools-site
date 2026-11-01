@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         API Dash
 // @namespace    apidash
-// @version      1.0.15
+// @version      1.0.16
 // @description  Loads your licensed API Dash dashboard on stake.us, stake.com, nuts.gg, winna.com and rainbet.com - made for phones (Safari + Userscripts, Firefox + Violentmonkey).
 // @match        https://stake.us/*
 // @match        https://*.stake.us/*
@@ -13,7 +13,7 @@
 // @match        https://*.winna.com/*
 // @match        https://rainbet.com/*
 // @match        https://*.rainbet.com/*
-// @match        https://apidash-licences.apidash.workers.dev/buy*
+// @match        https://getapidash.com/buy*
 // @run-at       document-idle
 // @noframes
 // @inject-into  content
@@ -26,18 +26,18 @@
 // @grant        GM_setValue
 // @grant        GM.registerMenuCommand
 // @grant        GM_registerMenuCommand
-// @connect      apidash-licences.apidash.workers.dev
-// @updateURL    https://whaklgjndo.github.io/gambling-tools-site/api-dash/apidash-loader.user.js
-// @downloadURL  https://whaklgjndo.github.io/gambling-tools-site/api-dash/apidash-loader.user.js
+// @connect      getapidash.com
+// @updateURL    https://getapidash.com/apidash-loader.user.js
+// @downloadURL  https://getapidash.com/apidash-loader.user.js
 // ==/UserScript==
 
 (function () {
     'use strict';
 
-    var SERVER = 'https://apidash-licences.apidash.workers.dev';
+    var SERVER = 'https://getapidash.com';
     var STORE = SERVER + '/buy';
-    var LOADER_URL = 'https://whaklgjndo.github.io/gambling-tools-site/api-dash/apidash-loader.user.js';
-    var APP = 'phone-loader 1.0.15';
+    var LOADER_URL = 'https://getapidash.com/apidash-loader.user.js';
+    var APP = 'phone-loader 1.0.16';
 
     var SITES = [
         { key: 'com', label: 'stake.com', host: 'stake.com', accent: '#1475e1' },
